@@ -73,6 +73,7 @@ class BaseDataset(ABC):
         return self.data.edge_index.size(1)
 
     def split_data(self, 
+                   num_nodes: Optional[int] = None,
                    train_ratio: float = 0.6,
                    val_ratio: float = 0.2,
                    test_ratio: float = 0.2,
@@ -80,6 +81,7 @@ class BaseDataset(ABC):
         """Create train/val/test splits.
         
         Args:
+            num_nodes: Number of nodes. If None, uses self.num_nodes
             train_ratio: Proportion of nodes for training
             val_ratio: Proportion of nodes for validation
             test_ratio: Proportion of nodes for testing
@@ -91,11 +93,16 @@ class BaseDataset(ABC):
         assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, \
             "Split ratios must sum to 1.0"
         
-        if seed is not None:
-            torch.manual_seed(seed)
+        if num_nodes is None:
+            num_nodes = self.num_nodes
         
-        num_nodes = self.num_nodes
-        indices = torch.randperm(num_nodes)
+        if seed is not None:
+            # Use numpy for random permutation to avoid torch recursion issues
+            import numpy as np
+            np.random.seed(seed)
+            indices = torch.from_numpy(np.random.permutation(num_nodes))
+        else:
+            indices = torch.randperm(num_nodes)
         
         train_size = int(num_nodes * train_ratio)
         val_size = int(num_nodes * val_ratio)

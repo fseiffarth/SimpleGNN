@@ -55,6 +55,7 @@ def test_dataset_split():
     dataset = DummyDataset("dummy")
     
     train_mask, val_mask, test_mask = dataset.split_data(
+        num_nodes=20,
         train_ratio=0.6, val_ratio=0.2, test_ratio=0.2, seed=42
     )
     

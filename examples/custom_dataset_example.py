@@ -28,7 +28,8 @@ class SyntheticDataset(BaseDataset):
         """Generate a synthetic graph dataset."""
         if self.seed is not None:
             np.random.seed(self.seed)
-            torch.manual_seed(self.seed)
+            generator = torch.Generator()
+            generator.manual_seed(self.seed)
         
         # Generate random node features
         x = torch.randn(self.num_nodes_val, self.num_features_val)
@@ -48,6 +49,7 @@ class SyntheticDataset(BaseDataset):
         
         # Create train/val/test splits
         train_mask, val_mask, test_mask = self.split_data(
+            num_nodes=self.num_nodes_val,
             train_ratio=0.6, val_ratio=0.2, test_ratio=0.2, seed=self.seed
         )
         
