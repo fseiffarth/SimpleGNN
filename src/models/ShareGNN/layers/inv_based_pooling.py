@@ -167,10 +167,10 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         #x = x.view(-1)
         # remove first dim if x is of shape (1, N, F) (check if x is 3-dimensional)
         if node_representation.size(0) == 1 and node_representation.dim() == 3:
-            x = node_representation.squeeze(0)
+            node_representation = node_representation.squeeze(0)
         begin = time.time()
         self.set_weights(pos)
-        x = torch.einsum('cij,jk->cik', self.current_W, node_representation)
+        node_representation = torch.einsum('cij,jk->cik', self.current_W, node_representation)
         if self.bias:
             node_representation = node_representation + self.Param_b
         self.forward_step_time += time.time() - begin

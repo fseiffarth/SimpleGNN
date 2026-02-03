@@ -122,12 +122,11 @@ class ModelConfiguration:
 
 
             self.num_epoch_samples = sum([batch.size for batch in train_batches])
-            random_variation_bool = self.para.run_config.config.get('input_features', None).get('random_variation', None)
             self.net.train(True)
             if self.para.run_config.config['task'] in ['graph_regression', 'graph_classification']:
-                self.train_graph_task(epoch=epoch, values=(epoch_values, validation_values, test_values), train_batches=train_batches, random_variation_bool=random_variation_bool, timer=timer)
+                self.train_graph_task(epoch=epoch, values=(epoch_values, validation_values, test_values), train_batches=train_batches, timer=timer)
             elif self.para.run_config.config['task'] == 'node_classification':
-                self.train_node_task(epoch=epoch, values=(epoch_values, validation_values, test_values), train_batches=train_batches, random_variation_bool=random_variation_bool, timer=timer)
+                self.train_node_task(epoch=epoch, values=(epoch_values, validation_values, test_values), train_batches=train_batches, timer=timer)
 
 
             # TODO Pruning
@@ -783,7 +782,7 @@ class ModelConfiguration:
             file_obj.write(res_str)
 
 
-    def train_graph_task(self, epoch, values, train_batches, random_variation_bool, timer):
+    def train_graph_task(self, epoch, values, train_batches, timer):
         loader = CustomBatchLoader(self.graph_data, train_batches)
         for batch_counter, batch in enumerate(loader, 0):
             batch_ids = train_batches[batch_counter]
@@ -801,21 +800,10 @@ class ModelConfiguration:
                 outputs = self.net(batch)
                 timer.measure("forward_step")
             else:
-                # Run Share GNN
+                # Batch-wise processing for Share GNN is not possible (at the moment), so we process each graph individually
                 for j, graph_id in enumerate(batch_ids, 0):
                     timer.measure("forward_step")
-                    if random_variation_bool:
-                        mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
-                        std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
-                        if self.para.run_config.config.get('precision', 'double') == 'float':
-                            random_variation = torch.normal(mean=mean, std=std, size=self.graph_data[graph_id].x.size(),
-                                                            dtype=torch.float)
-                        else:
-                            random_variation = torch.normal(mean=mean, std=std, size=self.graph_data[graph_id].x.size(),
-                                                            dtype=torch.double)
-                        outputs[j] = self.net(self.graph_data[graph_id].x + random_variation, self.graph_data[graph_id], pos=graph_id)
-                    else:
-                        outputs[j] = self.net(self.graph_data[graph_id], pos=graph_id)
+                    outputs[j] = self.net(self.graph_data[graph_id], pos=graph_id)
                     timer.measure("forward_step")
 
             # TODO run mixed models
@@ -866,25 +854,31 @@ class ModelConfiguration:
         labels = self.graph_data.y[graph_ids]
         outputs = []
 
-        # use torch no grad to save memory
         with torch.no_grad():
             self.net.train(False)
             # Run ordinary GNN
             # split the graph ids into batches of size 512 to avoid memory issues
             batches = [graph_ids[i:i + 512] for i in range(0, len(graph_ids), 512)]
+            # deduce output size from batches and graph data
+            total_out_len = 0
+            for batch in batches:
+                total_out_len += len(batch)
+            if self.graph_data.num_classes == 1:
+                outputs = torch.zeros((len(batch)), dtype=self.dtype).to(self.device)
+            else:
+                outputs = torch.zeros((total_out_len, self.graph_data.num_classes), dtype=self.dtype).to(self.device)
             loader = CustomBatchLoader(self.graph_data, batches)
             batch_counter = 0
             if not self.para.run_config.config.get('with_invariant_layers', True):
                 for i, batch in enumerate(loader):
                     #print(f"Evaluating batch {i + 1}/{len(batches)}")
-                    outputs.append(self.net(batch))
+                    outputs[batch_counter:batch_counter + len(batch)] = self.net(batch_data=batch)
                     batch_counter += len(batch)
             else:
                 # Run Share GNN
                 for j, data_pos in enumerate(graph_ids):
                     self.net.train(False)
-                    outputs.append(self.net(self.graph_data[data_pos].x, data_pos))
-            outputs = torch.concat(outputs, dim=0)
+                    outputs[j] = self.net(self.graph_data[data_pos], pos=data_pos)
             # squeeze second dimension if it is one
             if outputs.shape[1] == 1:
                 outputs = outputs.squeeze(1)

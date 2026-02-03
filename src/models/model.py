@@ -39,11 +39,9 @@ class GraphModel(torch.nn.Module):
         if precision == 'double':
             self.module_precision = torch.double
 
+
+        self.random_variation_bool = self.para.run_config.config.get('input_features', None).get('random_variation', None)
         self.aggregation_out_dim = 0
-
-        nn.Sequential(
-
-        )
 
         # Define the layers
         self.net_layers = nn.ModuleList()
@@ -149,9 +147,21 @@ class GraphModel(torch.nn.Module):
 
     def forward(self, batch_data, *args, **kwargs):
         x = batch_data.x
+        if self.random_variation_bool:
+            mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
+            std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
+            if self.para.run_config.config.get('precision', 'double') == 'float':
+                random_variation = torch.normal(mean=mean, std=std, size=x.size(),
+                                                dtype=torch.float)
+            else:
+                random_variation = torch.normal(mean=mean, std=std, size=x.size(),
+                                                dtype=torch.double)
+            x = x + random_variation
+
         representation_list = []
         for i, layer in enumerate(self.net_layers):
             x = layer(x, batch_data, *args, **kwargs)
+            continue
             #if isinstance(layer, GNNConvLayer):
             #    representation_list.append(x)
             #    if i == len(self.net_layers) - 1 or not isinstance(self.net_layers[i + 1], GNNConvLayer):

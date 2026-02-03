@@ -32,6 +32,6 @@ class ShareGNNReshapeLayer(nn.Module):
         self.num_heads = layer.layer_dict.get('num_heads', self.num_heads)
 
 
-    def forward(self, x:torch.Tensor, pos:int=None):
-        x = x.reshape(shape=self.shape)
-        return x
+    def forward(self, node_representation:torch.Tensor, *args, **kwargs):
+        node_representation = node_representation.reshape(shape=self.shape)
+        return node_representation
