@@ -1,0 +1,39 @@
+networks:
+  - - { layer_type: invariant_based_convolution,
+        activation: 'tanh',
+        bias: False,
+        heads: [1],
+        labels: [
+          { label_type: subgraph, id: [ 3 ] }
+        ],
+        properties: [
+          { name: distances, values: [ 0,1,2 ] },
+        ]
+  }
+    - { layer_type: invariant_based_aggregation,
+        activation: 'tanh',
+        bias: True,
+        heads: [1],
+        labels: [
+          { label_type: [wl], depth: [0] },
+        ]
+    }
+    - { layer_type: reshape }
+
+# if subgraph labels are used the corresponding list of subgraphs should be provided here:
+subgraphs:
+  - "[nx.complete_graph(4)]"
+  - "[nx.cycle_graph(3), nx.star_graph(1)]"
+  - "[nx.cycle_graph(4), nx.star_graph(1)]"
+  - "[nx.cycle_graph(3), nx.cycle_graph(4), nx.star_graph(1)]"
+
+
+# input_features: determine how the input features should be transformed, the following options show some examples
+#  - {name: constant, value: 1.0}, use a constant value as input feature
+#  - {name: node_labels, transformation: normalize}, use node labels and normalize them between -1 and 1
+#  - {name: node_labels, transformation: normalize_positive}, use node labels and normalize them between 0 and 1
+#  - {name: node_labels, transformation: unit_circle, features_as_channels: True}, use node labels mapped to the 2D unit circle, use features as channels
+#  - {name: node_labels, transformation: one_hot, features_as_channels: True}, use node labels and transform them to one-hot encoding
+#  - {name: node_features, features_as_channels: True}, use node features as input, use features as channels
+#  - {name: all, features_as_channels: True}, use node labels and node features as input, use features as channels
+input_features: {name: constant, value: 1.0, random_variation: { mean: 0.0, std: 0.5 }}

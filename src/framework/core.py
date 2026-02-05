@@ -94,9 +94,9 @@ class FrameworkMain:
                 print(f"Total number of hyperparameter configurations: {len(run_configs)}")
 
                 # zip all configurations for parallelization and run the grid search
-                run_loops = [(validation_id, run_id, c_idx) for validation_id in range(configuration.get('validation_folds', 10)) for run_id in range(configuration.get('num_runs', 1)) for c_idx in range(len(run_configs))]
+                run_loops = [(validation_id, run_id, c_idx) for validation_id in range(len(configuration.get('splits')['train'])) for run_id in range(configuration.get('num_runs', 1)) for c_idx in range(len(run_configs))]
                 num_threads = min(num_threads, len(run_loops))
-                print(f"Run the grid search for dataset {dataset} using {configuration.get('validation_folds', 10)}-fold cross-validation and {num_threads} number of parallel jobs")
+                print(f"Run the grid search for dataset {dataset} using {len(configuration.get('splits')['train'])}-fold cross-validation and {num_threads} number of parallel jobs")
                 joblib.Parallel(n_jobs=num_threads)(
                     joblib.delayed(self.run_configuration)(graph_data=graph_data,
                                                            run_config=run_configs[run_loops[i][2]],
@@ -385,7 +385,8 @@ class FrameworkMain:
                                                       graph_data=graph_data,
                                                       run_config=run_config,
                                                       para=para,
-                                                      validation_folds=experiment_configuration.get('validation_folds', 10))
+                                                      validation_folds=len(experiment_configuration.get('splits')['train']),
+                                                        )
 
                 """
                     Get the first index in the results directory that is not used

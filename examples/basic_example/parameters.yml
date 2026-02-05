@@ -17,9 +17,9 @@ loss:
 batch_size:
   - 32
 learning_rate:
-  - 0.001
+  - 0.01
 epochs:
-  - 500
+  - 100
 
 early_stopping:
   enabled:

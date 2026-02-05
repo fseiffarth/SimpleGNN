@@ -70,10 +70,10 @@ class Preprocessing:
 
         # if not exists create the generation_times_labels.txt and generation_times_properties.txt in the Results folder
         if not Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_labels.txt').exists():
-            with open(Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_labels.txt'), 'w') as f:
+            with open(Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_labels.txt'), 'a') as f:
                 f.write('Generation times for labels\n')
         if not Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_properties.txt').exists():
-            with open(Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_properties.txt'), 'w') as f:
+            with open(Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_properties.txt'), 'a') as f:
                 f.write('Generation times for properties\n')
         self.generation_times_labels_path = self.experiment_configuration['paths']['results'].joinpath('generation_times_labels.txt')
         self.generation_times_properties_path = self.experiment_configuration['paths']['results'].joinpath('generation_times_properties.txt')

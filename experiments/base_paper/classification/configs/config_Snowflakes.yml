@@ -1,0 +1,21 @@
+networks:
+  - - { layer_type: invariant_based_convolution,
+        activation: 'tanh',
+        bias: False,
+        heads: [1],
+        labels: [
+          { label_type: [simple_cycles, primary], max_cycle_length: [ 10 ] }
+        ],
+        properties: [
+          { name: distances, values: [ 0,3 ] }
+        ]
+  }
+    - { layer_type: invariant_based_aggregation,
+        activation: 'tanh',
+        bias: True,
+        heads: [1],
+        labels: [
+          { label_type: [wl, primary], depth: [2] }
+        ]
+    }
+    - { layer_type: reshape }

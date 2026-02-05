@@ -1,0 +1,92 @@
+datasets:
+ #  synthetic datasets
+  - {name: "CSL", task: 'graph_classification', with_splits: True, validation_folds: 5, network_config_file: "paper_experiments/classification/configs/config_CSL.yml", type: "gnn_benchmark"}
+  - {name: "EvenOddRings2_16", task: 'graph_classification', with_splits: True, validation_folds: 10, network_config_file: "paper_experiments/classification/configs/config_EvenOddRings.yml", type: "generate_from_function", generate_function: even_odd_rings, generate_function_args: {data_size: 1200, ring_size: 16, difficulty: 2, count: False, seed: 764}}
+  - {name: "EvenOddRingsCount16", task: 'graph_classification', with_splits: True, validation_folds: 10, network_config_file: "paper_experiments/classification/configs/config_EvenOddRingsCount.yml", type: "generate_from_function", generate_function: even_odd_rings, generate_function_args: {data_size: 1200, ring_size: 16, count: True, seed: 764}}
+  - {name: "LongRings100", task: 'graph_classification', with_splits: True, validation_folds: 10, network_config_file: "paper_experiments/classification/configs/config_LongRings.yml", type: "generate_from_function", generate_function: long_rings, generate_function_args: {data_size: 1200, ring_size: 100, seed: 764}}
+  - {name: "Snowflakes", task: 'graph_classification', with_splits: True, validation_folds: 10, network_config_file: "paper_experiments/classification/configs/config_Snowflakes.yml", type: "generate_from_function", generate_function: snowflakes, generate_function_args: {smallest_snowflake: 3, largest_snowflake: 12, flakes_per_size: 100, seed: 764, generation_type: 'binary'}}
+
+paths:
+  # all the paths are relative to the PYTHONPATH path, can be also defined dataset-wise in the network_config_file
+  data:
+    "paper_experiments/Data/Graphs/"
+  properties:
+    "paper_experiments/Data/Properties/" # Precomputed properties will be loaded from this folder
+  labels:
+    "paper_experiments/Data/Labels/" # Path to the folder containing the labels
+  splits:
+    "paper_experiments/Data/Splits/" # Path to the folder containing the data splits
+  results:
+    "paper_experiments/Results/classification/Synthetic/Random/" # Results will be saved in this folder
+
+device: cpu
+mode: experiments # if debug printing and plotting options are enabled, for the experiments mode should be 'experiments'
+precision: double
+
+# network options
+
+# optimizer: optimizer for the network
+optimizer:
+  - Adam
+
+
+
+# convolution_grad: Turn on or off learning for the convolutional layers
+convolution_grad: True
+
+# aggregation_grad: Turn on or off learning for the aggregation layer
+aggregation_grad: True
+
+
+
+# loss: loss function for the network
+loss:
+  - CrossEntropyLoss
+
+
+
+# rule_occurrence_threshold: threshold for the rule occurrence, determines how often a rule has to be present to be used in the network
+# -type: [graph, total], graph: the rule has to be present in a graph, total: the rule has to be present in the whole dataset
+# -threshold: the threshold for the rule occurrence at least this many times
+rule_occurrence_threshold: 1
+
+# weight initialization: weight initialization for the network (TODO)
+# - convolution: weight initialization for the convolutional layers
+# - convolution_bias: weight initialization for the convolutional bias
+# - aggregation: weight initialization for the aggregation layer
+# - aggregation_bias: weight initialization for the aggregation bias
+# keys:
+#     - type: [uniform, normal, constant, lower_upper], uniform: uniform distribution, normal: normal distribution, constant: constant value, lower_upper: uniform distribution with lower and upper bound from the number of weights
+#     - min: minimum value for the uniform distribution
+#     - max: maximum value for the uniform distribution
+#     - value: constant value for the constant distribution
+#     - mean for the normal distribution
+#     - std: variance for the normal distribution
+weight_initialization: { convolution: {  type: 'uniform', min: -0.1, max: 0.1},
+                         convolution_bias: { type: 'constant', value: 0.0},
+                         aggregation: { type: 'uniform', min: -0.1, max: 0.1},
+                         aggregation_bias: { type: 'constant', value: 0.0 }}
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.1
+epochs:
+  - 200
+
+early_stopping:
+  enabled:
+    False
+  patience:
+    25
+
+
+# input_features: determine how the input features should be transformed, the following options show some examples
+#  - {name: constant, value: 1.0}, use a constant value as input feature
+#  - {name: node_labels, transformation: normalize}, use node labels and normalize them between -1 and 1
+#  - {name: node_labels, transformation: normalize_positive}, use node labels and normalize them between 0 and 1
+#  - {name: node_labels, transformation: unit_circle, features_as_channels: True}, use node labels mapped to the 2D unit circle, use features as channels
+#  - {name: node_labels, transformation: one_hot, features_as_channels: True}, use node labels and transform them to one-hot encoding
+#  - {name: node_features, features_as_channels: True}, use node features as input, use features as channels
+#  - {name: all, features_as_channels: True}, use node labels and node features as input, use features as channels
+input_features: {name: constant, value: 1.0, random_variation: { mean: 0.0, std: 0.5 }}

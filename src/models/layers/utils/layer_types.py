@@ -22,5 +22,8 @@ class LayerTypes(Enum):
     ### advanced GNN layers
 
     ### ShareGNN layers
+    SHARE_GNN_LINEAR = 'share_gnn_linear'
+    SHARE_GNN_LAYER_NORM = 'share_gnn_layer_norm'
     INVARIANT_BASED_CONVOLUTION = 'invariant_based_convolution'
     INVARIANT_BASED_AGGREGATION = 'invariant_based_aggregation'
+    INVARIANT_BASED_POSITIONAL_ENCODING = 'invariant_based_positional_encoding'

@@ -6,9 +6,11 @@ import networkx as nx
 import numpy as np
 import torch
 from torch import nn
+import sys
 
 from datasets.graph_dataset import GraphDataset
 from datasets.utils.graph_drawing import GraphDrawing
+from framework.utils.parameters import Parameters
 from models.ShareGNN.layers.inv_based import InvariantBasedLayer
 from models.ShareGNN.utils import Layer
 
@@ -31,7 +33,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
 
 
-    def __init__(self, layer_id, seed, parameters, layer: Layer, graph_data: GraphDataset, device='cpu', input_features=None, output_features=None):
+    def __init__(self, parameters: Parameters, layer: Layer, graph_data: GraphDataset):
         """
         Constructor of the GraphConvLayer
         :param layer_id: the id of the layer
@@ -41,8 +43,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         :param device: use 'cpu' or 'cuda' as device ('cpu' is recommended)
         :param input_feature_dimensions: the number of input features
         """
-        super(InvariantBasedMessagePassingLayer, self).__init__(layer_id, seed, parameters, layer, graph_data, device, input_features, output_features)
-        self.name = f"Invariant Based Message Passing"
+        layer.layer_dict['name'] = "Invariant Based Message Passing Layer"
+        super(InvariantBasedMessagePassingLayer, self).__init__(parameters, layer, graph_data)
 
         for h_id, head in enumerate(layer.layer_heads):
             self.source_label_descriptions.append(layer.get_source_string(h_id))
@@ -52,7 +54,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             self.bias_label_descriptions.append(layer.get_bias_string(h_id))
             self.n_bias_labels.append(graph_data.node_labels[self.bias_label_descriptions[h_id]].num_unique_node_labels)
             self.property_descriptions.append(head.property_dict.get_property_string())
-            self.n_properties.append(graph_data.properties[self.property_descriptions[h_id]].num_properties[(layer_id, h_id)])
+            self.n_properties.append(graph_data.properties[self.property_descriptions[h_id]].num_properties[(self.layer_id, h_id)])
 
         self.bias_list = [head.bias for head in layer.layer_heads]
         self.bias = any(self.bias_list)  # check if bias is used
@@ -68,7 +70,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # Iterate over all heads in the layer
         for i, head in enumerate(self.layer.layer_heads):
             # get all the valid property values for the head (e.g., the distances 0, 3, 6)
-            valid_property_values = self.graph_data.properties[self.property_descriptions[i]].valid_values[(layer_id, i)]
+            valid_property_values = self.graph_data.properties[self.property_descriptions[i]].valid_values[(self.layer_id, i)]
             # apply the head and tail labels to the subdict
             source_labels = self.graph_data.node_labels[self.source_label_descriptions[i]].node_labels
             target_labels = self.graph_data.node_labels[self.target_label_descriptions[i]].node_labels
@@ -113,7 +115,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 for idx in range(len(graph_data)):
                     # if number of graphs is larger than 10000 print progress
                     if len(graph_data) > 10000 and idx % 1000 == 0:
-                        print(f'Head {i+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}')
+                        print(f'Head {i+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}',
+                                end='\r', flush=True)
                     # get the valid indices for the current graph
                     if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
                         valid_indices_graph = torch.where(valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx+1]])[0] + property_subdict_slices[idx]
@@ -141,11 +144,11 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
             if self.bias:
                 # Determine the number of different learnable parameters in the bias vector
-                self.bias_num.append(self.input_features * self.n_bias_labels[i])
+                self.bias_num.append(self.in_features * self.n_bias_labels[i])
                 # Set the bias weights
                 _, indices, counts = torch.unique(bias_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
                 for idx in range(len(graph_data)):
-                    for feature_id in range(self.input_features):
+                    for feature_id in range(self.in_features):
                         new_bias_distribution = torch.zeros((graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
                         new_bias_distribution[:, 0] = i
                         new_bias_distribution[:, 1] = torch.arange(graph_data.num_nodes[idx].item(), dtype=torch.int64) # alternative torch.arange(start=graph_data.slices['x'][idx], end=graph_data.slices['x'][idx+1], dtype=torch.int64)
@@ -247,7 +250,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         :return:
         """
         input_size = self.graph_data.num_nodes[pos].item()
-        self.current_B = torch.zeros((self.num_heads, input_size, self.input_features), dtype=self.precision).to(self.device)
+        self.current_B = torch.zeros((self.num_heads, input_size, self.in_features), dtype=self.precision).to(self.device)
         graph_bias_distribution = self.bias_distribution[self.bias_distribution_slices[pos]:self.bias_distribution_slices[pos+1]]
         param_indices = graph_bias_distribution[:, 3]
         matrix_indices = graph_bias_distribution[:, 0:3].T

@@ -9,7 +9,7 @@ datasets:
       data: "data/TUDatasets/", # path to the dataset (will be downloaded if not present)
       labels: "data/TUDatasets/labels/", # path to the labels
       properties: "data/TUDatasets/properties/", # path to the precomputed properties
-      results: "results/test/GCN/", # path to save the results
+      results: "results/test/ShareGNN/", # path to save the results
       models: "examples/basic_example_share_gnn/models_ShareGNN.yml", # path to the model configuration file
       hyperparameters: "examples/basic_example_share_gnn/parameters.yml", # path to the hyperparameters configuration file
       splits: "src/datasets/splits/standard/MUTAG_splits.json", # path to the data splits file (contains train/val/test splits)

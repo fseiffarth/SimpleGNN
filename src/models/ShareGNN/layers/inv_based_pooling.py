@@ -9,6 +9,7 @@ from torch import nn
 
 from datasets.graph_dataset import GraphDataset
 from datasets.utils.graph_drawing import GraphDrawing
+from framework.utils.parameters import Parameters
 from models.ShareGNN.layers.inv_based import InvariantBasedLayer
 from models.ShareGNN.utils import Layer
 
@@ -26,14 +27,18 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         - **pos** is the index of the graph in the graph_data
         - **out** is the output matrix of shape (H, N, F) where H is the number of heads and N is the number of nodes and F is the number of node features.
     """
-    def __init__(self, layer_id, seed, parameters, layer: Layer, graph_data: GraphDataset, out_dim, device='cpu', input_features=None, output_features=None):
-
-        super(InvariantBasedAggregationLayer, self).__init__(layer_id, seed, parameters, layer, graph_data, device, input_features, output_features)
-        torch.manual_seed(seed)
-        self.name = f"Rule Aggregation Layer"
-
+    def __init__(self, parameters:Parameters, layer: Layer, graph_data: GraphDataset):
+        layer.layer_dict['name'] = "Invariant Based Aggregation Layer"
+        super(InvariantBasedAggregationLayer, self).__init__(parameters, layer, graph_data)
+        torch.manual_seed(self.seed + self.layer_id)
+        self.layer = layer
         # fixed output dimension of the layer
-        self.output_dimension = out_dim
+        self.output_dimension = layer.layer_dict.get('out_dim', None)
+        if self.output_dimension is None:
+            raise ValueError("out_dim must be provided for the InvariantBasedAggregationLayer")
+
+        # Update the out_features in the layer dictionary
+        layer.layer_dict['out_features'] = self.num_heads * self.out_features * self.output_dimension
 
         self.n_node_labels = [] # number of node labels per head
         self.node_label_descriptions = [] # node label descriptions per head
@@ -45,7 +50,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             self.node_label_descriptions.append(layer.get_source_string(i))
             self.n_node_labels.append(self.graph_data.node_labels[self.node_label_descriptions[i]].num_unique_node_labels)
 
-        self.weight_num = np.sum(self.n_node_labels) * out_dim
+        self.weight_num = np.sum(self.n_node_labels) * self.output_dimension
         self.weight_distribution = [None] * len(self.graph_data)
 
         for i, head in enumerate(layer.layer_heads):
@@ -53,7 +58,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             # Set the bias weights
             _, indices, counts = torch.unique(node_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
             for idx in range(len(self.graph_data)):
-                for out_dim_id in range(out_dim):
+                for out_dim_id in range(self.output_dimension):
                     new_weight_distribution = torch.zeros((self.graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
                     new_weight_distribution[:, 0] = i
                     new_weight_distribution[:, 1] = out_dim_id
@@ -73,7 +78,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
 
         if self.bias:
-            self.Param_b = self.init_weights(shape=(self.num_heads, out_dim, self.input_features), init_type='aggregation_bias').to(self.device)
+            self.Param_b = self.init_weights(shape=(self.num_heads, self.output_dimension, self.in_features), init_type='aggregation_bias').to(self.device)
         self.forward_step_time = 0
 
 

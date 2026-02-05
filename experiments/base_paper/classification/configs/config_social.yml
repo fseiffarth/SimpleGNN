@@ -1,0 +1,35 @@
+networks:
+  - - { layer_type: invariant_based_convolution,
+        activation: 'tanh',
+        bias: False,
+        heads: [1],
+        labels: [
+          { label_type: simple_cycles, max_cycle_length: [ 5,4,3 ] },
+          { label_type: wl, depth: [ 0,1,2,3,4 ] },
+          { label_type: induced_cycles, max_cycle_length: [ 4,5,10,20 ] },
+          { label_type: cliques, max_clique_size: [ 3,4,6,10,20,50 ] },
+          { label_type: subgraph, id: [ 0,1,2,3 ] }
+        ],
+        properties: [
+          { name: distances, values: [ 0,1,2 ] },
+        ]
+  }
+    - { layer_type: invariant_based_aggregation,
+        activation: 'tanh',
+        bias: True,
+        heads: [1],
+        labels: [
+          { label_type: wl, depth: [ 0,1,2,3,4 ] },
+          { label_type: simple_cycles, max_cycle_length: [ 3,4,5 ] },
+          { label_type: induced_cycles, max_cycle_length: [ 4,5,10,20 ] },
+          { label_type: cliques, max_clique_size: [ 3,4,6,10,20,50 ] },
+        ]
+    }
+    - { layer_type: reshape }
+
+# if subgraph labels are used the corresponding list of subgraphs should be provided here:
+subgraphs:
+  - "[nx.complete_graph(4)]"
+  - "[nx.cycle_graph(3), nx.star_graph(1)]"
+  - "[nx.cycle_graph(4), nx.star_graph(1)]"
+  - "[nx.cycle_graph(3), nx.cycle_graph(4), nx.star_graph(1)]"
