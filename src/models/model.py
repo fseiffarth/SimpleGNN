@@ -92,8 +92,25 @@ class GraphModel(torch.nn.Module):
         prev_layer = (None if len(self.net_layers) == 0 else self.net_layers[-1])
         if prev_layer is None:
             layer_args['in_features'] = self.graph_data.num_node_features
+            layer_args['in_channels'] = 1
         else:
             layer_args['in_features'] = prev_layer.out_features
+            layer_args['in_channels'] = prev_layer.out_channels
+
+        layer_args['out_features'] = layer_args.get('out_features', layer_args['in_features'])
+        # TODO how to get the out channels from in_channels and num_heads. At the moment extent each in_channel by num_heads, but this may not be the case for all layers
+        # another option is apply one head to one in_channel (only if num_heads == in_channels)
+        if 'heads' in layer_args:
+            layer_args['num_heads'] = len(layer_args['heads'])
+
+        num_heads = layer_args.get('num_heads', 1)
+        head_mode = layer_args.get('head_mode', 'extend_in_channels')
+        if head_mode == 'extend_in_channels':
+            layer_args['out_channels'] = layer_args['in_channels'] * num_heads
+        elif head_mode == 'same_as_in_channels':
+            if num_heads != layer_args['in_channels']:
+                raise ValueError(f'num_heads must be equal to in_channels when head_mode is same_as_in_channels, but got num_heads={num_heads} and in_channels={in_channels}')
+            layer_args['out_channels'] = layer_args['in_channels']
         layer_args['dtype'] = self.precision
         layer_args['out_features'] = layer_args.get('out_features', layer_args['in_features'])
 

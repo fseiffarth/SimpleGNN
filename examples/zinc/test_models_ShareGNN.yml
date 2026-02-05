@@ -32,8 +32,14 @@ models:
         ],
     }
     - { layer_type: linear,
-        mode: 'aggr_heads',
-        out_features: 100,
+        mode: 'aggr_features',
+        out_features: 10,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+      }
+    - { layer_type: linear,
+        mode: 'aggr_channels',
+        out_features: 10,
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }

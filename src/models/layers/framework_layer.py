@@ -41,8 +41,8 @@ class FrameworkLayer(torch.nn.Module, ABC):
             raise ValueError("seed must be provided")
 
         # Set layer precision
-        self.precision = layer_args.get('precision', None)
-        if self.precision is not None:
+        self.precision = layer_args.get('dtype', None)
+        if self.precision is None:
             raise ValueError("precision setting is not supported in this framework layer implementation")
 
 
@@ -53,10 +53,14 @@ class FrameworkLayer(torch.nn.Module, ABC):
         self.out_features = layer_args.get('out_features', None)
         if self.out_features is None:
             raise ValueError("out_features must be provided")
-        self.in_channels = layer_args.get('in_channels', 1)
-        self.out_channels = layer_args.get('out_channels', 1)
-        self.num_heads = len(layer_args.get('heads', [0]))  # number of heads for this layer
-        self.concat_heads = layer_args.get('concat_heads', True)
+        self.in_channels = layer_args.get('in_channels', None)
+        if self.in_channels is None:
+            raise ValueError("in_channels must be provided")
+        self.out_channels = layer_args.get('out_channels', None)
+        if self.out_channels is None:
+            raise ValueError("out_channels must be provided")
+
+        self.num_heads = layer_args.get('num_heads', 1)
 
 
         # Whether to use residual connections in this layer

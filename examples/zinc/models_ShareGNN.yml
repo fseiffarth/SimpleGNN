@@ -212,7 +212,7 @@ models:
         ],
     }
     - { layer_type: linear,
-        mode: 'aggr_heads',
+        mode: 'aggr_channels',
         out_features: 100,
         bias: True,
         activation: torch.nn.LeakyReLU(),

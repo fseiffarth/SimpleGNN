@@ -56,7 +56,7 @@ networks:
       ],
   }
     - { layer_type: linear,
-        mode: 'aggr_heads',
+        mode: 'aggr_channels',
         output_features: 10,
         bias: True,
         activation: torch.nn.LeakyReLU()

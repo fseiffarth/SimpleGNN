@@ -48,7 +48,7 @@ class ShareGNNLinear(FrameworkLayer):
             self.precision = torch.double
 
         self.mode = layer.layer_dict.get('mode', 'aggr_features') # mode can be headwise, aggr_heads, aggr_features. If headwise a linear transformation is applied to each head
-        if self.mode == 'aggr_heads':
+        if self.mode == 'aggr_channels':
             k = math.sqrt(1.0 / (self.num_heads * self.in_features))
             self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.num_heads * self.in_features, self.out_features, dtype=self.precision), -k, k))
             self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_features, dtype=self.precision), -k, k))
@@ -69,7 +69,7 @@ class ShareGNNLinear(FrameworkLayer):
         """
         if self.mode == 'aggr_features':
             node_representation = node_representation @ self.Param_W
-        elif self.mode == 'aggr_heads':
+        elif self.mode == 'aggr_channels':
             # permute (C, N, F) to (N, C, F)
             node_representation = node_representation.permute(1,0,2)
             # convert to (N, CxF)
