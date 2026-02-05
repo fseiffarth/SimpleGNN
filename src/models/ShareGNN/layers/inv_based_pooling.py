@@ -30,15 +30,13 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
     def __init__(self, parameters:Parameters, layer: Layer, graph_data: GraphDataset):
         layer.layer_dict['name'] = "Invariant Based Aggregation Layer"
         super(InvariantBasedAggregationLayer, self).__init__(parameters, layer, graph_data)
-        torch.manual_seed(self.seed + self.layer_id)
-        self.layer = layer
+
         # fixed output dimension of the layer
         self.output_dimension = layer.layer_dict.get('out_dim', None)
         if self.output_dimension is None:
             raise ValueError("out_dim must be provided for the InvariantBasedAggregationLayer")
 
-        # Update the out_features in the layer dictionary
-        layer.layer_dict['out_features'] = self.num_heads * self.out_features * self.output_dimension
+        self.out_features = self.in_features * self.num_heads*self.output_dimension
 
         self.n_node_labels = [] # number of node labels per head
         self.node_label_descriptions = [] # node label descriptions per head
@@ -169,15 +167,13 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
     def forward(self, node_representation:torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
         pos = kwargs.get('pos', 0)
-        #x = x.view(-1)
-        # remove first dim if x is of shape (1, N, F) (check if x is 3-dimensional)
-        if node_representation.size(0) == 1 and node_representation.dim() == 3:
-            node_representation = node_representation.squeeze(0)
         begin = time.time()
         self.set_weights(pos)
-        node_representation = torch.einsum('cij,jk->cik', self.current_W, node_representation)
+        node_representation = torch.einsum('hoj,jf->hof', self.current_W, node_representation)
         if self.bias:
             node_representation = node_representation + self.Param_b
+        node_representation = node_representation.flatten().unsqueeze(0)
+        node_representation = self.activation(node_representation)
         self.forward_step_time += time.time() - begin
         return node_representation
 

@@ -30,15 +30,15 @@ class LinearLayer(FrameworkLayer):
         if self.mode == 'aggr_channels':
             self.out_channels = 1
             k = math.sqrt(1.0 / (self.num_heads * self.in_features))
-            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.in_channels * self.in_features, self.out_features, dtype=self.precision), -k, k))
+            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.in_features, self.out_features, dtype=self.precision), -k, k))
             self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_features, dtype=self.precision), -k, k))
         elif self.mode == 'aggr_features':
             k = math.sqrt(1.0/self.in_features)
-            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.in_channels, self.in_features, self.out_features, dtype=self.precision), -k, k))
-            self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_channels, self.out_features, dtype=self.precision), -k, k))
+            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.in_features, self.out_features, dtype=self.precision), -k, k))
+            self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_features, dtype=self.precision), -k, k))
         elif self.mode == 'channel_wise':
             k = math.sqrt(1.0 / self.in_features)
-            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_channels, self.in_features, self.out_features, dtype=self.precision), -k, k))
+            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.num_heads, self.in_features, self.out_features, dtype=self.precision), -k, k))
             self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_channels, self.out_features, dtype=self.precision), -k, k))
 
         self.layer = torch.nn.Linear(self.in_features, self.out_features, self.bias, self.device, self.precision)
@@ -50,8 +50,10 @@ class LinearLayer(FrameworkLayer):
         param: pos: int -> the pos argument (ignored)
         """
         if self.mode == 'aggr_features':
+            # apply linear transformation, input is (N, F) self.Param_W is (F, F') and output is (N, F')
             node_representation = node_representation @ self.Param_W
         elif self.mode == 'aggr_channels':
+            # merge channels and features and apply a single linear transformation, i.e., input is (C, N, F) -> (N, CxF) self.Param_W is (CxF, F') and output is (1, N, F')
             # permute (C, N, F) to (N, C, F)
             node_representation = node_representation.permute(1,0,2)
             # convert to (N, CxF)

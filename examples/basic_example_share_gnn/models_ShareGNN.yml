@@ -24,7 +24,6 @@ models:
           { label_type: primary },
         ]
     }
-    - { layer_type: reshape }
     - {
         layer_type: linear,
         out_features: 2,

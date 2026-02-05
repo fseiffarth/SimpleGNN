@@ -46,6 +46,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         layer.layer_dict['name'] = "Invariant Based Message Passing Layer"
         super(InvariantBasedMessagePassingLayer, self).__init__(parameters, layer, graph_data)
 
+        self.out_features = self.in_features * self.num_heads
+
         for h_id, head in enumerate(layer.layer_heads):
             self.source_label_descriptions.append(layer.get_source_string(h_id))
             self.n_source_labels.append(graph_data.node_labels[self.source_label_descriptions[h_id]].num_unique_node_labels)
@@ -115,8 +117,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 for idx in range(len(graph_data)):
                     # if number of graphs is larger than 10000 print progress
                     if len(graph_data) > 10000 and idx % 1000 == 0:
-                        print(f'Head {i+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}',
-                                end='\r', flush=True)
+                        print(f'Head {i+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}', flush=True)
                     # get the valid indices for the current graph
                     if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
                         valid_indices_graph = torch.where(valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx+1]])[0] + property_subdict_slices[idx]
@@ -297,26 +298,23 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
     def forward(self, node_representation:torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
         # get pos from kwargs
         pos = kwargs.get('pos', 0)
-        # automatically modifiy input if node_representation is 3-dimensional, i.e., (N, F) -> (1, N, F)
-        if node_representation.dim() == 3:
-            if node_representation.size(0) != 1:
-                raise ValueError("Input tensor x must have size 1 in the first dimension for InvariantBasedMessagePassingLayer")
-            node_representation = node_representation.squeeze(0)
         begin = time.time()
         # set the weights, i.e., sets self.current_W to (C, N, N) where C is the number of channels and N is the number of nodes in graph at position pos of the dataset
         self.set_weights(pos)
-
-        self.forward_step_time += time.time() - begin
         if self.para.run_config.config.get('degree_matrix', False):
             node_representation = self.in_edges[pos]*torch.einsum('cij,jk->cik', torch.diag(self.D[pos]) @ self.current_W @ torch.diag(self.D[pos]), node_representation)
         elif self.para.run_config.config.get('use_in_degrees', False):
             node_representation = self.in_edges[pos]*torch.einsum('cij,jk->cik', self.current_W, node_representation)
         else:
-            node_representation = torch.einsum('cij,jk->cik', self.current_W, node_representation)
+            node_representation = torch.einsum('hij,jf->hif', self.current_W, node_representation)
         if self.bias:
             self.set_bias(pos)
             node_representation = node_representation + self.current_B
+        node_representation = node_representation.permute(1, 2, 0)
+        # merge dimensions 1 and 2
+        node_representation = node_representation.flatten(start_dim=1)
         node_representation = self.activation(node_representation)
+        self.forward_step_time += time.time() - begin
         return node_representation
 
 

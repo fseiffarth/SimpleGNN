@@ -864,7 +864,7 @@ class ModelConfiguration:
             for batch in batches:
                 total_out_len += len(batch)
             if self.graph_data.num_classes == 1:
-                outputs = torch.zeros((len(batch)), dtype=self.dtype).to(self.device)
+                outputs = torch.zeros((total_out_len), dtype=self.dtype).to(self.device)
             else:
                 outputs = torch.zeros((total_out_len, self.graph_data.num_classes), dtype=self.dtype).to(self.device)
             loader = CustomBatchLoader(self.graph_data, batches)
@@ -879,9 +879,6 @@ class ModelConfiguration:
                 for j, data_pos in enumerate(graph_ids):
                     self.net.train(False)
                     outputs[j] = self.net(self.graph_data[data_pos], pos=data_pos)
-            # squeeze second dimension if it is one
-            if outputs.shape[1] == 1:
-                outputs = outputs.squeeze(1)
         return labels, outputs
 
     def train_node_task(self, epoch, values, train_batches, random_variation_bool, timer):
