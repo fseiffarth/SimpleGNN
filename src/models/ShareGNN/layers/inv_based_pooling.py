@@ -5,6 +5,7 @@ import matplotlib
 import networkx as nx
 import numpy as np
 import torch
+from pandas.core.array_algos.masked_accumulations import cumsum
 from torch import nn
 
 from datasets.graph_dataset import GraphDataset
@@ -35,43 +36,36 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
         self.n_node_labels = [] # number of node labels per head
         self.node_label_descriptions = [] # node label descriptions per head
+        self.n_heads_per_label = [] # number of heads per node label description
         # bias per head
         self.bias_list = [head.bias for head in layer.layer_heads]
         # is there any bias
         self.bias = any(self.bias_list)
-        for i, head in enumerate(layer.layer_heads):
-            self.node_label_descriptions.append(layer.get_source_string(i))
-            self.n_node_labels.append(self.graph_data.node_labels[self.node_label_descriptions[i]].num_unique_node_labels)
+        for head_id, head in enumerate(layer.layer_heads):
+            self.node_label_descriptions.append(layer.get_source_string(head_id))
+            self.n_node_labels.append(self.graph_data.node_labels[self.node_label_descriptions[head_id]].num_unique_node_labels)
+            self.n_heads_per_label.append(head.num)
 
-        self.weight_num = np.sum(self.n_node_labels) * self.output_dimension
-        self.weight_distribution = [None] * len(self.graph_data)
+        self.weight_num = np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(len(layer.layer_heads))])
+        self.weight_distribution = torch.zeros((len(self.graph_data.x), self.num_heads), dtype=torch.int64)
+        # merge the bias distribution of all graphs (creating additionally slicing information)
+        self.weight_distribution_slices = self.graph_data.slices['x']
 
-        for i, head in enumerate(layer.layer_heads):
-            node_labels = self.graph_data.node_labels[self.node_label_descriptions[i]].node_labels
+        for head_id, head in enumerate(layer.layer_heads):
+            node_labels = self.graph_data.node_labels[self.node_label_descriptions[head_id]].node_labels
             # Set the bias weights
             _, indices, counts = torch.unique(node_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
             for idx in range(len(self.graph_data)):
-                for out_dim_id in range(self.output_dimension):
-                    new_weight_distribution = torch.zeros((self.graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
-                    new_weight_distribution[:, 0] = i
-                    new_weight_distribution[:, 1] = out_dim_id
-                    new_weight_distribution[:, 2] = torch.arange(self.graph_data.num_nodes[idx].item()) # torch.arange(start=self.graph_data.slices['x'][idx], end=self.graph_data.slices['x'][idx+1], dtype=torch.int64)
-                    new_weight_distribution[:, 3] = indices[self.graph_data.slices['x'][idx]:self.graph_data.slices['x'][idx+1]] + out_dim_id * self.n_node_labels[i]
-                    if self.weight_distribution[idx] is None:
-                        self.weight_distribution[idx] = new_weight_distribution.detach().clone()
-                    else:
-                        self.weight_distribution[idx] = torch.cat((self.weight_distribution[idx], new_weight_distribution), dim=0)
+                for h_num in range(head.num):
+                    self.weight_distribution[self.graph_data.slices['x'][idx]:self.graph_data.slices['x'][idx+1], np.sum(self.n_heads_per_label[:head_id], dtype=int) + h_num] = indices[self.graph_data.slices['x'][idx]:self.graph_data.slices['x'][idx+1]] + h_num * self.n_node_labels[head_id] + np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(head_id)], dtype=int)
 
 
-        # merge the bias distribution of all graphs (creating additionally slicing information)
-        self.weight_distribution_slices = torch.tensor([0] + [len(w) for w in self.weight_distribution], dtype=torch.int64).cumsum(dim=0)
-        self.weight_distribution = torch.cat([self.weight_distribution[i] for i in range(len(self.graph_data))], dim=0).to(self.device)
 
         self.Param_W = self.init_weights(self.weight_num, init_type='aggregation')
 
 
         if self.bias:
-            self.Param_b = self.init_weights(shape=(self.num_heads, self.output_dimension, self.in_features), init_type='aggregation_bias').to(self.device)
+            self.Param_b = self.init_weights(shape=(self.num_heads, self.in_features), init_type='aggregation_bias').to(self.device)
         self.forward_step_time = 0
 
 
@@ -122,11 +116,9 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
     def set_weights(self, pos):
         input_size = self.graph_data.num_nodes[pos]
-        self.current_W = torch.zeros((self.num_heads, self.output_dimension, input_size), dtype=self.precision).to(self.device)
+        self.current_W = torch.zeros((input_size, self.num_heads), dtype=self.precision).to(self.device)
         weight_distr = self.weight_distribution[self.weight_distribution_slices[pos]:self.weight_distribution_slices[pos+1]]
-        param_indices = weight_distr[:, 3]
-        matrix_indices = weight_distr[:, 0:3].T
-        self.current_W[matrix_indices[0], matrix_indices[1], matrix_indices[2]] = torch.take(self.Param_W, param_indices)
+        self.current_W = torch.take(self.Param_W, weight_distr)
         # divide the weights by the number of nodes in the graph
         #self.current_W = self.current_W / input_size
         pass
@@ -164,7 +156,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         pos = kwargs.get('pos', 0)
         begin = time.time()
         self.set_weights(pos)
-        node_representation = torch.einsum('hoj,jf->hof', self.current_W, node_representation)
+        node_representation = torch.einsum('no,nf->of', self.current_W, node_representation)
         if self.bias:
             node_representation = node_representation + self.Param_b
         node_representation = node_representation.flatten().unsqueeze(0)

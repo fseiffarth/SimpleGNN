@@ -47,6 +47,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         super(InvariantBasedMessagePassingLayer, self).__init__(parameters, layer, graph_data)
 
         self.out_features = self.in_features * self.num_heads
+        self.n_heads_per_label = [] # number of heads per node label description
 
         for h_id, head in enumerate(layer.layer_heads):
             self.source_label_descriptions.append(layer.get_source_string(h_id))
@@ -57,30 +58,34 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             self.n_bias_labels.append(graph_data.node_labels[self.bias_label_descriptions[h_id]].num_unique_node_labels)
             self.property_descriptions.append(head.property_dict.get_property_string())
             self.n_properties.append(graph_data.properties[self.property_descriptions[h_id]].num_properties[(self.layer_id, h_id)])
+            self.n_heads_per_label.append(head.num)
 
         self.bias_list = [head.bias for head in layer.layer_heads]
         self.bias = any(self.bias_list)  # check if bias is used
+
+
 
         # Determine the number of weights and biases
         # There are two cases asymetric and symmetric, asymetric is the default, TODO add symmetric case
         self.skips = [0]
         self.skips_description = [None]
         self.skips_description_text = [None]
-        self.weight_distribution = [None] * len(graph_data)
+        weight_dist_default_size = 1000000
+        self.weight_distribution = torch.zeros((weight_dist_default_size, self.num_heads), dtype=torch.int64).to(self.device)
         self.bias_distribution = [None] * len(graph_data)
 
         # Iterate over all heads in the layer
-        for i, head in enumerate(self.layer.layer_heads):
+        for head_id, head in enumerate(self.layer.layer_heads):
             # get all the valid property values for the head (e.g., the distances 0, 3, 6)
-            valid_property_values = self.graph_data.properties[self.property_descriptions[i]].valid_values[(self.layer_id, i)]
+            valid_property_values = self.graph_data.properties[self.property_descriptions[head_id]].valid_values[(self.layer_id, head_id)]
             # apply the head and tail labels to the subdict
-            source_labels = self.graph_data.node_labels[self.source_label_descriptions[i]].node_labels
-            target_labels = self.graph_data.node_labels[self.target_label_descriptions[i]].node_labels
-            bias_labels = self.graph_data.node_labels[self.bias_label_descriptions[i]].node_labels
+            source_labels = self.graph_data.node_labels[self.source_label_descriptions[head_id]].node_labels
+            target_labels = self.graph_data.node_labels[self.target_label_descriptions[head_id]].node_labels
+            bias_labels = self.graph_data.node_labels[self.bias_label_descriptions[head_id]].node_labels
             for key in valid_property_values:
                 #print(f'Initialize head {i+1}/{len(self.layer.layer_heads)} with property {key}')
-                property_subdict = self.graph_data.properties[self.property_descriptions[i]].properties[key]
-                property_subdict_slices = self.graph_data.properties[self.property_descriptions[i]].properties_slices[key]
+                property_subdict = self.graph_data.properties[self.property_descriptions[head_id]].properties[key]
+                property_subdict_slices = self.graph_data.properties[self.property_descriptions[head_id]].properties_slices[key]
                 labeled_subdict = property_subdict.detach().clone()
                 labeled_subdict[:, 0] = source_labels[property_subdict[:, 0]]
                 labeled_subdict[:, 1] = target_labels[property_subdict[:, 1]]
@@ -117,27 +122,28 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 for idx in range(len(graph_data)):
                     # if number of graphs is larger than 10000 print progress
                     if len(graph_data) > 10000 and idx % 1000 == 0:
-                        print(f'Head {i+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}', flush=True)
+                        print(f'Head {head_id+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}', flush=True)
                     # get the valid indices for the current graph
                     if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
                         valid_indices_graph = torch.where(valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx+1]])[0] + property_subdict_slices[idx]
                     else:
                         valid_indices_graph = torch.arange(property_subdict_slices[idx], property_subdict_slices[idx+1], dtype=torch.int64)
                     # create new tensor where each row is the concatenation of head_id, property_subdict_row, and indices
-                    new_weight_distribution = torch.zeros((len(valid_indices_graph), 4), dtype=torch.int64)
-                    new_weight_distribution[:, 0] = i
-                    new_weight_distribution[:, 1:3] = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx] # check if subtracting is necessary
-                    new_weight_distribution[:, 3] = indices[valid_indices_graph] + self.skips[-1]
-                    if self.weight_distribution[idx] is None:
-                        self.weight_distribution[idx] = new_weight_distribution.detach().clone()
-                    else:
-                        self.weight_distribution[idx] = torch.cat((self.weight_distribution[idx], new_weight_distribution), dim=0)
+                    for j in range(head.num):
+                        new_weight_distribution = torch.zeros((len(valid_indices_graph), 4), dtype=torch.int64)
+                        new_weight_distribution[:, 0] = head_id
+                        new_weight_distribution[:, 1:3] = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx] # check if subtracting is necessary
+                        new_weight_distribution[:, 3] = indices[valid_indices_graph] + self.skips[-1]
+                        if self.weight_distribution[idx] is None:
+                            self.weight_distribution[idx] = new_weight_distribution.detach().clone()
+                        else:
+                            self.weight_distribution[idx] = torch.cat((self.weight_distribution[idx], new_weight_distribution), dim=0)
 
 
 
                 self.skips.append(self.skips[-1] + num_weights)
-                self.skips_description.append({'head:': i, 'property': key, 'weights': num_weights})
-                self.skips_description_text.append(f"Head {i} Property {key} has {num_weights} different weights")
+                self.skips_description.append({'head:': head_id, 'property': key, 'weights': num_weights})
+                self.skips_description_text.append(f"Head {head_id} Property {key} has {num_weights} different weights")
 
 
             self.weight_num.append(self.skips[-1])
@@ -145,16 +151,16 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
             if self.bias:
                 # Determine the number of different learnable parameters in the bias vector
-                self.bias_num.append(self.in_features * self.n_bias_labels[i])
+                self.bias_num.append(self.in_features * self.n_bias_labels[head_id])
                 # Set the bias weights
                 _, indices, counts = torch.unique(bias_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
                 for idx in range(len(graph_data)):
                     for feature_id in range(self.in_features):
                         new_bias_distribution = torch.zeros((graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
-                        new_bias_distribution[:, 0] = i
+                        new_bias_distribution[:, 0] = head_id
                         new_bias_distribution[:, 1] = torch.arange(graph_data.num_nodes[idx].item(), dtype=torch.int64) # alternative torch.arange(start=graph_data.slices['x'][idx], end=graph_data.slices['x'][idx+1], dtype=torch.int64)
                         new_bias_distribution[:, 2] = feature_id
-                        new_bias_distribution[:, 3] = indices[graph_data.slices['x'][idx]:graph_data.slices['x'][idx+1]] + feature_id * self.n_bias_labels[i]
+                        new_bias_distribution[:, 3] = indices[graph_data.slices['x'][idx]:graph_data.slices['x'][idx+1]] + feature_id * self.n_bias_labels[head_id]
                         if self.bias_distribution[idx] is None:
                             self.bias_distribution[idx] = new_bias_distribution.detach().clone()
                         else:

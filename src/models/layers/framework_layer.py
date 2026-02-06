@@ -61,6 +61,10 @@ class FrameworkLayer(torch.nn.Module, ABC):
             raise ValueError("out_channels must be provided")
 
         self.num_heads = layer_args.get('num_heads', 1)
+        if 'heads' in layer_args:
+            self.num_heads = 0
+            for head in layer_args['heads']:
+                self.num_heads += head['num']
 
 
         # Whether to use residual connections in this layer
