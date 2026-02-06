@@ -10,6 +10,7 @@ models:
         activation: torch.nn.Identity(),
         heads: [
           {
+            num: 1,
             bias: True,
             labels: {
               head: { label_type: induced_cycles, min_cycle_length: 6 , max_cycle_length: 6 },
@@ -20,6 +21,7 @@ models:
               { name: distances, values: [1 ] },
           },
           {
+            num: 1,
             bias: True,
             labels: {
               head: { label_type: simple_cycles, min_cycle_length: 6 , max_cycle_length: 6 },

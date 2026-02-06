@@ -10,7 +10,7 @@ datasets:
       labels: "data/ZINC/labels/", # path to the labels
       properties: "data/ZINC/properties/", # path to the precomputed properties
       results: "results/test/ShareGNN/", # path to save the results
-      models: "examples/zinc/models_ShareGNN.yml", # path to the model configuration file
+      models: "examples/zinc/test_models_ShareGNN.yml", # path to the model configuration file
       hyperparameters: "examples/zinc/parameters.yml", # path to the hyperparameters configuration file
       splits: "src/datasets/splits/fixed/ZINC_splits.json", # path to the data splits file (contains train/val/test splits)
     }

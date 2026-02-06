@@ -203,48 +203,50 @@ def check_layer(i:int, layer: dict)->(bool, str):
                 return False, f'{req} not defined in layer {i}'
     else:
         if 'heads' not in layer:
-            return False, f'Channels not defined in layer {i}'
+            return False, f'Heads not defined in layer {i}'
         else:
             if not isinstance(layer['heads'], list):
-                return False, f'Channels must be a list in layer {i}'
+                return False, f'Heads must be a list in layer {i}'
             else:
-                for channel in layer['heads']:
-                    if not isinstance(channel, dict):
+                for j, heads in enumerate(layer['heads']):
+                    if not isinstance(heads, dict):
                         return False, f'Channel must be a dictionary in layer {i}'
-                    if 'bias' not in channel:
+                    if 'bias' not in heads:
                         return False, f'Bias not defined in layer {i}, it must be True or False'
-                    if 'labels' not in channel:
-                        return False, f'Labels not defined in channel {i}'
+                    if 'num' not in heads:
+                        return False, f'Number of heads must be defined in head {j}'
+                    if 'labels' not in heads:
+                        return False, f'Labels not defined in head {j}'
                     else:
-                        if layer['layer_type'] == 'convolution':
-                            if 'head' not in channel['labels']:
-                                return False, f'Head not defined in channel {i}'
+                        if layer['layer_type'] == 'invariant_based_convolution':
+                            if 'head' not in heads['labels']:
+                                return False, f'Head not defined in head {i}'
                             else:
-                                if 'label_type' not in channel['labels']['head']:
-                                    return False, f'Label type not defined in channel {i} for head'
-                            if 'tail' not in channel['labels']:
-                                return False, f'Tail not defined in channel {i}'
+                                if 'label_type' not in heads['labels']['head']:
+                                    return False, f'Label type not defined in head {i} for head'
+                            if 'tail' not in heads['labels']:
+                                return False, f'Tail not defined in head {i}'
                             else:
-                                if 'label_type' not in channel['labels']['tail']:
-                                    return False, f'Label type not defined in channel {i} for tail'
-                            if 'bias' not in channel['labels']:
-                                return False, f'Bias not defined in channel {i}'
+                                if 'label_type' not in heads['labels']['tail']:
+                                    return False, f'Label type not defined in head {i} for tail'
+                            if 'bias' not in heads['labels']:
+                                return False, f'Bias not defined in head {i}'
                             else:
-                                if 'label_type' not in channel['labels']['bias']:
-                                    return False, f'Label type not defined in channel {i} for bias'
-                            if 'properties' not in channel:
-                                return False, f'Properties not defined in channel {i}'
+                                if 'label_type' not in heads['labels']['bias']:
+                                    return False, f'Label type not defined in head {i} for bias'
+                            if 'properties' not in heads:
+                                return False, f'Properties not defined in head {i}'
                             else:
-                                if 'name' not in channel['properties']:
-                                    return False, f'Property name not defined in channel {i}'
-                                if 'values' not in channel['properties']:
-                                    return False, f'Property values not defined in channel {i}'
+                                if 'name' not in heads['properties']:
+                                    return False, f'Property name not defined in head {i}'
+                                if 'values' not in heads['properties']:
+                                    return False, f'Property values not defined in head {i}'
                                 else:
-                                    if not isinstance(channel['properties']['values'], list):
-                                        return False, f'Property values must be a list in channel {i}'
+                                    if not isinstance(heads['properties']['values'], list):
+                                        return False, f'Property values must be a list in head {i}'
                         elif layer['layer_type'] == 'aggregation':
-                            if 'label_type' not in channel['labels']:
-                                return False, f'Label type not defined in channel {i}'
+                            if 'label_type' not in heads['labels']:
+                                return False, f'Label type not defined in head {i}'
 
     return True, ''
 
@@ -254,10 +256,10 @@ def check_layer_short_type(i, layer):
     if 'bias' not in layer:
         return False, f'Bias not defined in layer {i}, it must be True or False'
     if 'heads' not in layer:
-        return False, f'Channels not defined in layer {i}, it must be a list of ints of parallel channels used'
+        return False, f'Heads not defined in layer {i}, it must be a list of ints of parallel Heads used'
     else:
         if not isinstance(layer['heads'], list):
-            return False, f'Channels must be a list in layer {i}'
+            return False, f'Heads must be a list in layer {i}'
     if 'labels' not in layer:
         return False, f'Labels not defined in layer {i}'
     else:
