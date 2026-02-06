@@ -42,13 +42,14 @@ models:
     - { layer_type: invariant_based_aggregation,
         activation: torch.nn.Identity(),
         bias: True,
-        out_dim: 10,
         heads: [
           {
+            num: 10,
             bias: True,
             labels: { label_type: [induced_cycles, primary], min_cycle_length: 6 , max_cycle_length: 6 },
           },
           {
+            num: 10,
             bias: True,
             labels: { label_type: [induced_cycles, primary], min_cycle_length: 7 , max_cycle_length: 7 },
           },

@@ -144,7 +144,7 @@ def layer_from_yml_invariant_based(layer_id, layer_yml, layers_per_architecture,
                     layers_per_architecture.append([])
             layers_per_architecture[layer_id] = option_dicts.copy()
         else:
-            raise ValueError(f'Layer {layer_id} is not correctly defined: {error}')
+            raise ValueError(f'Layer {layer_yml} with id: {layer_id} is not correctly defined: {error}')
 
 
 def check_layer(i:int, layer: dict)->(bool, str):
@@ -201,7 +201,7 @@ def check_layer(i:int, layer: dict)->(bool, str):
         for req in required:
             if req not in layer:
                 return False, f'{req} not defined in layer {i}'
-    else:
+    elif layer['layer_type'] in [LayerTypes.INVARIANT_BASED_CONVOLUTION.value, LayerTypes.INVARIANT_BASED_AGGREGATION.value]:
         if 'heads' not in layer:
             return False, f'Heads not defined in layer {i}'
         else:
@@ -244,9 +244,11 @@ def check_layer(i:int, layer: dict)->(bool, str):
                                 else:
                                     if not isinstance(heads['properties']['values'], list):
                                         return False, f'Property values must be a list in head {i}'
-                        elif layer['layer_type'] == 'aggregation':
+                        elif layer['layer_type'] == 'invariant_based_aggregation':
                             if 'label_type' not in heads['labels']:
                                 return False, f'Label type not defined in head {i}'
+    else:
+        return False, f'Layer type {layer["layer_type"]} not supported in layer {i}'
 
     return True, ''
 

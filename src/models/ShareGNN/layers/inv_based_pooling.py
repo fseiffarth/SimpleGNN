@@ -31,12 +31,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         layer.layer_dict['name'] = "Invariant Based Aggregation Layer"
         super(InvariantBasedAggregationLayer, self).__init__(parameters, layer, graph_data)
 
-        # fixed output dimension of the layer
-        self.output_dimension = layer.layer_dict.get('out_dim', None)
-        if self.output_dimension is None:
-            raise ValueError("out_dim must be provided for the InvariantBasedAggregationLayer")
-
-        self.out_features = self.in_features * self.num_heads*self.output_dimension
+        self.out_features = self.in_features * self.num_heads
 
         self.n_node_labels = [] # number of node labels per head
         self.node_label_descriptions = [] # node label descriptions per head

@@ -122,21 +122,12 @@ class GraphModel(torch.nn.Module):
             return InvariantBasedAggregationLayer(layer=layer,
                                                                   parameters=self.para,
                                                                   graph_data=self.graph_data,).requires_grad_(self.aggregation_grad)
-        elif layer.layer_type == LayerTypes.SHARE_GNN_LINEAR.value:
-            return ShareGNNLinear(layer_id=layer_id,
-                                         seed=self.seed,
-                                         layer=layer,
-                                         parameters=self.para,
-                                         graph_data=self.graph_data,
-                                         in_features=in_features).type(self.precision).requires_grad_()
         elif layer.layer_type in [LayerTypes.GCN_CONVOLUTION.value,
                                   LayerTypes.GAT_CONVOLUTION.value,
                                   LayerTypes.GATv2_CONVOLUTION.value,
                                   LayerTypes.GIN_CONVOLUTION.value,
                                   LayerTypes.SAGE_CONVOLUTION.value]:
             layer_args = layer.layer_dict
-            layer_args['in_channels'] = in_features
-            current_feature_dimension = layer_args['out_channels']
             # GNN specific layers
             if layer.layer_type == LayerTypes.GCN_CONVOLUTION.value:
                 self.net_layers.append(GCNConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad))
