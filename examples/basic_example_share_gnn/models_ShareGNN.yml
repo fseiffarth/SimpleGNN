@@ -15,6 +15,7 @@ models:
   }
     - { layer_type: invariant_based_aggregation,
         activation: torch.nn.Tanh(),
+        out_dim: 2,
         bias: True,
         heads: [1],
         labels: [
@@ -23,10 +24,5 @@ models:
           { label_type: [induced_cycles, primary], max_cycle_length: [10, 20] },
           { label_type: primary },
         ]
-    }
-    - {
-        layer_type: linear,
-        out_features: 2,
-        bias: True,
     }
 

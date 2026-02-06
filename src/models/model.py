@@ -59,8 +59,8 @@ class GraphModel(torch.nn.Module):
     def forward(self, batch_data, *args, **kwargs):
         x = batch_data.x
         if self.random_variation_bool:
-            mean = self.para.run_config.config['in_features']['random_variation'].get('mean', 0.0)
-            std = self.para.run_config.config['in_features']['random_variation'].get('std', 0.1)
+            mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
+            std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
             if self.para.run_config.config.get('precision', 'double') == 'float':
                 random_variation = torch.normal(mean=mean, std=std, size=x.size(),
                                                 dtype=torch.float)
