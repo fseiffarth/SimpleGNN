@@ -71,7 +71,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         self.skips_description = [None]
         self.skips_description_text = [None]
         weight_dist_default_size = 1000000
-        self.weight_distribution = torch.zeros((weight_dist_default_size, self.num_heads), dtype=torch.int64).to(self.device)
+        self.weight_distribution = torch.zeros((weight_dist_default_size, 4), dtype=torch.int64).to(self.device)
+        last_weight_distribution_index = 0
         self.bias_distribution = [None] * len(graph_data)
 
         # Iterate over all heads in the layer
@@ -119,27 +120,22 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     indices[valid_indices] = torch.tensor([valid_value_dict[idx.item()] for idx in indices[valid_indices]], dtype=torch.int64)
                     num_weights = len(valid_values)
                 start_time = time.time()
-                for idx in range(len(graph_data)):
-                    # if number of graphs is larger than 10000 print progress
-                    if len(graph_data) > 10000 and idx % 1000 == 0:
-                        print(f'Head {head_id+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}', flush=True)
-                    # get the valid indices for the current graph
-                    if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
-                        valid_indices_graph = torch.where(valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx+1]])[0] + property_subdict_slices[idx]
-                    else:
-                        valid_indices_graph = torch.arange(property_subdict_slices[idx], property_subdict_slices[idx+1], dtype=torch.int64)
-                    # create new tensor where each row is the concatenation of head_id, property_subdict_row, and indices
-                    for j in range(head.num):
-                        new_weight_distribution = torch.zeros((len(valid_indices_graph), 4), dtype=torch.int64)
-                        new_weight_distribution[:, 0] = head_id
-                        new_weight_distribution[:, 1:3] = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx] # check if subtracting is necessary
-                        new_weight_distribution[:, 3] = indices[valid_indices_graph] + self.skips[-1]
-                        if self.weight_distribution[idx] is None:
-                            self.weight_distribution[idx] = new_weight_distribution.detach().clone()
+                for j in range(head.num):
+                    for idx in range(len(graph_data)):
+                        # if number of graphs is larger than 10000 print progress
+                        if len(graph_data) > 10000 and idx % 1000 == 0:
+                            print(f'Head {head_id+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}', flush=True)
+                        # get the valid indices for the current graph
+                        if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
+                            valid_indices_graph = torch.where(valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx+1]])[0] + property_subdict_slices[idx]
                         else:
-                            self.weight_distribution[idx] = torch.cat((self.weight_distribution[idx], new_weight_distribution), dim=0)
+                            valid_indices_graph = torch.arange(property_subdict_slices[idx], property_subdict_slices[idx+1], dtype=torch.int64)
+                        # create new tensor where each row is the concatenation of head_id, property_subdict_row, and indices
 
-
+                        # Use self.weight_distribution directly
+                        self.weight_distribution[last_weight_distribution_index:last_weight_distribution_index + len(valid_indices_graph), 0] = head_id
+                        self.weight_distribution[last_weight_distribution_index:last_weight_distribution_index + len(valid_indices_graph), 1:3] = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx] # check if subtracting is necessary
+                        self.weight_distribution[last_weight_distribution_index:last_weight_distribution_index + len(valid_indices_graph), 3] = indices[valid_indices_graph] + self.skips[-1]
 
                 self.skips.append(self.skips[-1] + num_weights)
                 self.skips_description.append({'head:': head_id, 'property': key, 'weights': num_weights})
