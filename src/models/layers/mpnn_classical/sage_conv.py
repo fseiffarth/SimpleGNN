@@ -29,5 +29,5 @@ class SAGEConv(GNNConvLayer):
         if self.residual:
             node_representation = node_representation + x
         if self.dropout > 0 and self.training:
-            node_representation = torch.nn.Dropout(self.dropout)(node_representation)
+            node_representation = torch.nn.functional.dropout(node_representation, p=self.dropout, training=self.training)
         return node_representation

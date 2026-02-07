@@ -30,9 +30,6 @@ class ShareGNNLinear(FrameworkLayer):
             self.in_features = in_features
         self.in_features = layer.layer_dict.get('in_features', self.in_features)
 
-        self.out_features = graph_data.num_node_features
-        if out_features is not None:
-            self.out_features = out_features
         self.out_features = layer.layer_dict.get('out_features', self.in_features)
 
         # determine the number of heads

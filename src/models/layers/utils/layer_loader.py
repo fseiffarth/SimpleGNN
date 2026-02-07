@@ -208,44 +208,44 @@ def check_layer(i:int, layer: dict)->(bool, str):
             if not isinstance(layer['heads'], list):
                 return False, f'Heads must be a list in layer {i}'
             else:
-                for j, head in enumerate(layer['heads']):
-                    if not isinstance(head, dict):
+                for j, heads in enumerate(layer['heads']):
+                    if not isinstance(heads, dict):
                         return False, f'Channel must be a dictionary in layer {i}'
-                    if 'bias' not in head:
+                    if 'bias' not in heads:
                         return False, f'Bias not defined in layer {i}, it must be True or False'
-                    if 'num' not in head:
+                    if 'num' not in heads:
                         return False, f'Number of heads must be defined in head {j}'
-                    if 'labels' not in head:
+                    if 'labels' not in heads:
                         return False, f'Labels not defined in head {j}'
                     else:
                         if layer['layer_type'] == 'invariant_based_convolution':
-                            if 'head' not in head['labels']:
+                            if 'head' not in heads['labels']:
                                 return False, f'Head not defined in head {i}'
                             else:
-                                if 'label_type' not in head['labels']['head']:
+                                if 'label_type' not in heads['labels']['head']:
                                     return False, f'Label type not defined in head {i} for head'
-                            if 'tail' not in head['labels']:
+                            if 'tail' not in heads['labels']:
                                 return False, f'Tail not defined in head {i}'
                             else:
-                                if 'label_type' not in head['labels']['tail']:
+                                if 'label_type' not in heads['labels']['tail']:
                                     return False, f'Label type not defined in head {i} for tail'
-                            if 'bias' not in head['labels']:
+                            if 'bias' not in heads['labels']:
                                 return False, f'Bias not defined in head {i}'
                             else:
-                                if 'label_type' not in head['labels']['bias']:
+                                if 'label_type' not in heads['labels']['bias']:
                                     return False, f'Label type not defined in head {i} for bias'
-                            if 'properties' not in head:
+                            if 'properties' not in heads:
                                 return False, f'Properties not defined in head {i}'
                             else:
-                                if 'name' not in head['properties']:
+                                if 'name' not in heads['properties']:
                                     return False, f'Property name not defined in head {i}'
-                                if 'values' not in head['properties']:
+                                if 'values' not in heads['properties']:
                                     return False, f'Property values not defined in head {i}'
                                 else:
-                                    if not isinstance(head['properties']['values'], list):
+                                    if not isinstance(heads['properties']['values'], list):
                                         return False, f'Property values must be a list in head {i}'
                         elif layer['layer_type'] == 'invariant_based_aggregation':
-                            if 'label_type' not in head['labels']:
+                            if 'label_type' not in heads['labels']:
                                 return False, f'Label type not defined in head {i}'
     else:
         return False, f'Layer type {layer["layer_type"]} not supported in layer {i}'

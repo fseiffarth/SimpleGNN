@@ -46,5 +46,5 @@ class GATv2Conv(GNNConvLayer):
             else: # add residual to each head separately
                 node_representation = node_representation + x.repeat(1, self.gatv2_args['heads'])
         if self.dropout > 0 and self.training:
-            node_representation = torch.nn.Dropout(self.dropout)(node_representation)
+            node_representation = torch.nn.functional.dropout(node_representation, p=self.dropout, training=self.training)
         return node_representation

@@ -71,7 +71,6 @@ class LayerHead:
     """
     def __init__(self, info_dict: dict, head_id):
         self.head_id = head_id
-        self.num = info_dict.get('num', 1) # How often the same head is applied
         self.label_dict = LabelDict(info_dict.get('labels', None))
         self.property_dict = PropertyDict(info_dict.get('properties', None))
         # if head, tail, bias is not specified, set head tail bias to the same value
@@ -132,7 +131,7 @@ class Layer:
         unique_dicts = []
         for head in self.layer_heads:
             if head.property_dict.property_dict not in unique_dicts and head.property_dict.property_dict is not None:
-                unique_dicts.append(head.property_dict)
+                unique_dicts.append(head.property_dict.property_dict)
         return unique_dicts
 
     def get_source_string(self, head_id=0):

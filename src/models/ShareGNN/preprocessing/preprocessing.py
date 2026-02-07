@@ -150,7 +150,8 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
                     raise ValueError(
                         f'Please specify the subgraphs in the config files under the key "subgraphs" as folllows: subgraphs: - "[nx.complete_graph(4)]"')
                 else:
-                    subgraph_list = eval(experiment_configuration['subgraphs'][layer['id']])
+                    import ast
+                    subgraph_list = ast.literal_eval(experiment_configuration['subgraphs'][layer['id']])
                     file_path = save_subgraph_labels(graph_data=graph_data,
                                                      subgraphs=subgraph_list,
                                                      subgraph_id=layer['id'],
