@@ -59,6 +59,8 @@ class ModelConfiguration:
         self.scheduler = None
         self.net = None
         self.class_weights = None
+        self._csv_buffer = []
+        self._csv_flush_interval = 50
         # get gpu or cpu: (cpu is recommended at the moment)
         if self.para.run_config.config.get('device', None) is not None:
             self.device = torch.device(self.para.run_config.config['device'] if torch.cuda.is_available() else "cpu")
@@ -102,6 +104,7 @@ class ModelConfiguration:
             # Test early stopping criterion
             if self.early_stopping(epoch):
                 print(f"Early stopping at epoch {epoch}")
+                self._flush_csv_buffer()
                 break
 
             timer.measure("epoch")
@@ -141,10 +144,12 @@ class ModelConfiguration:
                     self.scheduler.step()
 
             # Evaluate the results on training, validation and test set (only if specified in the config or for evaluation)
-            if self.validate_data.size != 0:
+            validation_frequency = self.para.run_config.config.get('validation_frequency', 1)
+            is_validation_epoch = (epoch + 1) % validation_frequency == 0 or epoch == self.para.n_epochs - 1
+            if is_validation_epoch and self.validate_data.size != 0:
                 epoch_values, validation_values, test_values = self.evaluate_results(epoch=epoch,train_values=epoch_values, validation_values=validation_values, test_values=test_values, evaluation_type='validation')
             # check wheter there is a test split
-            if self.test_data.size != 0:
+            if is_validation_epoch and self.test_data.size != 0:
                 epoch_values, validation_values, test_values = self.evaluate_results(epoch=epoch,train_values=epoch_values, validation_values=validation_values, test_values=test_values, evaluation_type='test')
 
             timer.measure("epoch")
@@ -348,7 +353,8 @@ class ModelConfiguration:
                          batch_length=0,
                          num_batches=0,
                          batches=None):
-        self.net.eval()
+        if evaluation_type != 'training':
+            self.net.eval()
         if evaluation_type == 'training':
             batch_acc = 0
             # if num classes is one calculate the mae and mae_std or if the task is regression
@@ -633,7 +639,8 @@ class ModelConfiguration:
                     labels_np = labels_np.T
                     df = pd.DataFrame(labels_np)
                     df.to_csv("Results/Parameter/test_predictions.csv", header=False, index=False, mode='a')
-        self.net.train()
+        if evaluation_type != 'training':
+            self.net.train()
         return train_values, validation_values, test_values
 
     def preprocess_writer(self)-> bool:
@@ -775,11 +782,20 @@ class ModelConfiguration:
                             f"{validation_values.accuracy};{validation_values.loss};" \
                             f"{test_values.accuracy};{test_values.loss}\n"
 
-        # Save file for results
+        # Buffer CSV writes and flush periodically
+        self._csv_buffer.append(res_str)
+        if len(self._csv_buffer) >= self._csv_flush_interval or epoch == self.para.n_epochs - 1:
+            self._flush_csv_buffer()
+
+
+    def _flush_csv_buffer(self):
+        if not self._csv_buffer:
+            return
         file_name = f'{self.para.db}_{self.para.config_id}_Results_run_id_{self.run_id}_validation_step_{self.para.validation_id}.csv'
         final_path = self.results_path.joinpath(f'{self.para.db}/Results/{file_name}')
         with open(final_path, "a") as file_obj:
-            file_obj.write(res_str)
+            file_obj.writelines(self._csv_buffer)
+        self._csv_buffer.clear()
 
 
     def train_graph_task(self, epoch, values, train_batches, timer):
@@ -857,8 +873,9 @@ class ModelConfiguration:
         with torch.no_grad():
             self.net.train(False)
             # Run ordinary GNN
-            # split the graph ids into batches of size 512 to avoid memory issues
-            batches = [graph_ids[i:i + 512] for i in range(0, len(graph_ids), 512)]
+            # split the graph ids into batches to avoid memory issues
+            eval_batch_size = self.para.run_config.config.get('eval_batch_size', 512)
+            batches = [graph_ids[i:i + eval_batch_size] for i in range(0, len(graph_ids), eval_batch_size)]
             # deduce output size from batches and graph data
             total_out_len = 0
             for batch in batches:
@@ -877,7 +894,6 @@ class ModelConfiguration:
             else:
                 # Run Share GNN
                 for j, data_pos in enumerate(graph_ids):
-                    self.net.train(False)
                     outputs[j] = self.net(self.graph_data[data_pos], pos=data_pos)
         return labels, outputs
 
