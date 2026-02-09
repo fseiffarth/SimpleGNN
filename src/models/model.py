@@ -5,7 +5,6 @@ from datasets.graph_dataset import GraphDataset
 from framework.utils.parameters import Parameters
 from models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
 from models.ShareGNN.layers.inv_based_pooling import InvariantBasedAggregationLayer
-from models.ShareGNN.layers.share_gnn_linear import ShareGNNLinear
 from models.layers.mpnn_classical.gat_conv import GATConv
 from models.layers.mpnn_classical.gatv2_conv import GATv2Conv
 from models.layers.mpnn_classical.gcn_conv import GCNConv
