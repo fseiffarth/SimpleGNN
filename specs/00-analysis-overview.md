@@ -21,6 +21,7 @@ See `next_steps.md` for detailed status tracking.
 | `02-training-pipeline-optimizations.md` | Framework training loop and I/O improvements | MEDIUM |
 | `03-model-infrastructure-bugs.md` | Bugs and inconsistencies in layer/model code | HIGH |
 | `04-dataset-and-config-improvements.md` | Dataset handling, config validation, preprocessing | LOW-MEDIUM |
+| `05-parallel-layer-initialization.md` | Parallelize ShareGNN head processing during initialization | HIGH (NEW) |
 
 ## Critical Findings At-a-Glance
 
