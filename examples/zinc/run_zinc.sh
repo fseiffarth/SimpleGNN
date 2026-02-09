@@ -53,8 +53,20 @@ fi
 source "$ENV_DIR" || { echo "Failed to activate virtual environment"; exit 1; }
 echo "Virtual environment activated"
 
+# Set path to Python executable from venv
+PYTHON_BIN="$ROOT_DIR/venv/bin/python"
+if [ ! -f "$PYTHON_BIN" ]; then
+    # Try python3 if python doesn't exist
+    PYTHON_BIN="$ROOT_DIR/venv/bin/python3"
+    if [ ! -f "$PYTHON_BIN" ]; then
+        echo "Error: Python executable not found in virtual environment"
+        exit 1
+    fi
+fi
+echo "Using Python: $PYTHON_BIN"
+
 # Change to src directory for execution
 cd "$ROOT_DIR/src" || { echo "Failed to change directory to src"; exit 1; }
 
 # Run the example
-python -m examples.zinc.main
+"$PYTHON_BIN" -m examples.zinc.main
