@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="269d0d92-ee5d-4e86-8ce2-46ec30eb7939" name="mlai">
+        <fileTransfer accessType="SFTP" host="mlai21.iai.uni-bonn.de" port="22" sshConfigId="4ae2bdf5-5623-4a4f-8900-62cd9cf0e8aa" sshConfig="seiffart@mlai21.iai.uni-bonn.de:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" isUseRsync="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
