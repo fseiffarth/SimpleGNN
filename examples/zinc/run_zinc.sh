@@ -1,5 +1,22 @@
 #!/bin/bash
 # Run ZINC example with ShareGNN
+#
+# Usage:
+#   From repository root:
+#     ./examples/zinc/run_zinc.sh
+#
+#   From zinc directory:
+#     cd examples/zinc
+#     ./run_zinc.sh
+#
+#   From anywhere:
+#     /path/to/repo/examples/zinc/run_zinc.sh
+#
+# This script will:
+#   1. Set PYTHONPATH to the repository root
+#   2. Activate the virtual environment
+#   3. Run the ZINC example with ShareGNN
+#   4. Execute preprocessing, grid search, and evaluation
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
