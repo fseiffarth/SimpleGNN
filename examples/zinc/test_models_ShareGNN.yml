@@ -1,6 +1,6 @@
 models:
   - - { layer_type: linear,
-        out_features: 10,
+        out_features: 4,
         bias: True,
         activation: torch.nn.LeakyReLU(),
       }
@@ -44,25 +44,25 @@ models:
         bias: True,
         heads: [
           {
-            num: 10,
+            num: 4,
             bias: True,
             labels: { label_type: [induced_cycles, primary], min_cycle_length: 6 , max_cycle_length: 6 },
           },
           {
-            num: 10,
+            num: 4,
             bias: True,
             labels: { label_type: [induced_cycles, primary], min_cycle_length: 7 , max_cycle_length: 7 },
           },
         ],
       }
     - { layer_type: linear,
-        out_features: 100,
+        out_features: 16,
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }
     - { layer_type: layer_norm }
     - { layer_type: linear,
-        out_features: 100,
+        out_features: 16,
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }
