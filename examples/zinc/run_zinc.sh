@@ -65,8 +65,8 @@ if [ ! -f "$PYTHON_BIN" ]; then
 fi
 echo "Using Python: $PYTHON_BIN"
 
-# Change to src directory for execution
-cd "$ROOT_DIR/src" || { echo "Failed to change directory to src"; exit 1; }
+# Change to repository root for execution (config paths are relative to repo root)
+cd "$ROOT_DIR" || { echo "Failed to change directory to root"; exit 1; }
 
-# Run the example
+# Run the example (PYTHONPATH includes repo root, so imports work from src/)
 "$PYTHON_BIN" -m examples.zinc.main
