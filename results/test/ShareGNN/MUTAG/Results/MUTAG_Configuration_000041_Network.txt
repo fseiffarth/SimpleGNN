@@ -1,0 +1,41 @@
+Network architecture: [{'layer_type': 'invariant_based_convolution', 'activation': 'torch.nn.Tanh()', 'activation_kwargs': {}, 'heads': [{'bias': False, 'activation': 'torch.nn.Tanh()', 'activation_kwargs': {}, 'labels': {'head': {'label_type': ['simple_cycles', 'primary'], 'max_cycle_length': 6}, 'tail': {'label_type': ['simple_cycles', 'primary'], 'max_cycle_length': 6}, 'bias': {'label_type': ['simple_cycles', 'primary'], 'max_cycle_length': 6}}, 'properties': {'name': 'distances', 'values': [0, 1, 2, 3, 4, 5, 6]}}], 'concatenate_heads': True, 'layer_id': 0, 'device': device(type='cpu'), 'seed': 42, 'in_features': 1, 'in_channels': 1, 'out_features': 1, 'num_heads': 1, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Invariant Based Message Passing Layer'}, {'layer_type': 'invariant_based_aggregation', 'activation': 'torch.nn.Tanh()', 'activation_kwargs': {}, 'out_dim': 2, 'heads': [{'bias': True, 'activation': 'torch.nn.Tanh()', 'activation_kwargs': {}, 'labels': {'label_type': ['wl_labeled'], 'depth': 2}}], 'concatenate_heads': True, 'layer_id': 1, 'device': device(type='cpu'), 'seed': 42, 'in_features': 1, 'in_channels': 1, 'out_features': 1, 'num_heads': 1, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Invariant Based Aggregation Layer'}]
+Optimizer: Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    capturable: False
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 0.01
+    maximize: False
+    weight_decay: 0.0
+)
+Loss function: CrossEntropyLoss()
+Batch size: [32]
+Balanced data: False
+Number of epochs: 100
+
+Layer: Invariant Based Message Passing Layer
+
+Layer Trainable Parameters: 715
+Number of Source Labels (type: simple_cycles_6_primary) in channel 0: 19
+Number of Target Labels (type: simple_cycles_6_primary) in channel 0: 19
+Number of pairwise properties in channel 0: 7
+
+Weight matrix learnable parameters: 715
+Bias learnable parameters: 0
+
+Layer: Invariant Based Aggregation Layer
+
+Layer Trainable Parameters: 1146
+Number of Node Labels (type: wl_labeled_2) in channel 0: 572
+
+Weight matrix learnable parameters: 1144
+Bias learnable parameters: 2
+Layer: net_layers.0.Param_W -> True
+Layer: net_layers.1.Param_W -> True
+Layer: net_layers.1.Param_b -> True
+
+Total trainable parameters: 1861

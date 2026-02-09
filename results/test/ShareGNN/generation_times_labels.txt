@@ -1,0 +1,17 @@
+Generation times for labels
+ZINC, induced_cycles_7induced_cycles_7_7, 2.180790662765503
+ZINC, wl_labeled_edges_1_None, 2.9165494441986084
+ZINC, induced_cycles_10induced_cycles_10_10, 2.205721378326416
+ZINC, simple_cycles_10simple_cycles_10_10, 2.2862324714660645
+ZINC, wl_labeled_edges_0_None, 2.346965789794922
+ZINC, induced_cycles_8induced_cycles_8_8, 2.1540470123291016
+ZINC, induced_cycles_6induced_cycles_6_6, 2.2509803771972656
+ZINC, simple_cycles_6simple_cycles_6_6, 2.3558390140533447
+ZINC, primary, 0.002958059310913086
+ZINC, simple_cycles_7simple_cycles_7_7, 2.261495590209961
+ZINC, simple_cycles_9simple_cycles_9_9, 2.3050084114074707
+ZINC, induced_cycles_9induced_cycles_9_9, 2.191990852355957
+ZINC, simple_cycles_8simple_cycles_8_8, 2.275873899459839
+ZINC, wl_labeled_0, 0.5902950763702393
+ZINC, simple_cycles_5simple_cycles_5_5, 2.275869369506836
+ZINC, induced_cycles_5induced_cycles_5_5, 2.2718536853790283

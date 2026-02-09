@@ -1,0 +1,104 @@
+Network architecture: [{'layer_type': 'linear', 'out_features': 64, 'bias': True, 'activation': 'torch.nn.LeakyReLU()'}, {'layer_type': 'gin_convolution', 'bias': True, 'out_channels': 64, 'activation': 'torch.nn.LeakyReLU()', 'batch_norm': True, 'residual': False, 'edge_dim': 4, 'dropout': 0.2, 'in_channels': 64}, {'layer_type': 'gin_convolution', 'bias': True, 'out_channels': 64, 'activation': 'torch.nn.LeakyReLU()', 'batch_norm': True, 'residual': False, 'edge_dim': 4, 'dropout': 0.2, 'in_channels': 64}, {'layer_type': 'global_pooling', 'mode': 'mean'}, {'layer_type': 'batch_norm'}, {'layer_type': 'dropout', 'p': 0.2}, {'layer_type': 'linear', 'out_features': 64, 'bias': True, 'activation': 'torch.nn.LeakyReLU()'}, {'layer_type': 'linear', 'out_features': 32, 'bias': True, 'activation': 'torch.nn.LeakyReLU()'}, {'layer_type': 'linear', 'out_features': 2, 'bias': True}]
+Optimizer: Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    capturable: False
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 0.01
+    maximize: False
+    weight_decay: 0.0
+)
+Loss function: CrossEntropyLoss()
+Batch size: [32]
+Balanced data: False
+Number of epochs: 100
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 512
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: GINConv
+
+Layer Trainable Parameters: 17280
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: GINConv
+
+Layer Trainable Parameters: 17280
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Global Mean Pooling
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Batch Normalization Layer
+
+Layer Trainable Parameters: 128
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Dropout Layer
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 4160
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 2080
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 66
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+Layer: net_layers.0.layer.weight -> True
+Layer: net_layers.0.layer.bias -> True
+Layer: net_layers.1.batch_norm_layer.module.weight -> True
+Layer: net_layers.1.batch_norm_layer.module.bias -> True
+Layer: net_layers.1.layer.nn.0.weight -> True
+Layer: net_layers.1.layer.nn.0.bias -> True
+Layer: net_layers.1.layer.nn.1.weight -> True
+Layer: net_layers.1.layer.nn.1.bias -> True
+Layer: net_layers.1.layer.nn.3.weight -> True
+Layer: net_layers.1.layer.nn.3.bias -> True
+Layer: net_layers.1.layer.lin.weight -> True
+Layer: net_layers.1.layer.lin.bias -> True
+Layer: net_layers.2.batch_norm_layer.module.weight -> True
+Layer: net_layers.2.batch_norm_layer.module.bias -> True
+Layer: net_layers.2.layer.nn.0.weight -> True
+Layer: net_layers.2.layer.nn.0.bias -> True
+Layer: net_layers.2.layer.nn.1.weight -> True
+Layer: net_layers.2.layer.nn.1.bias -> True
+Layer: net_layers.2.layer.nn.3.weight -> True
+Layer: net_layers.2.layer.nn.3.bias -> True
+Layer: net_layers.2.layer.lin.weight -> True
+Layer: net_layers.2.layer.lin.bias -> True
+Layer: net_layers.4.batch_norm_layer.module.weight -> True
+Layer: net_layers.4.batch_norm_layer.module.bias -> True
+Layer: net_layers.6.layer.weight -> True
+Layer: net_layers.6.layer.bias -> True
+Layer: net_layers.7.layer.weight -> True
+Layer: net_layers.7.layer.bias -> True
+Layer: net_layers.8.layer.weight -> True
+Layer: net_layers.8.layer.bias -> True
+
+Total trainable parameters: 41506

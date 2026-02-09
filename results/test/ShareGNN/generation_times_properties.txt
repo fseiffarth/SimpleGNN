@@ -1,0 +1,3 @@
+Generation times for properties
+ZINC, edge_label_distance, 42.920342445373535
+ZINC, distance, 50.662853717803955
