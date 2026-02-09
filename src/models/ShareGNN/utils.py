@@ -131,7 +131,7 @@ class Layer:
         unique_dicts = []
         for head in self.layer_heads:
             if head.property_dict.property_dict not in unique_dicts and head.property_dict.property_dict is not None:
-                unique_dicts.append(head.property_dict.property_dict)
+                unique_dicts.append(head.property_dict)
         return unique_dicts
 
     def get_source_string(self, head_id=0):
