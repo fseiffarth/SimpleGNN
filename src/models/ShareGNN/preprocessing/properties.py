@@ -11,7 +11,7 @@ import copy
 
 from datasets.graph_dataset import GraphDataset
 from datasets.utils.node_labeling import load_labels
-from src.utils.utils import convert_to_list
+from utils.utils import convert_to_list
 
 
 def write_distance_properties(graph_data:GraphDataset, cutoff=None, out_path: Path = Path(), save_times=None) -> None:

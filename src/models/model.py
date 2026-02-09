@@ -69,7 +69,7 @@ class GraphModel(torch.nn.Module):
                                                 dtype=torch.double)
             x = x + random_variation
 
-        for layer in self.net_layers:
+        for i, layer in enumerate(self.net_layers):
             x = layer(x, batch_data, *args, **kwargs)
 
         return x
@@ -133,6 +133,7 @@ class GraphModel(torch.nn.Module):
                 return GINConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
             elif layer.layer_type == LayerTypes.SAGE_CONVOLUTION.value:
                 return SAGEConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
+
 
         elif layer.layer_type == LayerTypes.GLOBAL_POOLING.value:
             layer_args = {'mode': layer.layer_dict.get('mode', 'mean')}

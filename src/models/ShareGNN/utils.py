@@ -71,6 +71,7 @@ class LayerHead:
     """
     def __init__(self, info_dict: dict, head_id):
         self.head_id = head_id
+        self.num = info_dict.get('num', 1) # How often the same head is applied
         self.label_dict = LabelDict(info_dict.get('labels', None))
         self.property_dict = PropertyDict(info_dict.get('properties', None))
         # if head, tail, bias is not specified, set head tail bias to the same value

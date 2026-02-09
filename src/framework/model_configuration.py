@@ -14,7 +14,7 @@ from datasets.graph_dataset import GraphDataset, GraphData, CustomBatchLoader
 from framework.utils.data_sampling import curriculum_sampling
 from framework.utils.parameters import Parameters
 from models import GraphModel
-from src.utils.utils import get_k_lowest_nonzero_indices, valid_pruning_configuration, is_pruning
+from utils.utils import get_k_lowest_nonzero_indices, valid_pruning_configuration, is_pruning
 from utils.timer import TimeClass
 
 
@@ -60,7 +60,7 @@ class ModelConfiguration:
         self.net = None
         self.class_weights = None
         self._csv_buffer = []
-        self._csv_flush_interval = 50
+        self._csv_flush_interval = self.para.run_config.config.get('csv_flush_interval', 10)
         # get gpu or cpu: (cpu is recommended at the moment)
         if self.para.run_config.config.get('device', None) is not None:
             self.device = torch.device(self.para.run_config.config['device'] if torch.cuda.is_available() else "cpu")
@@ -353,8 +353,7 @@ class ModelConfiguration:
                          batch_length=0,
                          num_batches=0,
                          batches=None):
-        if evaluation_type != 'training':
-            self.net.eval()
+        self.net.eval()
         if evaluation_type == 'training':
             batch_acc = 0
             # if num classes is one calculate the mae and mae_std or if the task is regression
@@ -639,8 +638,7 @@ class ModelConfiguration:
                     labels_np = labels_np.T
                     df = pd.DataFrame(labels_np)
                     df.to_csv("Results/Parameter/test_predictions.csv", header=False, index=False, mode='a')
-        if evaluation_type != 'training':
-            self.net.train()
+        self.net.train()
         return train_values, validation_values, test_values
 
     def preprocess_writer(self)-> bool:
@@ -787,7 +785,6 @@ class ModelConfiguration:
         if len(self._csv_buffer) >= self._csv_flush_interval or epoch == self.para.n_epochs - 1:
             self._flush_csv_buffer()
 
-
     def _flush_csv_buffer(self):
         if not self._csv_buffer:
             return
@@ -872,7 +869,6 @@ class ModelConfiguration:
 
         with torch.no_grad():
             self.net.train(False)
-            # Run ordinary GNN
             # split the graph ids into batches to avoid memory issues
             eval_batch_size = self.para.run_config.config.get('eval_batch_size', 512)
             batches = [graph_ids[i:i + eval_batch_size] for i in range(0, len(graph_ids), eval_batch_size)]
@@ -887,6 +883,7 @@ class ModelConfiguration:
             loader = CustomBatchLoader(self.graph_data, batches)
             batch_counter = 0
             if not self.para.run_config.config.get('with_invariant_layers', True):
+                # Run ordinary GNN
                 for i, batch in enumerate(loader):
                     #print(f"Evaluating batch {i + 1}/{len(batches)}")
                     outputs[batch_counter:batch_counter + len(batch)] = self.net(batch_data=batch)
