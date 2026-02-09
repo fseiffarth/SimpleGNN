@@ -60,7 +60,7 @@ class ModelConfiguration:
         self.net = None
         self.class_weights = None
         self._csv_buffer = []
-        self._csv_flush_interval = 50
+        self._csv_flush_interval = self.para.run_config.config.get('csv_flush_interval', 10)
         # get gpu or cpu: (cpu is recommended at the moment)
         if self.para.run_config.config.get('device', None) is not None:
             self.device = torch.device(self.para.run_config.config['device'] if torch.cuda.is_available() else "cpu")
