@@ -11,10 +11,10 @@ from torch_geometric.datasets import ZINC, TUDataset, GNNBenchmarkDataset, LRGBD
 
 from datasets.utils.EdgeLabels import EdgeLabels
 from datasets.utils.NodeLabels import NodeLabels
-from src.datasets.graph_dataset_preprocessing import ZINCGraphDataPreprocessing, QMGraphDataPreprocessing, \
+from datasets.graph_dataset_preprocessing import ZINCGraphDataPreprocessing, QMGraphDataPreprocessing, \
     OGBGraphPropertyGraphDataPreprocessing, SubstructureBenchmarkPreprocessing, MergedGraphDataPreprocessing, \
     TUDatasetPreprocessing
-from src.utils.utils import load_graphs
+from utils.utils import load_graphs
 from torch_geometric.io import fs
 from torch_geometric.utils.convert import to_networkx
 from ogb.nodeproppred import PygNodePropPredDataset

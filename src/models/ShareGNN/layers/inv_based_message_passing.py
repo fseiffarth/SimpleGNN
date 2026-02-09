@@ -68,12 +68,11 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # Determine the number of weights and biases
         # There are two cases asymetric and symmetric, asymetric is the default, TODO add symmetric case
         self.skips = [0]
+        self.b_head_offset = 0
         self.skips_description = [None]
         self.skips_description_text = [None]
-        weight_dist_default_size = 1000000
-        self.weight_distribution = torch.zeros((weight_dist_default_size, 4), dtype=torch.int64).to(self.device)
-        last_weight_distribution_index = 0
-        self.bias_distribution = [None] * len(graph_data)
+        weight_distribution_chunks = [[] for _ in range(len(graph_data))]
+        bias_distribution_chunks = [[] for _ in range(len(graph_data))]
 
         # Iterate over all heads in the layer
         for head_id, head in enumerate(self.layer.layer_heads):
@@ -83,6 +82,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             source_labels = self.graph_data.node_labels[self.source_label_descriptions[head_id]].node_labels
             target_labels = self.graph_data.node_labels[self.target_label_descriptions[head_id]].node_labels
             bias_labels = self.graph_data.node_labels[self.bias_label_descriptions[head_id]].node_labels
+            current_head_id = 0
+            for h_i in range(head_id):
+                current_head_id += self.n_heads_per_label[h_i]
+
             for key in valid_property_values:
                 #print(f'Initialize head {i+1}/{len(self.layer.layer_heads)} with property {key}')
                 property_subdict = self.graph_data.properties[self.property_descriptions[head_id]].properties[key]
@@ -119,56 +122,76 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     # relabel indices
                     indices[valid_indices] = torch.tensor([valid_value_dict[idx.item()] for idx in indices[valid_indices]], dtype=torch.int64)
                     num_weights = len(valid_values)
+                for n in range(self.n_heads_per_label[head_id]):
+                    self.weight_num.append(num_weights)
                 start_time = time.time()
-                for j in range(head.num):
-                    for idx in range(len(graph_data)):
-                        # if number of graphs is larger than 10000 print progress
-                        if len(graph_data) > 10000 and idx % 1000 == 0:
-                            print(f'Head {head_id+1}/{len(self.layer.layer_heads)} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx/len(graph_data))*100:.2f}%) time so far (in s): {time.time()-start_time:.2f}', flush=True)
-                        # get the valid indices for the current graph
-                        if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
-                            valid_indices_graph = torch.where(valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx+1]])[0] + property_subdict_slices[idx]
-                        else:
-                            valid_indices_graph = torch.arange(property_subdict_slices[idx], property_subdict_slices[idx+1], dtype=torch.int64)
-                        # create new tensor where each row is the concatenation of head_id, property_subdict_row, and indices
+                for idx in range(len(graph_data)):
+                    # if number of graphs is larger than 10000 print progress
+                    if len(graph_data) > 5000 and idx % 1000 == 0:
+                        print(
+                            f'Heads {self.n_heads_per_label[head_id] + current_head_id}/{self.num_heads} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx / len(graph_data)) * 100:.2f}%) time so far (in s): {time.time() - start_time:.2f}',
+                            flush=True)
+                    # get the valid indices for the current graph
+                    if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
+                        valid_indices_graph = torch.where(
+                            valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx + 1]])[0] + \
+                                              property_subdict_slices[idx]
+                    else:
+                        valid_indices_graph = torch.arange(property_subdict_slices[idx],
+                                                           property_subdict_slices[idx + 1], dtype=torch.int64)
+                    w_indices = indices[valid_indices_graph]
+                    p_indices = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx]  # check if subtracting is necessary
+                    # create new tensor where each row is the concatenation of head_id, property_subdict_row, and indices
+                    for n in range(self.n_heads_per_label[head_id]):
+                        new_weight_distribution = torch.zeros((len(valid_indices_graph), 4), dtype=torch.int64)
+                        new_weight_distribution[:, 0] = current_head_id + n
+                        new_weight_distribution[:, 1:3] = p_indices
+                        new_weight_distribution[:, 3] = w_indices + self.skips[-1] + n*num_weights
+                        weight_distribution_chunks[idx].append(new_weight_distribution)
 
-                        # Use self.weight_distribution directly
-                        self.weight_distribution[last_weight_distribution_index:last_weight_distribution_index + len(valid_indices_graph), 0] = head_id
-                        self.weight_distribution[last_weight_distribution_index:last_weight_distribution_index + len(valid_indices_graph), 1:3] = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx] # check if subtracting is necessary
-                        self.weight_distribution[last_weight_distribution_index:last_weight_distribution_index + len(valid_indices_graph), 3] = indices[valid_indices_graph] + self.skips[-1]
+                for n in range(self.n_heads_per_label[head_id]):
+                    self.skips.append(self.skips[-1] + num_weights)
+                    self.skips_description.append({'head:': head_id, 'property': key, 'weights': num_weights})
+                    self.skips_description_text.append(f"Head {head_id} Property {key} has {num_weights} different weights")
 
-                self.skips.append(self.skips[-1] + num_weights)
-                self.skips_description.append({'head:': head_id, 'property': key, 'weights': num_weights})
-                self.skips_description_text.append(f"Head {head_id} Property {key} has {num_weights} different weights")
-
-
-            self.weight_num.append(self.skips[-1])
             # TODO symmetric case
 
             if self.bias:
-                # Determine the number of different learnable parameters in the bias vector
-                self.bias_num.append(self.in_features * self.n_bias_labels[head_id])
                 # Set the bias weights
                 _, indices, counts = torch.unique(bias_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
                 for idx in range(len(graph_data)):
-                    for feature_id in range(self.in_features):
-                        new_bias_distribution = torch.zeros((graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
-                        new_bias_distribution[:, 0] = head_id
-                        new_bias_distribution[:, 1] = torch.arange(graph_data.num_nodes[idx].item(), dtype=torch.int64) # alternative torch.arange(start=graph_data.slices['x'][idx], end=graph_data.slices['x'][idx+1], dtype=torch.int64)
-                        new_bias_distribution[:, 2] = feature_id
-                        new_bias_distribution[:, 3] = indices[graph_data.slices['x'][idx]:graph_data.slices['x'][idx+1]] + feature_id * self.n_bias_labels[head_id]
-                        if self.bias_distribution[idx] is None:
-                            self.bias_distribution[idx] = new_bias_distribution.detach().clone()
-                        else:
-                            self.bias_distribution[idx] = torch.cat((self.bias_distribution[idx], new_bias_distribution), dim=0)
+                    arranged_tensor = torch.arange(graph_data.num_nodes[idx].item(), dtype=torch.int64) # alternative torch.arange(start=graph_data.slices['x'][idx], end=graph_data.slices['x'][idx+1], dtype=torch.int64)
+                    w_indices = indices[graph_data.slices['x'][idx]:graph_data.slices['x'][idx+1]]
+                    for n in range(self.n_heads_per_label[head_id]):
+                        for feature_id in range(self.in_features):
+                            w_index_offset = n*self.in_features*self.n_bias_labels[head_id] + feature_id*self.n_bias_labels[head_id]
+                            new_bias_distribution = torch.zeros((graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
+                            new_bias_distribution[:, 0] = current_head_id + n
+                            new_bias_distribution[:, 1] = arranged_tensor
+                            new_bias_distribution[:, 2] = feature_id
+                            new_bias_distribution[:, 3] = w_indices + self.b_head_offset + w_index_offset
+                            bias_distribution_chunks[idx].append(new_bias_distribution)
+                # Determine the number of different learnable parameters in the bias vector
+                for n in range(self.n_heads_per_label[head_id]):
+                    self.bias_num.append(self.in_features * self.n_bias_labels[head_id])
+                    self.b_head_offset += self.bias_num[-1]
 
         # Merge the weight distribution of all graphs (creating additionally slicing information)
-        self.weight_distribution_slices = torch.tensor([0] + [len(w) for w in self.weight_distribution], dtype=torch.int64).cumsum(dim=0)
-        self.weight_distribution = torch.cat([self.weight_distribution[i] for i in range(len(graph_data))], dim=0).to(self.device)
+        # Single torch.cat per graph instead of repeated incremental concatenation
+        merged_weight_distributions = [
+            torch.cat(chunks, dim=0) if chunks else torch.zeros((0, 4), dtype=torch.int64)
+            for chunks in weight_distribution_chunks
+        ]
+        self.weight_distribution_slices = torch.tensor([0] + [len(w) for w in merged_weight_distributions], dtype=torch.int64).cumsum(dim=0)
+        self.weight_distribution = torch.cat(merged_weight_distributions, dim=0).to(self.device)
         if self.bias:
             # Merge the bias distribution of all graphs (creating additionally slicing information)
-            self.bias_distribution_slices = torch.tensor([0] + [len(b) for b in self.bias_distribution], dtype=torch.int64).cumsum(dim=0)
-            self.bias_distribution = torch.cat([self.bias_distribution[i] for i in range(len(graph_data))], dim=0).to(self.device)
+            merged_bias_distributions = [
+                torch.cat(chunks, dim=0) if chunks else torch.zeros((0, 4), dtype=torch.int64)
+                for chunks in bias_distribution_chunks
+            ]
+            self.bias_distribution_slices = torch.tensor([0] + [len(b) for b in merged_bias_distributions], dtype=torch.int64).cumsum(dim=0)
+            self.bias_distribution = torch.cat(merged_bias_distributions, dim=0).to(self.device)
 
 
         if self.bias:
@@ -186,6 +209,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             self.mask = torch.ones(self.Param_W.size())
 
         self.forward_step_time = 0
+
+        # Cache config lookups used in forward pass
+        self.use_degree_matrix = self.para.run_config.config.get('degree_matrix', False)
+        self.use_in_degrees = self.para.run_config.config.get('use_in_degrees', False)
 
     def init_weights(self, num_weights:np.float64, init_type:Optional[str]=None) -> nn.Parameter:
         """
@@ -236,7 +263,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         :return:
         """
         input_size = self.graph_data.num_nodes[pos].item()
-        self.current_W = torch.zeros((self.num_heads, input_size, input_size), dtype=self.precision).to(self.device)
+        self.current_W = torch.zeros((self.num_heads, input_size, input_size), dtype=self.precision, device=self.device)
         graph_weight_distribution = self.weight_distribution[self.weight_distribution_slices[pos]:self.weight_distribution_slices[pos+1]]
         if len(graph_weight_distribution) != 0:
             # get third column of the weight_distribution: the index of self.Param_W
@@ -253,7 +280,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         :return:
         """
         input_size = self.graph_data.num_nodes[pos].item()
-        self.current_B = torch.zeros((self.num_heads, input_size, self.in_features), dtype=self.precision).to(self.device)
+        self.current_B = torch.zeros((self.num_heads, input_size, self.in_features), dtype=self.precision, device=self.device)
         graph_bias_distribution = self.bias_distribution[self.bias_distribution_slices[pos]:self.bias_distribution_slices[pos+1]]
         param_indices = graph_bias_distribution[:, 3]
         matrix_indices = graph_bias_distribution[:, 0:3].T
@@ -303,9 +330,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         begin = time.time()
         # set the weights, i.e., sets self.current_W to (C, N, N) where C is the number of channels and N is the number of nodes in graph at position pos of the dataset
         self.set_weights(pos)
-        if self.para.run_config.config.get('degree_matrix', False):
+        if self.use_degree_matrix:
             node_representation = self.in_edges[pos]*torch.einsum('cij,jk->cik', torch.diag(self.D[pos]) @ self.current_W @ torch.diag(self.D[pos]), node_representation)
-        elif self.para.run_config.config.get('use_in_degrees', False):
+        elif self.use_in_degrees:
             node_representation = self.in_edges[pos]*torch.einsum('cij,jk->cik', self.current_W, node_representation)
         else:
             node_representation = torch.einsum('hij,jf->hif', self.current_W, node_representation)

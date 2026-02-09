@@ -504,17 +504,12 @@ def collect_paths(main_configuration, model_configuration, dataset_configuration
 
 def copy_experiment_config(absolute_path, experiment_configuration, experiment_configuration_path,
                            graph_db_name):
+    import shutil
     results_path = experiment_configuration['paths']['results']
     if not results_path.joinpath(f"{graph_db_name}/config.yml"):
         source_path = Path(absolute_path).joinpath(experiment_configuration_path)
-        destination_path =results_path.joinpath(f"{graph_db_name}/config.yml")
-        # copy the config file to the results directory
-        # if linux
-        if os.name == 'posix':
-            os.system(f"cp {source_path} {destination_path}")
-        # if windows
-        elif os.name == 'nt':
-            os.system(f"copy {source_path} {destination_path}")
+        destination_path = results_path.joinpath(f"{graph_db_name}/config.yml")
+        shutil.copy2(source_path, destination_path)
 
 
 def preprocess_graph_data(experiment_configuration:dict):

@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from src.utils.utils import is_pruning
+from utils.utils import is_pruning
 
 
 def epoch_accuracy(db_name, y_val, ids):

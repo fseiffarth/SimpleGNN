@@ -69,14 +69,8 @@ class GraphModel(torch.nn.Module):
                                                 dtype=torch.double)
             x = x + random_variation
 
-        representation_list = []
         for i, layer in enumerate(self.net_layers):
             x = layer(x, batch_data, *args, **kwargs)
-            continue
-            #if isinstance(layer, GNNConvLayer):
-            #    representation_list.append(x)
-            #    if i == len(self.net_layers) - 1 or not isinstance(self.net_layers[i + 1], GNNConvLayer):
-            #        x = torch.squeeze(torch.mean(torch.stack(representation_list), 0, True), 0)
 
         return x
 
@@ -130,15 +124,16 @@ class GraphModel(torch.nn.Module):
             layer_args = layer.layer_dict
             # GNN specific layers
             if layer.layer_type == LayerTypes.GCN_CONVOLUTION.value:
-                self.net_layers.append(GCNConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad))
+                return GCNConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
             elif layer.layer_type == LayerTypes.GAT_CONVOLUTION.value:
-                self.net_layers.append(GATConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad))
+                return GATConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
             elif layer.layer_type == LayerTypes.GATv2_CONVOLUTION.value:
-                self.net_layers.append(GATv2Conv(layer_args).type(self.precision).requires_grad_(self.convolution_grad))
+                return GATv2Conv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
             elif layer.layer_type == LayerTypes.GIN_CONVOLUTION.value:
-                self.net_layers.append(GINConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad))
+                return GINConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
             elif layer.layer_type == LayerTypes.SAGE_CONVOLUTION.value:
                 return SAGEConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
+
 
         elif layer.layer_type == LayerTypes.GLOBAL_POOLING.value:
             layer_args = {'mode': layer.layer_dict.get('mode', 'mean')}

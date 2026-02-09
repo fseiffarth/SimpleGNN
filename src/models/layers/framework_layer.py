@@ -92,7 +92,28 @@ class FrameworkLayer(torch.nn.Module, ABC):
         if 'activation' not in layer_args:
             self.activation = torch.nn.Identity()
         else:
-            self.activation = eval(layer_args['activation'])
+            activation_value = layer_args['activation']
+            if isinstance(activation_value, torch.nn.Module):
+                self.activation = activation_value
+            elif isinstance(activation_value, str):
+                ACTIVATION_MAP = {
+                    'torch.nn.Identity()': torch.nn.Identity(),
+                    'torch.nn.ReLU()': torch.nn.ReLU(),
+                    'torch.nn.LeakyReLU()': torch.nn.LeakyReLU(),
+                    'torch.nn.ELU()': torch.nn.ELU(),
+                    'torch.nn.GELU()': torch.nn.GELU(),
+                    'torch.nn.Tanh()': torch.nn.Tanh(),
+                    'torch.nn.Sigmoid()': torch.nn.Sigmoid(),
+                    'torch.nn.Softmax(dim=1)': torch.nn.Softmax(dim=1),
+                    'torch.nn.SELU()': torch.nn.SELU(),
+                }
+                if activation_value in ACTIVATION_MAP:
+                    self.activation = ACTIVATION_MAP[activation_value]
+                else:
+                    raise ValueError(f"Unsupported activation function: '{activation_value}'. "
+                                     f"Supported values: {list(ACTIVATION_MAP.keys())}")
+            else:
+                raise ValueError(f"Activation must be a string or torch.nn.Module, got {type(activation_value)}")
 
     @abstractmethod
     def forward(self, node_representation:torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
