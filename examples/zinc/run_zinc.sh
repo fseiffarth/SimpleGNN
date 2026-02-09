@@ -13,19 +13,22 @@
 #     /path/to/repo/examples/zinc/run_zinc.sh
 #
 # This script will:
-#   1. Set PYTHONPATH to the repository root
+#   1. Set PYTHONPATH to src directory for module imports
 #   2. Activate the virtual environment
-#   3. Run the ZINC example with ShareGNN
+#   3. Run the ZINC example with ShareGNN from repo root
 #   4. Execute preprocessing, grid search, and evaluation
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "Script directory: $SCRIPT_DIR"
 
-# Set PYTHONPATH to the repo root directory (two levels up from examples/zinc)
+# Set ROOT_DIR to the repo root directory (two levels up from examples/zinc)
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 echo "Root directory: $ROOT_DIR"
-export PYTHONPATH=$ROOT_DIR
+
+# Set PYTHONPATH to src directory (where framework module is located)
+export PYTHONPATH=$ROOT_DIR/src
+echo "PYTHONPATH: $PYTHONPATH"
 
 # Set number of threads for parallel execution
 NUM_THREADS=-1
