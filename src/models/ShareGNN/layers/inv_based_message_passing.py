@@ -108,10 +108,11 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 # TODO implement
                 cached_path = self.get_cache_path(head, property_key)
 
-                if self._load_cached_indices(cached_path, head, property_key):
+                try:
+                    indices, counts = self._load_cached_indices(cached_path, head, property_key)
                     # TODO hit hash
                     pass
-                else:
+                except:
                     # TODO missed hash, compute and cache
 
                     # OPTIMIZATION: Handle invalid indices with masking (2-5% speedup)
@@ -136,12 +137,12 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
                     # Fast 1D unique instead of slow 2D unique
                     _, indices, counts = torch.unique(encoded_labels, return_inverse=True, return_counts=True, sorted=False)
-                    self._save_cached_indices(cached_path, head, property_key, indices, counts)
-                else:
-                    cached_indices = self._load_cached_indices(cached_path, head, property_key)
+                    if do_invalid_indices_exist:
+                        counts[-1] = 0
 
-                if do_invalid_indices_exist:
-                    counts[-1] = 0
+                    self._save_cached_indices(cached_path, head, property_key, indices, counts)
+
+
                 # set all indices to -1 where the count is smaller than the threshold TODO
                 threshold = self.para.run_config.config.get('rule_occurrence_threshold', 1)
                 upper_threshold = self.para.run_config.config.get('rule_occurrence_upper_threshold', None)
