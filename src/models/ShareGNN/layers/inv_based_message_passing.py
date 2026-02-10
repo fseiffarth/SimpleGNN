@@ -73,6 +73,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
         # Determine the number of weights and biases
         # There are two cases asymmetric and symmetric, asymmetric is the default, TODO add symmetric case
+        self.weight_num = []
         self.weight_offset = [0]
         self.b_head_offset = 0
         self.weight_offset_description = [None]
@@ -82,6 +83,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
         # Iterate over all heads in the layer
         for head_id, head in enumerate(self.layer.layer_heads):
+            head_weight_num = []  # number of weights for the current head, used for debugging
             # get all the valid property values for the head (e.g., the distances 0, 3, 6)
             valid_property_values = self.graph_data.properties[self.property_descriptions[head_id]].valid_values[(self.layer_id, head_id)]
             # apply the head and tail labels to the subdict
@@ -92,10 +94,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             for h_i in range(head_id):
                 current_head_id += self.n_heads_per_label[h_i]
 
-            for key in valid_property_values:
-                #print(f'Initialize head {i+1}/{len(self.layer.layer_heads)} with property {key}')
-                property_subdict = self.graph_data.properties[self.property_descriptions[head_id]].properties[key]
-                property_subdict_slices = self.graph_data.properties[self.property_descriptions[head_id]].properties_slices[key]
+            for property_key in valid_property_values:
+                #print(f'Initialize head {i+1}/{len(self.layer.layer_heads)} with property {property_key}')
+                property_subdict = self.graph_data.properties[self.property_descriptions[head_id]].properties[property_key]
+                property_subdict_slices = self.graph_data.properties[self.property_descriptions[head_id]].properties_slices[property_key]
 
                 # OPTIMIZATION: Build labeled_subdict directly without clone (5-10% speedup)
                 labeled_subdict = torch.stack([
@@ -103,28 +105,41 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     target_labels[property_subdict[:, 1]]
                 ], dim=1)
 
-                # OPTIMIZATION: Handle invalid indices with masking (2-5% speedup)
-                invalid_mask = (labeled_subdict[:, 0] == -1) | (labeled_subdict[:, 1] == -1)
-                do_invalid_indices_exist = invalid_mask.any().item()
+                # TODO implement
+                cached_path = self.get_cache_path(head, property_key)
 
-                if do_invalid_indices_exist:
-                    valid_mask = ~invalid_mask
-                    max_first = labeled_subdict[valid_mask, 0].max().item() + 1 if valid_mask.any() else 0
-                    max_second = labeled_subdict[valid_mask, 1].max().item() + 1 if valid_mask.any() else 0
-                    labeled_subdict[invalid_mask, 0] = max_first
-                    labeled_subdict[invalid_mask, 1] = max_second
+                if self._load_cached_indices(cached_path, head, property_key):
+                    # TODO hit hash
+                    pass
                 else:
-                    max_first = labeled_subdict[:, 0].max().item() + 1
-                    max_second = labeled_subdict[:, 1].max().item() + 1
+                    # TODO missed hash, compute and cache
 
-                # OPTIMIZATION: Encode 2D rows as 1D scalars (10-50x speedup on torch.unique)
-                # For bounded integer labels, encode (a, b) as a*K + b where K > max(b)
-                # This converts 2D unique (slow, O(n²) row comparisons) to 1D unique (fast, O(n log n))
-                max_label = max(max_first, max_second) + 1
-                encoded_labels = labeled_subdict[:, 0] * max_label + labeled_subdict[:, 1]
+                    # OPTIMIZATION: Handle invalid indices with masking (2-5% speedup)
+                    invalid_mask = (labeled_subdict[:, 0] == -1) | (labeled_subdict[:, 1] == -1)
+                    do_invalid_indices_exist = invalid_mask.any().item()
 
-                # Fast 1D unique instead of slow 2D unique
-                _, indices, counts = torch.unique(encoded_labels, return_inverse=True, return_counts=True, sorted=False)
+                    if do_invalid_indices_exist:
+                        valid_mask = ~invalid_mask
+                        max_first = labeled_subdict[valid_mask, 0].max().item() + 1 if valid_mask.any() else 0
+                        max_second = labeled_subdict[valid_mask, 1].max().item() + 1 if valid_mask.any() else 0
+                        labeled_subdict[invalid_mask, 0] = max_first
+                        labeled_subdict[invalid_mask, 1] = max_second
+                    else:
+                        max_first = labeled_subdict[:, 0].max().item() + 1
+                        max_second = labeled_subdict[:, 1].max().item() + 1
+
+                    # OPTIMIZATION: Encode 2D rows as 1D scalars (10-50x speedup on torch.unique)
+                    # For bounded integer labels, encode (a, b) as a*K + b where K > max(b)
+                    # This converts 2D unique (slow, O(n²) row comparisons) to 1D unique (fast, O(n log n))
+                    max_label = max(max_first, max_second) + 1
+                    encoded_labels = labeled_subdict[:, 0] * max_label + labeled_subdict[:, 1]
+
+                    # Fast 1D unique instead of slow 2D unique
+                    _, indices, counts = torch.unique(encoded_labels, return_inverse=True, return_counts=True, sorted=False)
+                    self._save_cached_indices(cached_path, head, property_key, indices, counts)
+                else:
+                    cached_indices = self._load_cached_indices(cached_path, head, property_key)
+
                 if do_invalid_indices_exist:
                     counts[-1] = 0
                 # set all indices to -1 where the count is smaller than the threshold TODO
@@ -139,20 +154,20 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                         valid_values = torch.where(torch.logical_and(counts >= threshold, counts <= upper_threshold))[0]
                     else:
                         valid_values = torch.where(counts >= threshold)[0]
-                    valid_value_dict = {value.item(): idx for idx, value in enumerate(valid_values)}
                     valid_indices_bool = torch.isin(indices, valid_values)
-                    valid_indices = torch.where(valid_indices_bool)[0]
-                    # relabel indices
-                    indices[valid_indices] = torch.tensor([valid_value_dict[idx.item()] for idx in indices[valid_indices]], dtype=torch.int64)
-                    num_weights = len(valid_values)
+                    # relabel indices using a vectorized mapping
+                    mapping = torch.full((counts.size(0),), -1, dtype=torch.int64, device=indices.device)
+                    mapping[valid_values] = torch.arange(valid_values.numel(), device=indices.device, dtype=torch.int64)
+                    indices = mapping[indices]
+                    num_weights = valid_values.numel()
                 for n in range(self.n_heads_per_label[head_id]):
-                    self.weight_num.append(num_weights)
+                    head_weight_num.append(num_weights)
                 start_time = time.time()
                 for idx in range(len(graph_data)):
                     # if number of graphs is larger than 10000 print progress
                     if len(graph_data) > 5000 and idx % 3000 == 0:
                         print(
-                            f'Heads {self.n_heads_per_label[head_id] + current_head_id}/{self.num_heads} with property {key}: {idx}/{len(graph_data)} graphs processed ({(idx / len(graph_data)) * 100:.2f}%) time so far (in s): {time.time() - start_time:.2f}',
+                            f'Heads {self.n_heads_per_label[head_id] + current_head_id}/{self.num_heads} with property {property_key}: {idx}/{len(graph_data)} graphs processed ({(idx / len(graph_data)) * 100:.2f}%) time so far (in s): {time.time() - start_time:.2f}',
                             flush=True)
                     # get the valid indices for the current graph
                     if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
@@ -174,8 +189,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
                 for n in range(self.n_heads_per_label[head_id]):
                     self.weight_offset.append(self.weight_offset[-1] + num_weights)
-                    self.weight_offset_description.append({'head:': head_id, 'property': key, 'weights': num_weights})
-                    self.weight_offset_description_text.append(f"Head {head_id} Property {key} has {num_weights} different weights")
+                    self.weight_offset_description.append({'head:': head_id, 'property': property_key, 'weights': num_weights})
+                    self.weight_offset_description_text.append(f"Head {head_id} Property {property_key} has {num_weights} different weights")
 
             # TODO symmetric case
 
@@ -199,7 +214,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     self.bias_num.append(self.in_features * self.n_bias_labels[head_id])
                     self.b_head_offset += self.bias_num[-1]
 
-
+            self.weight_num += head_weight_num
         # All weight distributions are computed, now merge them and create the final weight distribution tensor and bias distribution tensor
         # Merge the weight distribution of all graphs (creating additionally slicing information)
         # Single torch.cat per graph instead of repeated incremental concatenation
