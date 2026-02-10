@@ -5010,3 +5010,591 @@ Layer: net_layers.9.layer.weight -> True
 Layer: net_layers.9.layer.bias -> True
 
 Total trainable parameters: 4102097
+Network architecture: [{'layer_type': 'linear', 'out_features': 10, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 0, 'device': device(type='cpu'), 'seed': 42, 'in_features': 21, 'in_channels': 1, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 1, 'device': device(type='cpu'), 'seed': 42, 'in_features': 10, 'in_channels': 1, 'out_features': 10, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'invariant_based_convolution', 'bias': True, 'activation': 'torch.nn.Identity()', 'heads': [{'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 5, 'max_cycle_length': 5}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 5, 'max_cycle_length': 5}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 6, 'max_cycle_length': 6}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 6, 'max_cycle_length': 6}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 7, 'max_cycle_length': 7}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 7, 'max_cycle_length': 7}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 8, 'max_cycle_length': 8}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 8, 'max_cycle_length': 8}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 9, 'max_cycle_length': 9}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 9, 'max_cycle_length': 9}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 10, 'max_cycle_length': 10}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 10, 'max_cycle_length': 10}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'primary'}, 'tail': {'label_type': 'primary'}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'primary'}, 'tail': {'label_type': 'primary'}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'edge_label_distances', 'values': [1], 'cutoff': 1}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled', 'depth': 0}, 'tail': {'label_type': 'wl_labeled', 'depth': 0}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled_edges', 'depth': 0}, 'tail': {'label_type': 'wl_labeled_edges', 'depth': 0}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled_edges', 'depth': 1}, 'tail': {'label_type': 'wl_labeled_edges', 'depth': 1}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2]}}], 'layer_id': 2, 'device': device(type='cpu'), 'seed': 42, 'in_features': 10, 'in_channels': 1, 'out_features': 10, 'num_heads': 11, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Invariant Based Message Passing Layer'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 3, 'device': device(type='cpu'), 'seed': 42, 'in_features': 220, 'in_channels': 11, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 4, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 11, 'out_features': 100, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'invariant_based_aggregation', 'activation': 'torch.nn.Identity()', 'bias': True, 'heads': [{'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 5, 'max_cycle_length': 5}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 6, 'max_cycle_length': 6}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 7, 'max_cycle_length': 7}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 8, 'max_cycle_length': 8}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 9, 'max_cycle_length': 9}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 10, 'max_cycle_length': 10}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 6, 'max_cycle_length': 6}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 7, 'max_cycle_length': 7}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 8, 'max_cycle_length': 8}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 9, 'max_cycle_length': 9}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 10, 'max_cycle_length': 10}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'primary'}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled', 'depth': 0}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled_edges', 'depth': 0}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled_edges', 'depth': 1}}], 'layer_id': 5, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 11, 'out_features': 100, 'num_heads': 15, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Invariant Based Aggregation Layer'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 6, 'device': device(type='cpu'), 'seed': 42, 'in_features': 15000, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 7, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_features': 100, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 8, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'linear', 'out_features': 1, 'bias': True, 'activation': 'torch.nn.Identity()', 'layer_id': 9, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'reshape', 'layer_id': 10, 'device': device(type='cpu'), 'seed': 42, 'in_features': 1, 'in_channels': 165, 'out_features': 1, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Reshape Layer'}]
+Optimizer: Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    capturable: False
+    decoupled_weight_decay: False
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 0.001
+    maximize: False
+    weight_decay: 0.0
+)
+Loss function: L1Loss()
+Batch size: [128]
+Balanced data: False
+Number of epochs: 150
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 440
+Weight matrix learnable parameters: 210
+Bias learnable parameters: 10
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Invariant Based Message Passing Layer
+
+Layer Trainable Parameters: 402204
+Number of Source Labels (type: induced_cycles_5_5) in channel 0: 4
+Number of Target Labels (type: induced_cycles_5_5) in channel 0: 4
+Number of Bias Labels in channel 0: 21
+Number of pairwise properties in channel 0: 22
+
+Number of Source Labels (type: induced_cycles_6_6) in channel 1: 6
+Number of Target Labels (type: induced_cycles_6_6) in channel 1: 6
+Number of Bias Labels in channel 1: 21
+Number of pairwise properties in channel 1: 22
+
+Number of Source Labels (type: induced_cycles_7_7) in channel 2: 3
+Number of Target Labels (type: induced_cycles_7_7) in channel 2: 3
+Number of Bias Labels in channel 2: 21
+Number of pairwise properties in channel 2: 22
+
+Number of Source Labels (type: induced_cycles_8_8) in channel 3: 4
+Number of Target Labels (type: induced_cycles_8_8) in channel 3: 4
+Number of Bias Labels in channel 3: 21
+Number of pairwise properties in channel 3: 22
+
+Number of Source Labels (type: induced_cycles_9_9) in channel 4: 2
+Number of Target Labels (type: induced_cycles_9_9) in channel 4: 2
+Number of Bias Labels in channel 4: 21
+Number of pairwise properties in channel 4: 22
+
+Number of Source Labels (type: induced_cycles_10_10) in channel 5: 2
+Number of Target Labels (type: induced_cycles_10_10) in channel 5: 2
+Number of Bias Labels in channel 5: 21
+Number of pairwise properties in channel 5: 22
+
+Number of Source Labels (type: primary) in channel 6: 21
+Number of Target Labels (type: primary) in channel 6: 21
+Number of Bias Labels in channel 6: 21
+Number of pairwise properties in channel 6: 22
+
+Number of Source Labels (type: primary) in channel 7: 21
+Number of Target Labels (type: primary) in channel 7: 21
+Number of Bias Labels in channel 7: 21
+Number of pairwise properties in channel 7: 3
+
+Number of Source Labels (type: wl_labeled_0) in channel 8: 391
+Number of Target Labels (type: wl_labeled_0) in channel 8: 391
+Number of Bias Labels in channel 8: 21
+Number of pairwise properties in channel 8: 4
+
+Number of Source Labels (type: wl_labeled_edges_0) in channel 9: 499
+Number of Target Labels (type: wl_labeled_edges_0) in channel 9: 499
+Number of Bias Labels in channel 9: 21
+Number of pairwise properties in channel 9: 4
+
+Number of Source Labels (type: wl_labeled_edges_1) in channel 10: 13006
+Number of Target Labels (type: wl_labeled_edges_1) in channel 10: 13006
+Number of Bias Labels in channel 10: 21
+Number of pairwise properties in channel 10: 2
+
+Weight matrix learnable parameters: 397584
+Bias learnable parameters: 4620
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 44200
+Weight matrix learnable parameters: 22000
+Bias learnable parameters: 100
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Invariant Based Aggregation Layer
+
+Layer Trainable Parameters: 158090
+Number of Node Labels (type: induced_cycles_5_5_primary) in channel 0: 38
+
+Number of Node Labels (type: induced_cycles_6_6_primary) in channel 1: 43
+
+Number of Node Labels (type: induced_cycles_7_7_primary) in channel 2: 33
+
+Number of Node Labels (type: induced_cycles_8_8_primary) in channel 3: 32
+
+Number of Node Labels (type: induced_cycles_9_9_primary) in channel 4: 23
+
+Number of Node Labels (type: induced_cycles_10_10_primary) in channel 5: 23
+
+Number of Node Labels (type: simple_cycles_6_6_primary) in channel 6: 43
+
+Number of Node Labels (type: simple_cycles_7_7_primary) in channel 7: 33
+
+Number of Node Labels (type: simple_cycles_8_8_primary) in channel 8: 38
+
+Number of Node Labels (type: simple_cycles_9_9_primary) in channel 9: 43
+
+Number of Node Labels (type: simple_cycles_10_10_primary) in channel 10: 43
+
+Number of Node Labels (type: primary) in channel 11: 21
+
+Number of Node Labels (type: wl_labeled_0) in channel 12: 391
+
+Number of Node Labels (type: wl_labeled_edges_0) in channel 13: 499
+
+Number of Node Labels (type: wl_labeled_edges_1) in channel 14: 13006
+
+Weight matrix learnable parameters: 143090
+Bias learnable parameters: 15000
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 3000200
+Weight matrix learnable parameters: 1500000
+Bias learnable parameters: 100
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 20200
+Weight matrix learnable parameters: 10000
+Bias learnable parameters: 100
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 202
+Weight matrix learnable parameters: 100
+Bias learnable parameters: 1
+
+Layer: Reshape Layer
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+Layer: net_layers.0.Param_W -> True
+Layer: net_layers.0.Param_b -> True
+Layer: net_layers.0.layer.weight -> True
+Layer: net_layers.0.layer.bias -> True
+Layer: net_layers.2.Param_b -> True
+Layer: net_layers.2.Param_W -> True
+Layer: net_layers.3.Param_W -> True
+Layer: net_layers.3.Param_b -> True
+Layer: net_layers.3.layer.weight -> True
+Layer: net_layers.3.layer.bias -> True
+Layer: net_layers.5.Param_W -> True
+Layer: net_layers.5.Param_b -> True
+Layer: net_layers.6.Param_W -> True
+Layer: net_layers.6.Param_b -> True
+Layer: net_layers.6.layer.weight -> True
+Layer: net_layers.6.layer.bias -> True
+Layer: net_layers.8.Param_W -> True
+Layer: net_layers.8.Param_b -> True
+Layer: net_layers.8.layer.weight -> True
+Layer: net_layers.8.layer.bias -> True
+Layer: net_layers.9.Param_W -> True
+Layer: net_layers.9.Param_b -> True
+Layer: net_layers.9.layer.weight -> True
+Layer: net_layers.9.layer.bias -> True
+
+Total trainable parameters: 3625536
+Network architecture: [{'layer_type': 'linear', 'out_features': 10, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 0, 'device': device(type='cpu'), 'seed': 42, 'in_features': 21, 'in_channels': 1, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 1, 'device': device(type='cpu'), 'seed': 42, 'in_features': 10, 'in_channels': 1, 'out_features': 10, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'invariant_based_convolution', 'bias': True, 'activation': 'torch.nn.Identity()', 'heads': [{'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 5, 'max_cycle_length': 5}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 5, 'max_cycle_length': 5}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 6, 'max_cycle_length': 6}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 6, 'max_cycle_length': 6}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 7, 'max_cycle_length': 7}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 7, 'max_cycle_length': 7}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 8, 'max_cycle_length': 8}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 8, 'max_cycle_length': 8}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 9, 'max_cycle_length': 9}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 9, 'max_cycle_length': 9}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 10, 'max_cycle_length': 10}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 10, 'max_cycle_length': 10}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'primary'}, 'tail': {'label_type': 'primary'}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'primary'}, 'tail': {'label_type': 'primary'}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'edge_label_distances', 'values': [1], 'cutoff': 1}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled', 'depth': 0}, 'tail': {'label_type': 'wl_labeled', 'depth': 0}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled_edges', 'depth': 0}, 'tail': {'label_type': 'wl_labeled_edges', 'depth': 0}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled_edges', 'depth': 1}, 'tail': {'label_type': 'wl_labeled_edges', 'depth': 1}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2]}}], 'layer_id': 2, 'device': device(type='cpu'), 'seed': 42, 'in_features': 10, 'in_channels': 1, 'out_features': 10, 'num_heads': 11, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Invariant Based Message Passing Layer'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 3, 'device': device(type='cpu'), 'seed': 42, 'in_features': 220, 'in_channels': 11, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 4, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 11, 'out_features': 100, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'invariant_based_aggregation', 'activation': 'torch.nn.Identity()', 'bias': True, 'heads': [{'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 5, 'max_cycle_length': 5}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 6, 'max_cycle_length': 6}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 7, 'max_cycle_length': 7}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 8, 'max_cycle_length': 8}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 9, 'max_cycle_length': 9}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 10, 'max_cycle_length': 10}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 6, 'max_cycle_length': 6}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 7, 'max_cycle_length': 7}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 8, 'max_cycle_length': 8}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 9, 'max_cycle_length': 9}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 10, 'max_cycle_length': 10}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'primary'}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled', 'depth': 0}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled_edges', 'depth': 0}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled_edges', 'depth': 1}}], 'layer_id': 5, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 11, 'out_features': 100, 'num_heads': 15, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Invariant Based Aggregation Layer'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 6, 'device': device(type='cpu'), 'seed': 42, 'in_features': 15000, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 7, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_features': 100, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 8, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'linear', 'out_features': 1, 'bias': True, 'activation': 'torch.nn.Identity()', 'layer_id': 9, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'reshape', 'layer_id': 10, 'device': device(type='cpu'), 'seed': 42, 'in_features': 1, 'in_channels': 165, 'out_features': 1, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Reshape Layer'}]
+Optimizer: Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    capturable: False
+    decoupled_weight_decay: False
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 0.001
+    maximize: False
+    weight_decay: 0.0
+)
+Loss function: L1Loss()
+Batch size: [128]
+Balanced data: False
+Number of epochs: 150
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 440
+Weight matrix learnable parameters: 210
+Bias learnable parameters: 10
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Invariant Based Message Passing Layer
+
+Layer Trainable Parameters: 402204
+Number of Source Labels (type: induced_cycles_5_5) in channel 0: 4
+Number of Target Labels (type: induced_cycles_5_5) in channel 0: 4
+Number of Bias Labels in channel 0: 21
+Number of pairwise properties in channel 0: 22
+
+Number of Source Labels (type: induced_cycles_6_6) in channel 1: 6
+Number of Target Labels (type: induced_cycles_6_6) in channel 1: 6
+Number of Bias Labels in channel 1: 21
+Number of pairwise properties in channel 1: 22
+
+Number of Source Labels (type: induced_cycles_7_7) in channel 2: 3
+Number of Target Labels (type: induced_cycles_7_7) in channel 2: 3
+Number of Bias Labels in channel 2: 21
+Number of pairwise properties in channel 2: 22
+
+Number of Source Labels (type: induced_cycles_8_8) in channel 3: 4
+Number of Target Labels (type: induced_cycles_8_8) in channel 3: 4
+Number of Bias Labels in channel 3: 21
+Number of pairwise properties in channel 3: 22
+
+Number of Source Labels (type: induced_cycles_9_9) in channel 4: 2
+Number of Target Labels (type: induced_cycles_9_9) in channel 4: 2
+Number of Bias Labels in channel 4: 21
+Number of pairwise properties in channel 4: 22
+
+Number of Source Labels (type: induced_cycles_10_10) in channel 5: 2
+Number of Target Labels (type: induced_cycles_10_10) in channel 5: 2
+Number of Bias Labels in channel 5: 21
+Number of pairwise properties in channel 5: 22
+
+Number of Source Labels (type: primary) in channel 6: 21
+Number of Target Labels (type: primary) in channel 6: 21
+Number of Bias Labels in channel 6: 21
+Number of pairwise properties in channel 6: 22
+
+Number of Source Labels (type: primary) in channel 7: 21
+Number of Target Labels (type: primary) in channel 7: 21
+Number of Bias Labels in channel 7: 21
+Number of pairwise properties in channel 7: 3
+
+Number of Source Labels (type: wl_labeled_0) in channel 8: 391
+Number of Target Labels (type: wl_labeled_0) in channel 8: 391
+Number of Bias Labels in channel 8: 21
+Number of pairwise properties in channel 8: 4
+
+Number of Source Labels (type: wl_labeled_edges_0) in channel 9: 499
+Number of Target Labels (type: wl_labeled_edges_0) in channel 9: 499
+Number of Bias Labels in channel 9: 21
+Number of pairwise properties in channel 9: 4
+
+Number of Source Labels (type: wl_labeled_edges_1) in channel 10: 13006
+Number of Target Labels (type: wl_labeled_edges_1) in channel 10: 13006
+Number of Bias Labels in channel 10: 21
+Number of pairwise properties in channel 10: 2
+
+Weight matrix learnable parameters: 397584
+Bias learnable parameters: 4620
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 44200
+Weight matrix learnable parameters: 22000
+Bias learnable parameters: 100
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Invariant Based Aggregation Layer
+
+Layer Trainable Parameters: 158090
+Number of Node Labels (type: induced_cycles_5_5_primary) in channel 0: 38
+
+Number of Node Labels (type: induced_cycles_6_6_primary) in channel 1: 43
+
+Number of Node Labels (type: induced_cycles_7_7_primary) in channel 2: 33
+
+Number of Node Labels (type: induced_cycles_8_8_primary) in channel 3: 32
+
+Number of Node Labels (type: induced_cycles_9_9_primary) in channel 4: 23
+
+Number of Node Labels (type: induced_cycles_10_10_primary) in channel 5: 23
+
+Number of Node Labels (type: simple_cycles_6_6_primary) in channel 6: 43
+
+Number of Node Labels (type: simple_cycles_7_7_primary) in channel 7: 33
+
+Number of Node Labels (type: simple_cycles_8_8_primary) in channel 8: 38
+
+Number of Node Labels (type: simple_cycles_9_9_primary) in channel 9: 43
+
+Number of Node Labels (type: simple_cycles_10_10_primary) in channel 10: 43
+
+Number of Node Labels (type: primary) in channel 11: 21
+
+Number of Node Labels (type: wl_labeled_0) in channel 12: 391
+
+Number of Node Labels (type: wl_labeled_edges_0) in channel 13: 499
+
+Number of Node Labels (type: wl_labeled_edges_1) in channel 14: 13006
+
+Weight matrix learnable parameters: 143090
+Bias learnable parameters: 15000
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 3000200
+Weight matrix learnable parameters: 1500000
+Bias learnable parameters: 100
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 20200
+Weight matrix learnable parameters: 10000
+Bias learnable parameters: 100
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 202
+Weight matrix learnable parameters: 100
+Bias learnable parameters: 1
+
+Layer: Reshape Layer
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+Layer: net_layers.0.Param_W -> True
+Layer: net_layers.0.Param_b -> True
+Layer: net_layers.0.layer.weight -> True
+Layer: net_layers.0.layer.bias -> True
+Layer: net_layers.2.Param_b -> True
+Layer: net_layers.2.Param_W -> True
+Layer: net_layers.3.Param_W -> True
+Layer: net_layers.3.Param_b -> True
+Layer: net_layers.3.layer.weight -> True
+Layer: net_layers.3.layer.bias -> True
+Layer: net_layers.5.Param_W -> True
+Layer: net_layers.5.Param_b -> True
+Layer: net_layers.6.Param_W -> True
+Layer: net_layers.6.Param_b -> True
+Layer: net_layers.6.layer.weight -> True
+Layer: net_layers.6.layer.bias -> True
+Layer: net_layers.8.Param_W -> True
+Layer: net_layers.8.Param_b -> True
+Layer: net_layers.8.layer.weight -> True
+Layer: net_layers.8.layer.bias -> True
+Layer: net_layers.9.Param_W -> True
+Layer: net_layers.9.Param_b -> True
+Layer: net_layers.9.layer.weight -> True
+Layer: net_layers.9.layer.bias -> True
+
+Total trainable parameters: 3625536
+Network architecture: [{'layer_type': 'linear', 'out_features': 10, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 0, 'device': device(type='cpu'), 'seed': 42, 'in_features': 21, 'in_channels': 1, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 1, 'device': device(type='cpu'), 'seed': 42, 'in_features': 10, 'in_channels': 1, 'out_features': 10, 'out_channels': 1, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'invariant_based_convolution', 'bias': True, 'activation': 'torch.nn.Identity()', 'heads': [{'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 5, 'max_cycle_length': 5}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 5, 'max_cycle_length': 5}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 6, 'max_cycle_length': 6}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 6, 'max_cycle_length': 6}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 7, 'max_cycle_length': 7}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 7, 'max_cycle_length': 7}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 8, 'max_cycle_length': 8}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 8, 'max_cycle_length': 8}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 9, 'max_cycle_length': 9}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 9, 'max_cycle_length': 9}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'induced_cycles', 'min_cycle_length': 10, 'max_cycle_length': 10}, 'tail': {'label_type': 'induced_cycles', 'min_cycle_length': 10, 'max_cycle_length': 10}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'primary'}, 'tail': {'label_type': 'primary'}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'primary'}, 'tail': {'label_type': 'primary'}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'edge_label_distances', 'values': [1], 'cutoff': 1}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled', 'depth': 0}, 'tail': {'label_type': 'wl_labeled', 'depth': 0}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled_edges', 'depth': 0}, 'tail': {'label_type': 'wl_labeled_edges', 'depth': 0}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2, 3, 4]}}, {'num': 2, 'bias': True, 'labels': {'head': {'label_type': 'wl_labeled_edges', 'depth': 1}, 'tail': {'label_type': 'wl_labeled_edges', 'depth': 1}, 'bias': {'label_type': 'primary'}}, 'properties': {'name': 'distances', 'values': [1, 2]}}], 'layer_id': 2, 'device': device(type='cpu'), 'seed': 42, 'in_features': 10, 'in_channels': 1, 'out_features': 10, 'num_heads': 11, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Invariant Based Message Passing Layer'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 3, 'device': device(type='cpu'), 'seed': 42, 'in_features': 220, 'in_channels': 11, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 4, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 11, 'out_features': 100, 'out_channels': 11, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'invariant_based_aggregation', 'activation': 'torch.nn.Identity()', 'bias': True, 'heads': [{'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 5, 'max_cycle_length': 5}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 6, 'max_cycle_length': 6}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 7, 'max_cycle_length': 7}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 8, 'max_cycle_length': 8}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 9, 'max_cycle_length': 9}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['induced_cycles', 'primary'], 'min_cycle_length': 10, 'max_cycle_length': 10}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 6, 'max_cycle_length': 6}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 7, 'max_cycle_length': 7}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 8, 'max_cycle_length': 8}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 9, 'max_cycle_length': 9}}, {'num': 10, 'bias': True, 'labels': {'label_type': ['simple_cycles', 'primary'], 'min_cycle_length': 10, 'max_cycle_length': 10}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'primary'}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled', 'depth': 0}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled_edges', 'depth': 0}}, {'num': 10, 'bias': True, 'labels': {'label_type': 'wl_labeled_edges', 'depth': 1}}], 'layer_id': 5, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 11, 'out_features': 100, 'num_heads': 15, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Invariant Based Aggregation Layer'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 6, 'device': device(type='cpu'), 'seed': 42, 'in_features': 15000, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'layer_norm', 'layer_id': 7, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_features': 100, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Layer Normalization'}, {'layer_type': 'linear', 'out_features': 100, 'bias': True, 'activation': 'torch.nn.LeakyReLU()', 'layer_id': 8, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'linear', 'out_features': 1, 'bias': True, 'activation': 'torch.nn.Identity()', 'layer_id': 9, 'device': device(type='cpu'), 'seed': 42, 'in_features': 100, 'in_channels': 165, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Linear Layer', 'mode': 'aggr_features'}, {'layer_type': 'reshape', 'layer_id': 10, 'device': device(type='cpu'), 'seed': 42, 'in_features': 1, 'in_channels': 165, 'out_features': 1, 'out_channels': 165, 'dtype': torch.float64, 'name': 'Reshape Layer'}]
+Optimizer: Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    capturable: False
+    decoupled_weight_decay: False
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 0.001
+    maximize: False
+    weight_decay: 0.0
+)
+Loss function: L1Loss()
+Batch size: [128]
+Balanced data: False
+Number of epochs: 150
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 440
+Weight matrix learnable parameters: 210
+Bias learnable parameters: 10
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Invariant Based Message Passing Layer
+
+Layer Trainable Parameters: 402204
+Number of Source Labels (type: induced_cycles_5_5) in channel 0: 4
+Number of Target Labels (type: induced_cycles_5_5) in channel 0: 4
+Number of Bias Labels in channel 0: 21
+Number of pairwise properties in channel 0: 22
+
+Number of Source Labels (type: induced_cycles_6_6) in channel 1: 6
+Number of Target Labels (type: induced_cycles_6_6) in channel 1: 6
+Number of Bias Labels in channel 1: 21
+Number of pairwise properties in channel 1: 22
+
+Number of Source Labels (type: induced_cycles_7_7) in channel 2: 3
+Number of Target Labels (type: induced_cycles_7_7) in channel 2: 3
+Number of Bias Labels in channel 2: 21
+Number of pairwise properties in channel 2: 22
+
+Number of Source Labels (type: induced_cycles_8_8) in channel 3: 4
+Number of Target Labels (type: induced_cycles_8_8) in channel 3: 4
+Number of Bias Labels in channel 3: 21
+Number of pairwise properties in channel 3: 22
+
+Number of Source Labels (type: induced_cycles_9_9) in channel 4: 2
+Number of Target Labels (type: induced_cycles_9_9) in channel 4: 2
+Number of Bias Labels in channel 4: 21
+Number of pairwise properties in channel 4: 22
+
+Number of Source Labels (type: induced_cycles_10_10) in channel 5: 2
+Number of Target Labels (type: induced_cycles_10_10) in channel 5: 2
+Number of Bias Labels in channel 5: 21
+Number of pairwise properties in channel 5: 22
+
+Number of Source Labels (type: primary) in channel 6: 21
+Number of Target Labels (type: primary) in channel 6: 21
+Number of Bias Labels in channel 6: 21
+Number of pairwise properties in channel 6: 22
+
+Number of Source Labels (type: primary) in channel 7: 21
+Number of Target Labels (type: primary) in channel 7: 21
+Number of Bias Labels in channel 7: 21
+Number of pairwise properties in channel 7: 3
+
+Number of Source Labels (type: wl_labeled_0) in channel 8: 391
+Number of Target Labels (type: wl_labeled_0) in channel 8: 391
+Number of Bias Labels in channel 8: 21
+Number of pairwise properties in channel 8: 4
+
+Number of Source Labels (type: wl_labeled_edges_0) in channel 9: 499
+Number of Target Labels (type: wl_labeled_edges_0) in channel 9: 499
+Number of Bias Labels in channel 9: 21
+Number of pairwise properties in channel 9: 4
+
+Number of Source Labels (type: wl_labeled_edges_1) in channel 10: 13006
+Number of Target Labels (type: wl_labeled_edges_1) in channel 10: 13006
+Number of Bias Labels in channel 10: 21
+Number of pairwise properties in channel 10: 2
+
+Weight matrix learnable parameters: 397584
+Bias learnable parameters: 4620
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 44200
+Weight matrix learnable parameters: 22000
+Bias learnable parameters: 100
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Invariant Based Aggregation Layer
+
+Layer Trainable Parameters: 158090
+Number of Node Labels (type: induced_cycles_5_5_primary) in channel 0: 38
+
+Number of Node Labels (type: induced_cycles_6_6_primary) in channel 1: 43
+
+Number of Node Labels (type: induced_cycles_7_7_primary) in channel 2: 33
+
+Number of Node Labels (type: induced_cycles_8_8_primary) in channel 3: 32
+
+Number of Node Labels (type: induced_cycles_9_9_primary) in channel 4: 23
+
+Number of Node Labels (type: induced_cycles_10_10_primary) in channel 5: 23
+
+Number of Node Labels (type: simple_cycles_6_6_primary) in channel 6: 43
+
+Number of Node Labels (type: simple_cycles_7_7_primary) in channel 7: 33
+
+Number of Node Labels (type: simple_cycles_8_8_primary) in channel 8: 38
+
+Number of Node Labels (type: simple_cycles_9_9_primary) in channel 9: 43
+
+Number of Node Labels (type: simple_cycles_10_10_primary) in channel 10: 43
+
+Number of Node Labels (type: primary) in channel 11: 21
+
+Number of Node Labels (type: wl_labeled_0) in channel 12: 391
+
+Number of Node Labels (type: wl_labeled_edges_0) in channel 13: 499
+
+Number of Node Labels (type: wl_labeled_edges_1) in channel 14: 13006
+
+Weight matrix learnable parameters: 143090
+Bias learnable parameters: 15000
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 3000200
+Weight matrix learnable parameters: 1500000
+Bias learnable parameters: 100
+
+Layer: Layer Normalization
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 20200
+Weight matrix learnable parameters: 10000
+Bias learnable parameters: 100
+
+Layer: Linear Layer
+
+Layer Trainable Parameters: 202
+Weight matrix learnable parameters: 100
+Bias learnable parameters: 1
+
+Layer: Reshape Layer
+
+Layer Trainable Parameters: 0
+Weight matrix learnable parameters: 0
+Bias learnable parameters: 0
+Layer: net_layers.0.Param_W -> True
+Layer: net_layers.0.Param_b -> True
+Layer: net_layers.0.layer.weight -> True
+Layer: net_layers.0.layer.bias -> True
+Layer: net_layers.2.Param_b -> True
+Layer: net_layers.2.Param_W -> True
+Layer: net_layers.3.Param_W -> True
+Layer: net_layers.3.Param_b -> True
+Layer: net_layers.3.layer.weight -> True
+Layer: net_layers.3.layer.bias -> True
+Layer: net_layers.5.Param_W -> True
+Layer: net_layers.5.Param_b -> True
+Layer: net_layers.6.Param_W -> True
+Layer: net_layers.6.Param_b -> True
+Layer: net_layers.6.layer.weight -> True
+Layer: net_layers.6.layer.bias -> True
+Layer: net_layers.8.Param_W -> True
+Layer: net_layers.8.Param_b -> True
+Layer: net_layers.8.layer.weight -> True
+Layer: net_layers.8.layer.bias -> True
+Layer: net_layers.9.Param_W -> True
+Layer: net_layers.9.Param_b -> True
+Layer: net_layers.9.layer.weight -> True
+Layer: net_layers.9.layer.bias -> True
+
+Total trainable parameters: 3625536
