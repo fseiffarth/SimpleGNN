@@ -469,7 +469,7 @@ def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, chann
             property_legend = [f'Distance {i}' for i in range(layer.n_properties[channel])]
         else:
             property_legend = [f'{layer.property_descriptions[channel]} {i}' for i in range(layer.n_properties[channel])]
-        f = lambda x : np.max(np.where(x >= np.array(layer.skips)))
+        f = lambda x : np.max(np.where(x >= np.array(layer.weight_offset)))
         f_vectorized = np.vectorize(f)
         # get property id from sort indices using the skips
         property_indices = f_vectorized(sort_indices)
@@ -508,7 +508,7 @@ def rules_vs_weights(layer:InvariantBasedMessagePassingLayer, sort_indices:np.nd
             property_legend = [f'Distance {i}' for i in range(layer.n_properties[channel])]
         else:
             property_legend = [f'{layer.property_descriptions[channel]} {i}' for i in range(layer.n_properties[channel])]
-        f = lambda x : np.max(np.where(x >= np.array(layer.skips)))
+        f = lambda x : np.max(np.where(x >= np.array(layer.weight_offset)))
         f_vectorized = np.vectorize(f)
         # get property id from sort indices using the skips
         property_indices = f_vectorized(sort_indices)
