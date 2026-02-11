@@ -66,5 +66,10 @@ fi
 echo "Installing dependencies from requirements.txt..."
 pip install -r requirements.txt
 
-echo "Installation complete! To activate the virtual environment, run:"
-echo "source venv/bin/activate"
+# Install SimpleGNN package in editable mode
+echo "Installing SimpleGNN package in editable mode..."
+pip install -e .
+
+echo ""
+echo "Installation complete! Activate environment with: source venv/bin/activate"
+echo "Verify installation: python -c 'import simplegnn; print(simplegnn.__version__)'"

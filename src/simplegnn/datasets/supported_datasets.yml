@@ -1,0 +1,8 @@
+# List of supported datasets with their metadata
+datasets:
+    - name: "DHFR"
+      task: "graph_classification"
+      source: "TUDataset"
+
+    - name: "Mutagenicity"
+      task: "graph_classification"

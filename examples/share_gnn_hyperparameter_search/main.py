@@ -4,7 +4,7 @@ from simplegnn.framework.core import FrameworkMain
 
 
 def main():
-    experiment = FrameworkMain(Path('examples/zinc/main.yml'))
+    experiment = FrameworkMain(Path('examples/basic_example_share_gnn/main.yml'))
     experiment.preprocessing(1)
     experiment.run_configurations(-1)
     experiment.evaluate_results()
