@@ -24,31 +24,192 @@ from models.ShareGNN.utils import Layer
 
 class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
     """
-    This class represents a message passing layer of the encoder of an ShareGNN.
-    :param layer_id: the id of the layer
-    :param seed: the seed for the random number generator
-    :param parameters: the parameters of the experiment
-    :param graph_data: the data of the graph dataset
-    :param device: use 'cpu' or 'cuda' as device ('cpu' is recommended)
-    :param input_feature_dimensions: the number of input features
+    ShareGNN message passing layer using invariant-based label and property aggregation.
 
-    **forward(x: torch.Tensor, pos:int) -> out: torch.Tensor**
-        - **x** is the input matrix of shape (N, F) where N is the number of nodes and F is the number of node features. F should be constant over all graphs (TODO allow different F for different graphs)
-        - **pos** is the index of the graph in the graph_data
-        - **out** is the output matrix of shape (H, N, F) where H is the number of heads and N is the number of nodes. F is the number of node features.
+    This layer implements the core ShareGNN architecture: message passing conditioned
+    on node label pairs and pairwise properties (e.g., shortest path distance). It
+    computes multi-head aggregations where each head focuses on specific label
+    combinations and property values, enabling fine-grained structural feature extraction.
+
+    Parameters
+    ----------
+    parameters : Parameters
+        Experiment configuration containing paths, precision, and print settings.
+    layer : Layer
+        Layer configuration specifying:
+        - layer_heads: List of head configurations (labels, properties, num heads)
+        - layer_id: Position of this layer in the network
+        - in_features, out_features: Dimensions
+    graph_data : GraphDataset
+        Graph dataset with precomputed:
+        - node_labels: Dictionary of NodeLabels objects (source, target, bias labels)
+        - properties: Dictionary of Properties objects (pairwise distances/features)
+
+    Attributes
+    ----------
+    out_features : int
+        Total output dimension (in_features × num_heads).
+    num_heads : int
+        Total number of heads across all head configurations.
+    n_heads_per_label : list of int
+        Number of heads for each label configuration.
+    source_label_descriptions : list of str
+        Label names used for source nodes in each head.
+    target_label_descriptions : list of str
+        Label names used for target nodes in each head.
+    bias_label_descriptions : list of str
+        Label names used for bias terms in each head.
+    property_descriptions : list of str
+        Property names (e.g., 'distance_0_3_6') for each head.
+    n_source_labels : list of int
+        Number of unique source labels per head.
+    n_target_labels : list of int
+        Number of unique target labels per head.
+    n_bias_labels : list of int
+        Number of unique bias labels per head.
+    n_properties : list of int
+        Number of property values per head.
+    weight_num : list of int
+        Number of weights allocated to each (source, target, property) combination.
+    weight_offset : list of int
+        Cumulative offsets into the weight parameter vector.
+    bias : bool
+        Whether any head uses bias terms.
+    bias_list : list of bool
+        Per-head bias flags.
+
+    Notes
+    -----
+    **ShareGNN Message Passing Algorithm:**
+
+    For each head h and each property value p (e.g., distance = 3):
+    1. Identify node pairs (i, j) where:
+        - Source label of node i matches head configuration
+        - Target label of node j matches head configuration
+        - Property(i, j) == p
+    2. Look up weight w[source_label_i, target_label_j, p]
+    3. Aggregate: out_i_h += w × input_j for all valid j
+    4. Add bias b[bias_label_i] if enabled
+    5. Stack outputs across heads: (H, N, F)
+
+    **Weight Distribution:**
+
+    Weights are distributed based on label-property combinations that actually
+    occur in the dataset. The massive __init__() method:
+    1. Scans all graphs to find valid (source, target, property) tuples
+    2. Assigns weight indices to each unique combination
+    3. Caches the index mappings for efficient forward passes
+    4. Allocates bias parameters per unique bias label
+
+    **Caching Strategy:**
+
+    Index computations are expensive (O(|E| × |labels|²) worst case), so results
+    are cached to disk with MD5-hashed keys. See get_cache_path(), _load_cached_indices(),
+    and _save_cached_indices() for caching implementation.
+
+    **Tensor Shapes:**
+    - Input: (N, F) or (1, N, F) where N = nodes, F = features
+    - Output: (H, N, F) where H = num_heads
+    - Weights: (W,) where W = total weight count across all heads
+    - Bias: (B,) where B = sum of unique bias labels across heads
+
+    See Also
+    --------
+    InvariantBasedLayer : Base class
+    models.ShareGNN.preprocessing.preprocessing : Generates labels and properties
+    datasets.utils.node_labeling : Node labeling strategies
+    datasets.utils.edge_labeling : Property computation
+
+    Examples
+    --------
+    >>> # Typical configuration in YAML
+    >>> layer_config = {
+    ...     'layer_type': 'inv_based_message_passing',
+    ...     'heads': [
+    ...         {
+    ...             'num': 4,
+    ...             'source_labels': {'label_type': 'wl', 'depth': 3},
+    ...             'target_labels': {'label_type': 'wl', 'depth': 3},
+    ...             'property': {'type': 'distance', 'values': [0, 3, 6]}
+    ...         }
+    ...     ]
+    ... }
     """
 
 
 
     def __init__(self, parameters: Parameters, layer: Layer, graph_data: GraphDataset):
         """
-        Constructor of the GraphConvLayer
-        :param layer_id: the id of the layer
-        :param seed: the seed for the random number generator
-        :param parameters: the parameters of the experiment
-        :param graph_data: the data of the graph dataset
-        :param device: use 'cpu' or 'cuda' as device ('cpu' is recommended)
-        :param input_feature_dimensions: the number of input features
+        Initialize the invariant-based message passing layer.
+
+        Performs extensive preprocessing to determine weight distribution:
+        1. Extracts label and property descriptions from layer configuration
+        2. Scans all graphs to find valid (source_label, target_label, property) tuples
+        3. Assigns weight indices to each unique combination (caching for efficiency)
+        4. Allocates bias parameters per unique bias label
+        5. Initializes weight and bias parameter tensors
+
+        Parameters
+        ----------
+        parameters : Parameters
+            Experiment parameters (paths, precision, device, printing options).
+        layer : Layer
+            Layer configuration with head specifications.
+        graph_data : GraphDataset
+            Dataset with precomputed node_labels and properties dictionaries.
+
+        Notes
+        -----
+        **Initialization Phases:**
+
+        **Phase 1: Extract Label and Property Metadata (lines 59-71)**
+        - For each head: extract source/target/bias label names
+        - Count unique labels (n_source_labels, n_target_labels, n_bias_labels)
+        - Extract property description and count property values
+        - Store number of heads per label configuration
+
+        **Phase 2: Weight Distribution (lines 74-211)**
+        - For each head and property value:
+            a. Load or compute valid (source, target) label pairs
+            b. Assign weight index to each pair
+            c. Create index tensors for fast forward pass lookups
+            d. Cache indices to disk for reuse
+        - Accumulate weight counts and offsets
+        - Store distribution chunks for each graph
+
+        **Phase 3: Bias Setup (lines 213-231)**
+        - If any head uses bias:
+            a. Count unique bias labels across all graphs
+            b. Assign bias index to each unique bias label
+            c. Store bias offsets per graph
+            d. Cache bias indices
+
+        **Phase 4: Parameter Initialization (lines 233-260)**
+        - Allocate weight tensor: size = total weight count
+        - Allocate bias tensor: size = total unique bias labels (if bias enabled)
+        - Initialize using configured strategy (xavier, kaiming, normal, uniform, zeros)
+        - Store distribution and offset tensors for forward pass
+
+        **Caching:**
+        Index computations are expensive (can take minutes for large datasets).
+        Results are cached with MD5-hashed keys based on:
+        - Dataset, labels, properties, filter thresholds
+        - Cache hit: instant loading
+        - Cache miss: compute, save for next time
+
+        Raises
+        ------
+        ValueError
+            If label or property descriptions are missing from graph_data.
+        FileNotFoundError
+            If required label or property files are not found.
+
+        See Also
+        --------
+        get_cache_path : Generates cache file paths
+        _load_cached_indices : Loads cached index tensors
+        _save_cached_indices : Saves computed indices
+        init_weights : Weight initialization strategies
         """
         layer.layer_dict['name'] = "Invariant Based Message Passing Layer"
         super(InvariantBasedMessagePassingLayer, self).__init__(parameters, layer, graph_data)
@@ -371,10 +532,60 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
     def init_weights(self, num_weights:np.float64, init_type:Optional[str]=None) -> nn.Parameter:
         """
-        Initializes the weights, i.e., learnable parameters of the module
-        :param num_weights: number of weights
-        :param init_type: type of the weight initialization determined in the config file (convolution, or convolution bias)
-        :return: the initialized weights
+        Initialize learnable weight parameters with configured strategy.
+
+        Supports multiple initialization schemes: uniform, normal, symmetric normal,
+        constant, lower/upper bound, and He initialization. Configuration is read
+        from para.run_config.config['weight_initialization'][init_type].
+
+        Parameters
+        ----------
+        num_weights : np.float64 or int
+            Number of weight parameters to initialize.
+        init_type : str, optional
+            Weight category key in the configuration file (e.g., 'convolution',
+            'convolution_bias'). If None, uses default constant initialization.
+
+        Returns
+        -------
+        nn.Parameter
+            Initialized weight parameter tensor of shape (num_weights,) with
+            requires_grad=True.
+
+        Notes
+        -----
+        **Supported Initialization Types:**
+
+        - 'uniform': Uniform distribution U(min, max)
+        - 'normal': Normal distribution N(mean, std)
+        - 'symmetric_normal': Half weights from N(mean, std), half from N(-mean, std)
+        - 'constant': All weights set to constant value
+        - 'lower_upper': Uniform in [-1/√n, 1/√n] where n = num_weights
+        - 'he': He initialization with std = √(2/n)
+
+        If init_type is not in config or no config exists, defaults to constant 0.01.
+
+        **Configuration Format (YAML):**
+        ```yaml
+        weight_initialization:
+          convolution:
+            type: normal
+            mean: 0.0
+            std: 0.1
+          convolution_bias:
+            type: constant
+            value: 0.0
+        ```
+
+        Raises
+        ------
+        ValueError
+            If init_type is specified but not supported by the configuration.
+
+        See Also
+        --------
+        set_weights : Uses these parameters during forward pass
+        __init__ : Calls this method to initialize Param_W and Param_b
         """
         weights = nn.Parameter(torch.zeros(num_weights, dtype=self.precision), requires_grad=True)
         weight_init = self.para.run_config.config.get('weight_initialization', None)
@@ -480,6 +691,73 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
 
     def forward(self, node_representation:torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
+        """
+        Forward pass: apply invariant-based message passing to node representations.
+
+        Computes multi-head aggregation conditioned on node label pairs and pairwise
+        properties. For each head, aggregates neighbor features weighted by learned
+        parameters specific to (source_label, target_label, property) combinations.
+
+        Parameters
+        ----------
+        node_representation : torch.Tensor
+            Input node features. Shape: (N, F) where:
+            - N: number of nodes in the current graph
+            - F: in_features (feature dimension)
+        batch_data : GraphDataset
+            Graph dataset (required by FrameworkLayer interface, not used here).
+        *args
+            Additional positional arguments (unused).
+        **kwargs
+            Keyword arguments:
+            - 'pos' : int
+                Index of the graph in the dataset (default: 0). Used to select
+                graph-specific weight and bias configurations.
+
+        Returns
+        -------
+        torch.Tensor
+            Updated node representations. Shape: (N, H×F) where:
+            - N: number of nodes (unchanged)
+            - H: num_heads (number of aggregation heads)
+            - F: in_features
+            Output is flattened: (H, N, F) → (N, H×F)
+
+        Notes
+        -----
+        **Algorithm:**
+        1. Set graph-specific weights via set_weights(pos):
+            - Constructs current_W: (H, N, N) sparse weight matrix
+            - Each entry current_W[h, i, j] = weight for head h, node i, neighbor j
+        2. Perform message passing via einsum:
+            - Standard: current_W @ node_representation
+            - With degree normalization: D @ current_W @ D @ x (if use_degree_matrix)
+            - With in-degree norm: current_W @ x scaled by in_edges (if use_in_degrees)
+        3. Add bias terms if enabled via set_bias(pos):
+            - current_B: (H, N, F) bias for each head and node
+        4. Permute and flatten: (H, N, F) → (N, F, H) → (N, H×F)
+        5. Apply activation function
+
+        **Einsum Operations:**
+        - 'hij,jf->hif': (H, N, N) @ (N, F) → (H, N, F)
+            Aggregates features from neighbors j to node i for each head h
+        - 'cij,jk->cik': With degree matrix multiplication (variant)
+
+        **Timing:**
+        Forward pass time is accumulated in self.forward_step_time for profiling.
+
+        **Graph-Specific Computation:**
+        The weight matrix current_W is reconstructed for each graph based on:
+        - Graph size (N varies across graphs)
+        - Label distributions (different graphs have different label patterns)
+        - Precomputed weight_distribution (indices into Param_W)
+
+        See Also
+        --------
+        set_weights : Constructs current_W from weight parameters
+        set_bias : Constructs current_B from bias parameters
+        __init__ : Precomputes weight and bias distributions
+        """
         # get pos from kwargs
         pos = kwargs.get('pos', 0)
         begin = time.time()

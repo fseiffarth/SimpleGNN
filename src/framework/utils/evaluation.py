@@ -8,6 +8,63 @@ from utils.utils import is_pruning
 
 
 def epoch_accuracy(db_name, y_val, ids):
+    """
+    Plot accuracy curves across epochs for multiple configurations.
+
+    Loads result CSV files for specified configuration IDs, aggregates metrics across
+    validation folds, and generates a plot showing mean accuracy ± standard deviation
+    per epoch. Also parses network architecture from .txt files to create legend labels.
+
+    Parameters
+    ----------
+    db_name : str
+        Dataset name (e.g., 'MUTAG', 'ZINC'). Used to locate results directory
+        at Results/<db_name>/Results/.
+    y_val : str
+        Which accuracy metric to plot. Must be one of:
+        - 'Train': Plots epoch training accuracy
+        - 'Validation': Plots validation accuracy
+        - 'Test': Plots test accuracy
+    ids : list of int
+        List of configuration IDs to plot. Each ID corresponds to a specific
+        hyperparameter configuration and is used to filter result files.
+
+    Notes
+    -----
+    **File Expectations:**
+    - CSV files: Results/<db_name>/Results/<db_name>_<id>_*.csv
+    - Network files: Results/<db_name>/Results/<db_name>_<id>_Network*.txt
+
+    **CSV Format Requirements:**
+    Must contain columns:
+    - Epoch, RunNumber, ValidationNumber
+    - EpochAccuracy, ValidationAccuracy, TestAccuracy
+    - TrainingSize, ValidationSize, TestSize
+    - EpochLoss (or similar column containing 'EpochLoss')
+    - ValidationLoss
+
+    **Legend Parsing:**
+    Network architecture is extracted from .txt files:
+    - First line must contain network config in brackets: [..., ..., ...]
+    - Two parsing modes: 'simple' (default) and complex (unused, kept for reference)
+
+    **Aggregation Strategy:**
+    For each configuration ID:
+    1. Load all CSV files matching the ID pattern
+    2. Weight metrics by dataset size (accuracy × size)
+    3. Group by epoch and compute mean and std across validation folds
+    4. Normalize back by dividing by mean size
+    5. Plot with error bars
+
+    **Output:**
+    Saves plot to: Results/<db_name>/Plots/<db_name>_<y_val>.png
+    Y-axis range is fixed to [0, 100] for accuracy percentage.
+
+    Examples
+    --------
+    >>> epoch_accuracy('MUTAG', 'Validation', [1, 2, 3, 5, 8])
+    # Plots validation accuracy curves for configurations 1, 2, 3, 5, 8
+    """
     if y_val == 'Train':
         y_val = 'EpochAccuracy'
         size = 'TrainingSize'
@@ -147,6 +204,64 @@ def epoch_accuracy(db_name, y_val, ids):
 
 
 def evaluateGraphLearningNN(db_name, ids, path='Results/'):
+    """
+    Evaluate multiple GNN configurations and rank by validation accuracy.
+
+    For each configuration ID, performs model selection by:
+    1. Finding the best epoch (highest validation accuracy, ties broken by minimum loss)
+    2. Computing mean and std of test accuracy across validation folds
+    3. Ranking configurations by validation performance
+    4. Printing top-5 results
+
+    Parameters
+    ----------
+    db_name : str
+        Dataset name. Used to locate results at <path>/<db_name>/Results/.
+    ids : list of int
+        List of configuration IDs to evaluate.
+    path : str, optional
+        Root path to results directory (default: 'Results/').
+
+    Notes
+    -----
+    **Model Selection Strategy:**
+    For each (run, validation_fold) pair:
+    1. Find epoch with maximum validation accuracy
+    2. Among those epochs, select the one with minimum validation loss
+    3. Extract test accuracy at that epoch
+    4. Aggregate across folds
+
+    **Aggregation Depends on Dataset:**
+    - For certain datasets (NCI1, ENZYMES, PROTEINS, DD, IMDB-*, SYNTHETIC*, DHFR,
+      NCI109, Mutagenicity, MUTAG): Group by ValidationNumber (outer CV)
+    - For other datasets: Group by RunNumber (independent runs)
+
+    **Weighting:**
+    Metrics are weighted by dataset size before averaging:
+    - Test accuracy × TestSize
+    - Validation accuracy × ValidationSize
+    - Loss × corresponding size
+
+    **Output Format:**
+    Prints for each configuration:
+    - Average validation accuracy ± std
+    - Average test accuracy ± std (selected by best validation performance)
+    - Network architecture from .txt file
+
+    Top 5 configurations are printed, ranked by:
+    - Validation accuracy (descending)
+    - If ValidationLoss column exists, also sorted by validation loss (ascending)
+
+    Returns
+    -------
+    None
+        Results are printed to console.
+
+    See Also
+    --------
+    model_selection_evaluation : Alternative evaluation function with more flexibility
+    epoch_accuracy : Plots training curves
+    """
     evaluation = {}
     for id in ids:
         id_str = str(id).zfill(6)
@@ -291,16 +406,82 @@ def evaluateGraphLearningNN(db_name, ids, path='Results/'):
 
 
 def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_validation_only=False, experiment_config=None, get_best_model=False, print_results=False) -> int:
-    '''
-    Evaluate the model selection results for a specific database
-    :param db_name: the name of the database
-    :param print_results: print the results to the console
-    :param evaluate_best_model: evaluate the best model
-    :param get_best_model: get the best model
-    :param evaluate_validation_only: evaluate only the validation set (get the mean best epoch accuracy and the std)
-    :return: the configuration id of the model with the overall best validation accuracy (+ minimum validation loss)
+    """
+    Perform comprehensive model selection evaluation and generate summary statistics.
 
-    '''
+    This function orchestrates the complete evaluation pipeline:
+    1. Loads all result CSV files for a dataset
+    2. Performs model selection (best epoch per configuration based on validation metric)
+    3. Aggregates results across validation folds
+    4. Generates summary CSV files with mean ± std for all metrics
+    5. Optionally identifies the single best configuration
+
+    Parameters
+    ----------
+    db_name : str
+        Dataset name. Results are expected at <results_path>/<db_name>/Results/.
+    evaluate_best_model : bool, optional
+        If True, evaluate results from the best configuration's re-runs
+        (expects files with 'Best_Configuration' in the name). Default: False.
+    evaluate_validation_only : bool, optional
+        If True, only compute mean validation metrics without full evaluation.
+        Default: False.
+    experiment_config : dict, optional
+        Experiment configuration dictionary containing:
+        - 'paths']['results']: Path to results directory
+        - 'evaluation_type']: 'accuracy' or 'loss' (default: 'accuracy')
+    get_best_model : bool, optional
+        If True, read pre-existing summary CSV to identify the best configuration ID.
+        Default: False.
+    print_results : bool, optional
+        If True, print evaluation results to console. Default: False.
+
+    Returns
+    -------
+    int
+        Configuration ID of the best model. Selection criteria:
+        - If evaluation_type='accuracy': Highest validation accuracy (ties broken by lowest loss)
+        - If evaluation_type='loss': Lowest validation loss (ties broken by highest accuracy)
+        Returns 0 if no valid results found.
+
+    Notes
+    -----
+    **Model Selection Logic (per configuration):**
+    For each (run_id, validation_id) pair:
+    1. Find epoch with best validation metric (max accuracy or min loss)
+    2. Extract all metrics at that epoch
+    3. Aggregate across folds by grouping on (run_id, validation_id)
+
+    **Aggregation Strategy:**
+    Metrics are weighted by dataset size before computing mean/std:
+    - Accuracy × Size, then divide by mean size
+    - Loss × Size, then divide by mean size
+
+    **Output Files Created:**
+    - summary.csv (or summary_best.csv if evaluate_best_model=True):
+        Columns: ConfigurationId, Test Accuracy Mean, Test Accuracy Std,
+                 Validation Accuracy Mean, Validation Accuracy Std,
+                 Validation Loss Mean, Validation Loss Std, etc.
+
+    **Pruning Detection:**
+    The function uses is_pruning() utility to detect if neural architecture search
+    with pruning was performed, which affects result aggregation logic.
+
+    **get_best_model Mode:**
+    Instead of processing CSVs, reads the summary file and selects the row with:
+    - Maximum 'Validation Accuracy Mean' (if evaluation_type='accuracy'), or
+    - Minimum 'Validation Loss Mean' (if evaluation_type='loss')
+
+    Raises
+    ------
+    FileNotFoundError
+        If results directory doesn't exist or expected CSV files are missing.
+
+    See Also
+    --------
+    model_selection_evaluation_mae : Variant for MAE-based model selection
+    evaluateGraphLearningNN : Alternative evaluation with top-k ranking
+    """
     result_path = experiment_config['paths']['results']
     evaluation_type = experiment_config.get('evaluation_type', 'accuracy')
     best_configuration_id = None
@@ -520,6 +701,65 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
 
 
 def model_selection_evaluation_mae(db_name, path:Path, ids=None):
+    """
+    Evaluate GNN configurations using loss-based model selection (MAE/MSE).
+
+    Similar to evaluateGraphLearningNN but selects best epoch based on minimum
+    validation loss instead of maximum accuracy. Designed for regression tasks
+    (graph regression, molecular property prediction).
+
+    Parameters
+    ----------
+    db_name : str
+        Dataset name (e.g., 'ZINC', 'QM9'). Used to locate results at
+        <path>/<db_name>/Results/.
+    path : Path
+        Root path to results directory.
+    ids : list of int, optional
+        List of configuration IDs to evaluate. If None, automatically discovers
+        all IDs by scanning for .txt files in the results directory.
+
+    Notes
+    -----
+    **Model Selection Strategy:**
+    For each (run, validation_fold) pair:
+    1. Find epoch with minimum validation loss
+    2. Extract test loss and other metrics at that epoch
+    3. Aggregate across folds
+
+    **File Expectations:**
+    - CSV files: <path>/<db_name>/Results/<db_name>_Configuration_<id>_Results_run_id_*.csv
+    - Network files: <path>/<db_name>/Results/<db_name>_Configuration_<id>_Network*.txt
+
+    **Validation Checks:**
+    - Expects 10 CSV files per configuration (10-fold CV)
+    - Exception: ZINC dataset expects 1 file (single split)
+    - Configurations with wrong number of files are skipped with a warning
+
+    **Aggregation:**
+    Metrics are aggregated across validation folds (grouped by RunNumberValidationNumber)
+    and normalized by dataset size:
+    - Test loss × TestSize, then divided by mean TestSize
+    - Test MAE × TestSize, then divided by mean TestSize
+
+    **Output:**
+    Prints for each configuration:
+    - Mean ± std of validation loss
+    - Mean ± std of test loss/MAE (at epoch with best validation loss)
+    - Network architecture from .txt file
+
+    Top results are printed in descending order of validation performance.
+
+    Returns
+    -------
+    None
+        Results are printed to console.
+
+    See Also
+    --------
+    model_selection_evaluation : Accuracy-based variant for classification tasks
+    evaluateGraphLearningNN : Alternative evaluation function
+    """
     # add absolute path to path
     path = os.path.abspath(path)
     print(f"Model Selection Evaluation for {db_name}")

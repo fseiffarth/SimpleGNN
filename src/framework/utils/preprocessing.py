@@ -12,9 +12,78 @@ from utils.utils import save_graphs
 
 class Preprocessing:
     """
-    Preprocessing class to load the data, generate the splits, labels and properties and save them in the correct folders.
-    params:
-    dataset_configuration: dict: configuration for the dataset
+    Orchestrates dataset preprocessing, split generation, and folder structure creation.
+
+    This class handles the complete preprocessing pipeline for GNN experiments:
+    1. Creates directory structure for data, results, labels, and properties
+    2. Generates or downloads graph datasets
+    3. Loads or creates train/validation/test splits
+    4. Performs model-specific preprocessing (e.g., ShareGNN invariant computation)
+
+    The preprocessing is driven by dataset configurations that specify paths,
+    data sources, split strategies, and model requirements.
+
+    Parameters
+    ----------
+    dataset_configurations : list of dict
+        List of dataset configuration dictionaries. Each configuration must contain:
+        - 'name' : str
+            Dataset name (e.g., 'MUTAG', 'ZINC')
+        - 'paths' : dict
+            Dictionary with keys 'data', 'results', 'splits', and optionally
+            'labels', 'properties'
+        - 'data_generation' : str, callable, or list
+            Data source specification (e.g., 'TUDataset', custom generation function)
+        - Optional: 'task', 'precision', 'with_invariant_layers', etc.
+
+    Attributes
+    ----------
+    db_name : str
+        Name of the current dataset being processed.
+    graph_data : GraphDataset or None
+        Loaded graph dataset object.
+    experiment_configuration : dict
+        Current dataset configuration being processed.
+    generation_times_labels_path : Path or None
+        Path to file tracking label generation timing.
+    generation_times_properties_path : Path or None
+        Path to file tracking property generation timing.
+
+    Notes
+    -----
+    The constructor iterates over all dataset configurations and processes each one:
+    - Creates folder structure (create_folders)
+    - Generates or loads data (generate_data or load_data)
+    - Loads splits (load_configuration_splits)
+    - Optionally runs model-specific preprocessing
+
+    Directory Structure Created
+    ----------------------------
+    results/<dataset_name>/
+        ├── Plots/
+        ├── Weights/
+        ├── Models/
+        └── Results/
+    data/<dataset_name>/
+        ├── raw/
+        └── processed/
+    labels/<dataset_name>/
+    properties/<dataset_name>/
+    splits/
+
+    Examples
+    --------
+    >>> config = [{
+    ...     'name': 'MUTAG',
+    ...     'paths': {
+    ...         'data': Path('data'),
+    ...         'results': Path('results'),
+    ...         'splits': Path('splits')
+    ...     },
+    ...     'data_generation': 'TUDataset',
+    ...     'validation_folds': 10
+    ... }]
+    >>> prep = Preprocessing(config)
     """
     def __init__(self, dataset_configurations):
         for configuration in dataset_configurations:
@@ -45,6 +114,37 @@ class Preprocessing:
 
 
     def create_folders(self):
+        """
+        Create directory structure for experiment data, results, and preprocessing outputs.
+
+        Creates the following folder hierarchy if it doesn't exist:
+        - Data directory: Root for dataset storage
+        - Results directory with subdirectories:
+            - <dataset_name>/Plots: For graph visualizations
+            - <dataset_name>/Weights: For model weight checkpoints
+            - <dataset_name>/Models: For saved model architectures
+            - <dataset_name>/Results: For experiment result CSV files
+        - Splits directory: For train/val/test split JSON files
+        - Labels directory (optional): For precomputed node labels
+        - Properties directory (optional): For precomputed edge properties
+
+        Also creates timing log files for tracking label and property generation.
+
+        Notes
+        -----
+        All directory creation uses exist_ok=True and parents=True, so it is safe
+        to call this method multiple times.
+
+        The splits path can be either a directory or a file path. If it ends with
+        .json, the parent directory is created instead.
+
+        Labels and properties directories are only created if specified in the
+        configuration (paths['labels'] and paths['properties']).
+
+        Two timing log files are created in the results directory:
+        - generation_times_labels.txt
+        - generation_times_properties.txt
+        """
         # create config folders if they do not exist
         self.experiment_configuration['paths']['data'].mkdir(exist_ok=True, parents=True)
         # create results folder if it does not exist
@@ -79,6 +179,55 @@ class Preprocessing:
         self.generation_times_properties_path = self.experiment_configuration['paths']['results'].joinpath('generation_times_properties.txt')
 
     def generate_data(self, dataset, data_generation_type, data_generation_args):
+        """
+        Generate or download graph dataset based on data generation configuration.
+
+        Supports three data generation modes:
+        1. Download from existing sources (e.g., 'TUDataset', 'OGB')
+        2. Generate from custom function
+        3. Merge multiple datasets (recursive mode for transfer learning)
+
+        Parameters
+        ----------
+        dataset : str
+            Name of the dataset to generate or download.
+        data_generation_type : str, callable, list, or None
+            - str: Name of existing dataset source ('TUDataset', 'OGB', 'NEL', etc.)
+            - callable: Custom generation function that returns (graphs, labels)
+            - list: List of generation types for dataset merging (transfer learning)
+            - None: Attempt to load from existing NEL format
+        data_generation_args : dict, list of dict, or None
+            Arguments to pass to generation function. If data_generation_type is a list,
+            this should be a list of dicts with matching length.
+
+        Notes
+        -----
+        **Recursive Merge Mode** (when data_generation_type is a list):
+        1. Recursively generates each dataset in the list
+        2. Loads each generated dataset as GraphDataset
+        3. Merges them into a single unified dataset
+
+        **String Mode** (TUDataset, OGB, etc.):
+        1. Downloads dataset using PyTorch Geometric loaders
+        2. Creates raw/ and processed/ subdirectories
+        3. Stores in data/<dataset_name>/
+
+        **Function Mode** (callable):
+        1. Calls generation function with provided arguments
+        2. Expects function to return (graphs, labels) tuple
+        3. Saves in NEL (Nodes, Edges, Labels) format using save_graphs()
+
+        **NEL Mode** (None or explicit 'NEL'):
+        Attempts to load existing data from NEL format files.
+
+        The method skips generation if the processed/ directory already exists
+        and contains data.pt file.
+
+        Raises
+        ------
+        ValueError
+            If dataset could not be generated or loaded with given configuration.
+        """
         # generate the graph data
 
         if isinstance(data_generation_type, list):
@@ -163,6 +312,31 @@ class Preprocessing:
 
 
     def load_data(self):
+        """
+        Load preprocessed graph dataset from disk.
+
+        Attempts to load a GraphDataset from the processed/ directory. The dataset
+        must have been previously generated and saved as data.pt file.
+
+        Raises
+        ------
+        ValueError
+            If graph data could not be loaded. This indicates either:
+            - The processed/ directory doesn't exist
+            - The data.pt file is missing or corrupted
+            - The dataset configuration is incorrect
+
+        Notes
+        -----
+        This method checks if self.graph_data is None before attempting to load,
+        avoiding redundant loads if data is already in memory.
+
+        The GraphDataset is initialized with:
+        - root: Data directory path
+        - name: Database name (self.db_name)
+        - task: Task type from configuration (optional)
+        - precision: 'float' or 'double' (defaults to 'float')
+        """
         # load graph data from pt files if it exists in the processed folder
         if self.graph_data is None and self.experiment_configuration['paths']['data'].joinpath(f'{self.db_name}').joinpath('processed').exists():
             self.graph_data = GraphDataset(root=str(self.experiment_configuration['paths']['data']),
@@ -176,6 +350,35 @@ class Preprocessing:
 
 
     def load_configuration_splits(self):
+        """
+        Load train/validation/test splits from JSON files.
+
+        Loads splits from the configured splits path and handles special cases for
+        transfer learning (pretraining/finetuning scenarios with multiple datasets).
+
+        Notes
+        -----
+        **Normal Mode:**
+        Loads splits from either:
+        - A direct file path (if splits_path ends with .json)
+        - <splits_path>/<dataset_name>_splits.json
+
+        **Transfer Learning Mode:**
+        If 'pretraining_datasets' or 'finetuning_datasets' is in configuration:
+        1. Checks for combined split file with naming pattern:
+           <dataset_name>_<mode>_<dataset1>_<dataset2>_..._splits.json
+        2. If not found, ensures individual split files exist for each dataset
+        3. Calls pretraining_finetuning() to create combined splits
+
+        The loaded splits are stored in self.experiment_configuration['splits']
+        as a dictionary with keys 'train', 'validation', 'test', each containing
+        lists of indices for each fold.
+
+        See Also
+        --------
+        load_splits : Function that parses split JSON files
+        create_split_file : Creates new split files if they don't exist
+        """
         splits_path = self.experiment_configuration['paths']['splits']
         if splits_path.suffix == '.json':
             self.experiment_configuration['splits'] = load_splits(splits_path)
@@ -214,6 +417,35 @@ class Preprocessing:
 
 
     def create_split_file(self):
+        """
+        Create new train/validation/test split files.
+
+        Generates split files using either the default splitting strategy or
+        a custom split function specified in the configuration.
+
+        Notes
+        -----
+        **Default Mode** (with_splits=True):
+        Uses create_splits() function to generate stratified k-fold splits
+        with the number of folds specified by 'validation_folds' in configuration.
+
+        **Custom Mode** (with_splits=False):
+        Requires 'split_function' and 'split_function_args' in configuration.
+        Calls the custom function with the splits path, graph data, and provided
+        arguments.
+
+        Split files are saved as JSON in the format expected by load_splits().
+
+        Raises
+        ------
+        ValueError
+            If with_splits=False but no split_function is specified in configuration.
+
+        See Also
+        --------
+        create_splits : Default split generation function
+        load_splits : Loads and validates split files
+        """
         # create the splits
         if self.experiment_configuration.get('with_splits', True):
             create_splits(self.db_name, Path(self.experiment_configuration['paths']['data']),
@@ -235,9 +467,59 @@ class Preprocessing:
 
 def load_splits(splits_path: Path) -> dict:
     """
-    Load the splits for a given database.
-    :param splits_path: Path to the splits file.
-    :return: A dictionary containing the train, validation, and test splits.
+    Load and validate train/validation/test splits from JSON file.
+
+    Reads a split file in the standard format used by the framework and extracts
+    train, validation, and test indices for each fold. Performs validation to
+    ensure splits are properly formatted and disjoint.
+
+    Parameters
+    ----------
+    splits_path : Path
+        Path to the JSON splits file.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys 'train', 'validation', 'test'. Each value is a list
+        of index lists, one per fold. For example:
+        {
+            'train': [[0,1,2], [3,4,5], ...],       # indices for each fold
+            'validation': [[3,4], [0,1], ...],
+            'test': [[5,6,7], [2,8,9], ...]
+        }
+
+    Raises
+    ------
+    ValueError
+        If split file is incorrectly formatted:
+        - Different number of folds in train/validation/test splits
+        - Overlapping indices between any pair of splits in any fold
+
+    Notes
+    -----
+    **Expected JSON Format:**
+    ```json
+    [
+        {
+            "test": [5, 6, 7, ...],
+            "model_selection": [
+                {
+                    "train": [0, 1, 2, ...],
+                    "validation": [3, 4, ...]
+                }
+            ]
+        },
+        ...  # one entry per fold
+    ]
+    ```
+
+    **Validation Checks:**
+    1. All splits (train, validation, test) must have the same number of folds
+    2. Within each fold, indices must be disjoint (no overlap between train/val/test)
+
+    The function only uses the first model_selection entry (index 0), as the
+    framework typically uses a single train/validation split per fold.
     """
 
 
@@ -265,6 +547,74 @@ def load_splits(splits_path: Path) -> dict:
 
 
 def load_preprocessed_data_and_parameters(run_id, validation_id, config_id, validation_folds, graph_data:GraphDataset, run_config, para: Parameters):
+    """
+    Load preprocessed node labels and edge properties, and configure parameters for training.
+
+    This is a critical setup function that:
+    1. Configures output/logging settings based on mode (debug vs. normal)
+    2. Identifies required node labels and edge properties from layer configurations
+    3. Loads precomputed labels and properties from disk
+    4. Attaches them to the GraphDataset object
+    5. Initializes all Parameters object settings for the experiment run
+
+    Parameters
+    ----------
+    run_id : int
+        Unique identifier for this experimental run.
+    validation_id : int
+        Index of the current validation fold (0 to validation_folds-1).
+    config_id : int
+        Unique identifier for this hyperparameter configuration.
+    validation_folds : int
+        Total number of cross-validation folds.
+    graph_data : GraphDataset
+        Graph dataset object that will be augmented with labels and properties.
+    run_config : RunConfiguration
+        Configuration object containing layer specifications, hyperparameters,
+        and experiment settings.
+    para : Parameters
+        Parameters object to be configured with all experiment settings.
+
+    Notes
+    -----
+    **Output Configuration:**
+    The function sets output flags based on experiment_configuration['mode']:
+    - If mode == 'debug': Enables drawing, printing, saving based on 'additional_options'
+    - Otherwise: Disables all output (draw, print_results, save_weights, etc.)
+
+    **Label and Property Loading:**
+    The function scans all layers in run_config.layers to identify:
+    1. Unique node label dictionaries (via get_unique_layer_dicts())
+    2. Unique edge property dictionaries (via get_unique_property_dicts())
+
+    Labels are loaded from:
+        <labels_path>/<dataset_name>/<dataset_name>_labels_<label_string>.pt
+
+    Properties are loaded from:
+        <properties_path>/<dataset_name>/<property_name>/
+
+    **Parameters Configuration:**
+    Calls three setter methods on the Parameters object:
+    - set_data_param(): Dataset name, layers, node features
+    - set_evaluation_param(): Run IDs, epochs, learning rate, dropout
+    - set_print_param(): Output and logging flags
+    - set_file_index(): Auto-incrementing file index for results
+
+    **Optional Graph Plotting:**
+    If para.plot_graphs is True, generates and saves PNG visualizations
+    of all graphs in the dataset.
+
+    Raises
+    ------
+    FileNotFoundError
+        If required label files do not exist at the expected paths.
+
+    See Also
+    --------
+    load_labels : Loads node label tensors from .pt files
+    get_label_string : Generates label filename from label dictionary
+    Properties : Class for loading and caching edge properties
+    """
     experiment_configuration = run_config.config
     # path do db and db
     draw = False

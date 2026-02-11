@@ -23,6 +23,168 @@ from torch_geometric.loader import DataLoader as PyGDataLoader
 
 
 class GraphDataset(InMemoryDataset):
+    """
+    Unified graph dataset interface for GNN experiments in SimpleGNN framework.
+
+    Extends PyTorch Geometric's InMemoryDataset to support:
+    - Multiple data sources (TUDataset, ZINC, QM9, OGB, NEL format, custom functions)
+    - Graph classification, graph regression, and node classification tasks
+    - Multi-precision computation (float32, float64)
+    - ShareGNN preprocessing (node labels, edge properties)
+    - Dataset merging for transfer learning
+
+    This class serves as the central data container, handling loading, preprocessing,
+    and access to graph data, labels, and features.
+
+    Parameters
+    ----------
+    root : str
+        Root directory where the dataset is stored or will be downloaded to.
+        Expected structure: <root>/<name>/{raw, processed}/
+    name : str
+        Dataset name (e.g., 'MUTAG', 'ZINC', 'QM9').
+    transform : callable, optional
+        Dynamic transforms applied to each graph on access (default: None).
+    pre_transform : callable, optional
+        Transforms applied once during processing (default: None).
+    pre_filter : callable, optional
+        Filter function to exclude certain graphs (default: None).
+    from_existing_data : str, list, or None, optional
+        Data source specification:
+        - str: 'TUDataset', 'ZINC', 'QM9', 'OGB', 'NEL', or custom source
+        - list: List of GraphDataset objects to merge (transfer learning)
+        - None: Load from processed files if they exist
+        (default: None).
+    force_reload : bool, optional
+        If True, reprocess even if processed files exist (default: False).
+    precision : str, optional
+        Numerical precision: 'float' (torch.float32) or 'double' (torch.float64)
+        (default: 'float').
+    input_features : int, optional
+        Override input feature dimension (default: None, auto-detect).
+    output_features : int, optional
+        Override output feature dimension (default: None, auto-detect).
+    task : str, optional
+        Task type: 'graph_classification', 'graph_regression', or 'node_classification'
+        (default: None, auto-detect from data).
+    merge_graphs : bool, optional
+        Whether to merge multiple datasets (used internally, default: None).
+    experiment_config : dict, optional
+        Full experiment configuration (default: None).
+
+    Attributes
+    ----------
+    name : str
+        Dataset name.
+    from_existing_data : str, list, or None
+        Data source specification.
+    nx_graphs : list of nx.Graph or None
+        NetworkX graph representations (lazily created).
+    unique_node_labels : int
+        Number of distinct node labels in the dataset.
+    node_labels : dict of str -> NodeLabels
+        Dictionary mapping label names to NodeLabels objects.
+        Always contains 'primary' key for original node labels.
+    edge_labels : dict of str -> EdgeLabels
+        Dictionary mapping label names to EdgeLabels objects.
+        Always contains 'primary' key for original edge labels.
+    properties : dict of str -> Properties
+        Dictionary mapping property names to Properties objects (pairwise features).
+    precision : torch.dtype
+        Computation precision (torch.float or torch.double).
+    task : str
+        Task type.
+    number_of_output_classes : int
+        Number of output classes (classification) or 1 (regression).
+    data : Data
+        PyG Data object containing all graphs and features.
+    slices : dict
+        Slice indices for separating individual graphs in the data object.
+    num_nodes : torch.Tensor
+        Number of nodes per graph, shape (num_graphs,).
+
+    Methods
+    -------
+    process()
+        Download and preprocess raw data based on from_existing_data specification.
+    preprocess_share_gnn_data(data, input_features, output_features, task)
+        Prepare data for ShareGNN layers (node features, labels, normalization).
+    create_nx_graphs(directed)
+        Convert PyG Data to NetworkX graphs.
+    read_nel_data_v2()
+        Read graphs from NEL (Nodes, Edges, Labels) format files.
+    get(idx)
+        Access individual graph by index.
+    len()
+        Number of graphs in the dataset.
+
+    Notes
+    -----
+    **Data Loading Pipeline:**
+    1. __init__ checks for processed files at <root>/<name>/processed/data.pt
+    2. If not found (or force_reload=True), calls process()
+    3. process() downloads/loads raw data based on from_existing_data
+    4. Preprocessing converts data to unified PyG Data format
+    5. preprocess_share_gnn_data() prepares features and labels
+    6. Resulting data.pt file contains (data, slices, sizes) tuple
+
+    **Supported Data Sources:**
+    - 'TUDataset': Download from TUDataset collection (MUTAG, ENZYMES, etc.)
+    - 'ZINC': Download ZINC molecular dataset
+    - 'QM9': Download QM9 quantum chemistry dataset
+    - 'OGB': Load Open Graph Benchmark datasets
+    - 'NEL': Load from custom NEL format files (nodes.txt, edges.txt, labels.txt)
+    - Custom function: Pass callable that generates (graphs, labels) tuple
+    - List of GraphDataset: Merge multiple datasets for transfer learning
+
+    **ShareGNN Integration:**
+    The dataset stores precomputed node labels and pairwise properties required
+    by ShareGNN layers. These are added via:
+    - node_labels['wl_3'] = NodeLabels object for WL depth-3 labels
+    - properties['distance_0_3_6'] = Properties object for distances {0,3,6}
+
+    **Precision:**
+    All tensors are converted to the specified precision during preprocess_share_gnn_data().
+    Mixing precisions between data and model will cause runtime errors.
+
+    **Task Auto-Detection:**
+    If task is None:
+    - Graph-level labels (data.y shape: (num_graphs,)) → graph task
+    - Node-level labels (data.y shape: (num_nodes,)) → node classification
+    - Continuous labels → regression, discrete → classification
+
+    Raises
+    ------
+    RuntimeError
+        If processed data was created by incompatible PyG version.
+        Solution: Delete processed/ directory and re-run.
+    FileNotFoundError
+        If from_existing_data points to non-existent source.
+
+    See Also
+    --------
+    CustomBatchLoader : Batch loader for training
+    datasets.graph_dataset_preprocessing : Preprocessing implementations
+    datasets.utils.node_labeling : Node labeling strategies
+    datasets.utils.edge_labeling : Property computation
+
+    Examples
+    --------
+    >>> # Load TUDataset
+    >>> data = GraphDataset(root='data', name='MUTAG', from_existing_data='TUDataset',
+    ...                     task='graph_classification')
+    >>> print(f"Loaded {len(data)} graphs with {data.num_node_features} features")
+
+    >>> # Load custom NEL format
+    >>> data = GraphDataset(root='data', name='MyDataset', from_existing_data='NEL',
+    ...                     task='graph_regression', precision='double')
+
+    >>> # Merge datasets for transfer learning
+    >>> zinc_data = GraphDataset(root='data', name='ZINC', from_existing_data='ZINC')
+    >>> qm9_data = GraphDataset(root='data', name='QM9', from_existing_data='QM9')
+    >>> merged = GraphDataset(root='data', name='ZINC_QM9',
+    ...                       from_existing_data=[zinc_data, qm9_data])
+    """
     def __init__(
             self,
             root: str,
@@ -764,12 +926,52 @@ class GraphDataset(InMemoryDataset):
             return None
 
     def batches_from_ids(self, ids: List[np.ndarray]) -> List[torch.Tensor]:
+        """
+        Create batches from lists of graph indices.
+
+        **WARNING: This method contains a bug and will raise NameError when called.**
+
+        Parameters
+        ----------
+        ids : list of np.ndarray
+            List of index arrays, where each array contains indices of graphs
+            to include in one batch.
+
+        Returns
+        -------
+        list of torch.Tensor
+            List of batched graph data tensors.
+
+        Raises
+        ------
+        NameError
+            **BUG:** Line 934 uses undefined variable `id_batch` instead of `batch`.
+            This will raise NameError: name 'id_batch' is not defined.
+
+            Expected fix: Change `self[id_batch]` to `self[batch]` or similar.
+
+        Notes
+        -----
+        The method appears to be incomplete or incorrectly implemented. The intended
+        behavior seems to be:
+        1. Iterate over each batch of indices
+        2. Select subset of graphs using index_select()
+        3. Compute batch size (x_size, currently unused)
+        4. Append batched graphs to result list
+
+        However, the current implementation will fail immediately when executed.
+
+        See Also
+        --------
+        CustomBatchLoader : Recommended alternative for custom batch generation
+        index_select : Underlying method for selecting graph subsets
+        """
         batches = []
         for batch in ids:
             subset = self.index_select(batch)
             x_size = subset.x.shape[0]
 
-            batches.append(self[id_batch])
+            batches.append(self[id_batch])  # BUG: id_batch is undefined
         return batches
 
     def __repr__(self) -> str:

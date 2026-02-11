@@ -19,14 +19,95 @@ from datasets.utils.node_labeling_functions import weisfeiler_lehman_node_labeli
 
 def load_labels(path='') -> NodeLabels:
     """
-    Load the labels from a file.
-    :param path: Path to the file
-    :return: NodeLabels object
+    Load precomputed node labels from a .pt file.
+
+    Parameters
+    ----------
+    path : str or Path, optional
+        Path to the .pt file containing saved labels (default: '').
+
+    Returns
+    -------
+    NodeLabels
+        Loaded node labels object containing dataset name, label name, and
+        label tensor.
+
+    Notes
+    -----
+    The file must have been saved using torch.save() with the format:
+    (dataset_name, label_name, node_labels)
+
+    where node_labels is a torch.Tensor of shape (N, 2):
+    - Column 0: Original label indices
+    - Column 1: Frequency-sorted label indices (-1 for invalid/padding)
+
+    See Also
+    --------
+    save_labels_to_file : Saves labels in the expected format
+    NodeLabels : Container class for node labels
     """
     dataset_name, label_name, node_labels = torch.load(path, weights_only=True)
     return NodeLabels(dataset_name, label_name, node_labels)
 
 def combine_node_labels(labels: List[NodeLabels]):
+    """
+    Combine multiple node label sets into a single joint labeling.
+
+    Creates a new labeling by taking the Cartesian product of two label sets,
+    assigning unique indices to each label pair. Invalid labels (-1) are handled
+    specially and sorted by frequency to optimize downstream usage.
+
+    Parameters
+    ----------
+    labels : list of NodeLabels
+        List of exactly 2 NodeLabels objects to combine. Must have the same
+        dataset_name and compatible dimensions (same number of nodes).
+
+    Returns
+    -------
+    NodeLabels
+        Combined node labels with:
+        - dataset_name: Same as input labels
+        - label_name: Concatenation of input label names (e.g., 'wl_3_degree')
+        - node_labels: torch.Tensor of shape (N, 2) where:
+            - Column 0: Unique index for each label pair (original order)
+            - Column 1: Frequency-sorted indices (most frequent pair = 0)
+
+    Notes
+    -----
+    **Algorithm:**
+    1. Stack label tensors along dimension 1: (N,) + (N,) → (N, 2)
+    2. Identify rows containing -1 in either column
+    3. Replace invalid rows with (max+1, max+1) to separate from valid labels
+    4. Extract unique label pairs and assign indices
+    5. Compute label frequency across all nodes
+    6. Create frequency-sorted version (most common label → 0)
+    7. Restore -1 for originally invalid labels
+
+    **Frequency Sorting:**
+    The frequency-sorted column (column 1) assigns index 0 to the most frequent
+    label combination, 1 to the second most frequent, etc. This is useful for
+    ShareGNN layers that benefit from label frequency information.
+
+    **Invalid Label Handling:**
+    Labels with value -1 are preserved in the output but excluded from frequency
+    counting. The artificial max label is removed after unique pair extraction.
+
+    Examples
+    --------
+    >>> wl_labels = NodeLabels('MUTAG', 'wl_3', torch.tensor([0, 1, 0, 2, -1]))
+    >>> degree_labels = NodeLabels('MUTAG', 'degree', torch.tensor([2, 2, 1, 3, -1]))
+    >>> combined = combine_node_labels([wl_labels, degree_labels])
+    >>> combined.label_name
+    'wl_3_degree'
+    >>> combined.node_labels.shape
+    torch.Size([5, 2])  # (original indices, frequency-sorted indices)
+
+    See Also
+    --------
+    get_label_string : Generates label names from label dictionaries
+    NodeLabels : Container for node label data
+    """
     graph_name = labels[0].dataset_name
     combined_label_name = '_'.join([l.label_name for l in labels])
     # stack all the node labels
@@ -60,9 +141,104 @@ def combine_node_labels(labels: List[NodeLabels]):
 
 def get_label_string(label_dict: dict) -> str:
     """
-    converts a label dictionary to a unique string representation
-    :param label_dict: the dictionary that contains the information of the labels
-    :return: the unique string representation of the corresponding label dictionary
+    Convert a label configuration dictionary to a unique filename string.
+
+    Generates a canonical string representation of a label configuration for use
+    in filenames, ensuring that equivalent configurations always produce the same
+    string. Supports all label types in the framework and handles recursive
+    composition for multi-label combinations.
+
+    Parameters
+    ----------
+    label_dict : dict
+        Label configuration dictionary. Must contain 'label_type' key. Additional
+        keys depend on the label type:
+
+        Common keys:
+        - 'label_type' : str or list of str
+            Type of labeling (see Notes for supported types).
+        - 'max_labels' : int, optional
+            Maximum number of distinct labels to retain.
+
+        Type-specific keys:
+        - 'depth' : int
+            WL iteration depth (for 'wl', 'wl_labeled', 'wl_labeled_edges').
+        - 'base_labels' : dict
+            Base labeling for labeled WL variants.
+        - 'min_cycle_length', 'max_cycle_length' : int
+            Cycle bounds (for 'simple_cycles', 'induced_cycles').
+        - 'max_clique_size' : int
+            Maximum clique size (for 'cliques').
+        - 'id' : int
+            Subgraph identifier (for 'subgraph').
+
+    Returns
+    -------
+    str
+        Unique string identifier for the label configuration. Format examples:
+        - 'primary' or 'primary_100' (with max_labels)
+        - 'wl_3' or 'wl_3_50' (WL with depth 3, optionally capped at 50 labels)
+        - 'wl_labeled_primary_base_labels_3_100' (WL labeled, base=primary, depth=3, max=100)
+        - 'simple_cycles_3_6' (simple cycles with length 3-6)
+        - 'wl_3_degree' (combination of two label types)
+
+    Raises
+    ------
+    ValueError
+        If 'label_type' is missing from label_dict or if an unsupported label
+        type is specified.
+
+    Notes
+    -----
+    **Supported Label Types:**
+    - 'trivial': All nodes get label 0
+    - 'index': Nodes labeled by their index (0, 1, 2, ...)
+    - 'index_text': Same as index but with text representation
+    - 'primary': Nodes labeled by their original graph label
+    - 'degree': Node degree (equivalent to wl_0)
+    - 'wl': Weisfeiler-Lehman labeling (requires 'depth')
+    - 'wl_labeled': WL using base_labels as initial coloring
+    - 'wl_labeled_edges': WL with edge labels (requires 'base_labels')
+    - 'simple_cycles': Simple cycle membership (requires 'min/max_cycle_length')
+    - 'induced_cycles': Induced cycle membership
+    - 'cliques': Clique membership (requires 'max_clique_size')
+    - 'subgraph': Subgraph pattern matching (requires 'id')
+
+    **Recursive Composition:**
+    If label_type is a list, the function recursively generates strings for each
+    type and joins them with underscores. This creates combined labels like:
+    ['wl', 'degree'] → 'wl_3_degree'
+
+    **Filename Safety:**
+    The generated strings use only alphanumeric characters and underscores,
+    making them safe for use in filenames across all platforms.
+
+    Examples
+    --------
+    >>> get_label_string({'label_type': 'primary', 'max_labels': 100})
+    'primary_100'
+
+    >>> get_label_string({'label_type': 'wl', 'depth': 3, 'max_labels': 50})
+    'wl_3_50'
+
+    >>> get_label_string({
+    ...     'label_type': 'wl_labeled',
+    ...     'base_labels': {'label_type': 'primary'},
+    ...     'depth': 3
+    ... })
+    'wl_labeled_primary_base_labels_3'
+
+    >>> get_label_string({
+    ...     'label_type': ['wl', 'degree'],
+    ...     'depth': 3,
+    ...     'max_labels': 100
+    ... })
+    'wl_3_degree_100'
+
+    See Also
+    --------
+    combine_node_labels : Combines multiple label sets
+    save_*_labels : Functions that use these strings for filenames
     """
     label_type = label_dict.get('label_type', None)
     if label_type is None:
@@ -177,6 +353,124 @@ def get_label_string(label_dict: dict) -> str:
 
 # Todo replace the save functions by classes (the base class should be the following NodeLabelingBase)
 class NodeLabelingBase(abc.ABC):
+    """
+    Abstract base class for node labeling strategies.
+
+    Provides a common interface and workflow for generating, processing, and
+    saving node labels for graph datasets. Subclasses implement specific labeling
+    algorithms (WL, degree, cycles, etc.) by overriding the generate() method.
+
+    Parameters
+    ----------
+    base_name : str
+        Base name for this labeling type (e.g., 'wl', 'degree', 'trivial').
+    graph_data : GraphDataset
+        Graph dataset to label.
+    label_path : Path, optional
+        Directory where label files will be saved (default: None).
+        If None, create_and_save_labels() will raise an error.
+    max_labels : int, optional
+        Maximum number of distinct labels to retain. If specified, less frequent
+        labels will be merged into a single "other" category (default: None).
+    optional_parameters : list of tuple, optional
+        List of (name, value) pairs for algorithm-specific parameters
+        (e.g., [('depth', 3), ('min_cycle_length', 3)]).
+        These are appended to the label filename string (default: None).
+    save_times : Path, optional
+        Path to a file for logging generation times. Each labeling operation
+        appends a line with format: "dataset_name, label_name, time_seconds"
+        (default: None).
+
+    Attributes
+    ----------
+    base_name : str
+        Base labeling type name.
+    graph_data : GraphDataset
+        Graph dataset being labeled.
+    label_path : Path or None
+        Directory for saving labels.
+    max_labels : int or None
+        Label count cap.
+    optional_parameters : list of tuple or None
+        Algorithm-specific parameters.
+    save_times : Path or None
+        Timing log file path.
+    string_label_name : str
+        Full label identifier string constructed from base_name, max_labels,
+        and optional_parameters. Used in filenames.
+    file_path : Path or None
+        Full path to the label file (set by create_and_save_labels()).
+
+    Methods
+    -------
+    create_and_save_labels()
+        Main entry point: generates labels and saves to disk if not already cached.
+    generate()
+        Abstract method to be implemented by subclasses. Creates the actual labels.
+    set_string_label_name()
+        Constructs the full label name string from parameters.
+    save_labels_to_file(graph_node_labels)
+        Saves label tensor to disk in standard format.
+
+    Notes
+    -----
+    **Label Generation Workflow:**
+    1. Call create_and_save_labels()
+    2. Construct filename from string_label_name
+    3. Check if file already exists (caching)
+    4. If not, call generate() to create labels
+    5. Apply max_labels capping via relabel_node_labels()
+    6. Save to disk using torch.save()
+    7. Optionally log generation time
+
+    **File Format:**
+    Labels are saved as .pt files with naming pattern:
+        <dataset_name>_labels_<string_label_name>.pt
+
+    Containing:
+        (dataset_name, label_name, node_labels)
+
+    Where node_labels is a torch.Tensor of shape (N, 2):
+    - Column 0: Original label indices
+    - Column 1: Frequency-sorted label indices (most frequent → 0)
+
+    **Caching:**
+    If the target file already exists, generation is skipped. This allows
+    expensive label computations to be reused across experiments.
+
+    **Label Capping:**
+    When max_labels is set, only the most frequent labels are kept. Less
+    frequent labels are remapped to a single "other" label (-1).
+
+    Raises
+    ------
+    ValueError
+        If label_path is None when create_and_save_labels() is called.
+    NotImplementedError
+        If generate() is not implemented by a subclass.
+
+    See Also
+    --------
+    TrivialNodeLabeling : All nodes labeled 0
+    WeisfeilerLehmanNodeLabeling : WL algorithm
+    DegreeNodeLabeling : Node degree labeling
+    relabel_node_labels : Applies max_labels capping
+
+    Examples
+    --------
+    >>> # Subclass example
+    >>> class CustomLabeling(NodeLabelingBase):
+    ...     def __init__(self, graph_data, label_path):
+    ...         super().__init__('custom', graph_data, label_path)
+    ...
+    ...     def generate(self):
+    ...         # Custom labeling logic
+    ...         return torch.zeros(graph_data.num_nodes, dtype=torch.long)
+    ...
+    >>> labeler = CustomLabeling(my_graph_data, Path('labels/'))
+    >>> labeler.create_and_save_labels()
+    # Saves to labels/MUTAG_labels_custom.pt (if doesn't exist)
+    """
     def __init__(self,
                  base_name,
                  graph_data: GraphDataset,
@@ -195,6 +489,29 @@ class NodeLabelingBase(abc.ABC):
         self.file_path = None
 
     def create_and_save_labels(self):
+        """
+        Generate and save node labels if not already cached.
+
+        Main entry point for label creation. Checks if labels already exist on
+        disk (caching). If not, generates labels via generate(), applies label
+        capping, and saves to file. Optionally logs generation time.
+
+        Raises
+        ------
+        ValueError
+            If self.label_path is None or self.save_times is specified but invalid.
+
+        Notes
+        -----
+        File path format: <label_path>/<dataset_name>_labels_<string_label_name>.pt
+
+        If the file exists, prints a message and skips generation. This caching
+        behavior allows expensive computations (e.g., WL with depth 5) to be
+        reused across multiple experiments.
+
+        Generation time is appended to save_times file if specified, in format:
+        "dataset_name, label_name, time_seconds"
+        """
         if self.label_path is None:
             raise ValueError("No label path given")
         else:
@@ -224,6 +541,19 @@ class NodeLabelingBase(abc.ABC):
         raise NotImplementedError("This method should be implemented by subclasses")
 
     def set_string_label_name(self):
+        """
+        Construct the full label name string from configuration.
+
+        Builds string_label_name by concatenating:
+        1. base_name
+        2. '_max_labels_<N>' if max_labels is not None
+        3. '_<param_name>_<param_value>' for each optional_parameter
+
+        Example: base_name='wl', max_labels=100, optional_parameters=[('depth', 3)]
+        → string_label_name='wl_max_labels_100_depth_3'
+
+        This string is used in filenames to uniquely identify label configurations.
+        """
         # take base name and append first max_labels if it is not None and then all the parameters in the optional_parameters list
         if self.max_labels is not None:
             self.string_label_name = f"{self.string_label_name}_max_labels_{self.max_labels}"
@@ -253,6 +583,17 @@ class NodeLabelingBase(abc.ABC):
 
 
 class TrivialNodeLabeling(NodeLabelingBase):
+    """
+    Trivial node labeling: assigns label 0 to all nodes.
+
+    This is the simplest labeling strategy, providing no structural information.
+    Useful as a baseline or when node features alone are sufficient.
+
+    See Also
+    --------
+    NodeLabelingBase : Base class with full documentation
+    IndexNodeLabeling : Assigns unique indices to each node
+    """
     def __init__(self, graph_data: GraphDataset, label_path: Optional[Path] = None, max_labels: Optional[int] = None, save_times: Optional[Path] = None):
         super().__init__(base_name='trivial', graph_data=graph_data, label_path=label_path, max_labels=max_labels, save_times=save_times)
 
@@ -295,6 +636,24 @@ class PrimaryNodeLabeling(NodeLabelingBase):
         return self.graph_data.node_labels['primary']
 
 class DegreeNodeLabeling(NodeLabelingBase):
+    """
+    Degree-based node labeling: labels nodes by their degree.
+
+    Each node is assigned a label equal to its degree (number of neighbors).
+    This is equivalent to 0-iteration Weisfeiler-Lehman (wl_0) labeling.
+
+    Notes
+    -----
+    - Label value equals node degree directly
+    - Undirected graphs: degree = number of incident edges
+    - Provides local structural information without graph-wide context
+    - Commonly used as base labeling for more complex strategies
+
+    See Also
+    --------
+    NodeLabelingBase : Base class with full documentation
+    WeisfeilerLehmanNodeLabeling : WL algorithm (iterative refinement of degree)
+    """
     def __init__(self, graph_data: GraphDataset, label_path: Optional[Path] = None, max_labels: Optional[int] = None, save_times: Optional[Path] = None):
         super().__init__(base_name='wl_0', graph_data=graph_data, label_path=label_path, max_labels=max_labels, save_times=save_times)
 
@@ -336,6 +695,42 @@ class LabeledDegreeNodeLabeling(NodeLabelingBase):
         return node_labels
 
 class WeisfeilerLehmanNodeLabeling(NodeLabelingBase):
+    """
+    Weisfeiler-Lehman node labeling with configurable depth.
+
+    Implements the classic WL algorithm for graph isomorphism testing. Each iteration
+    refines node labels based on the multiset of neighbor labels, capturing
+    increasingly global structural patterns.
+
+    Parameters
+    ----------
+    depth : int
+        Number of WL iterations. Higher depth captures longer-range dependencies:
+        - depth=0: Equivalent to degree labeling
+        - depth=1: Degree + immediate neighbor degrees
+        - depth=k: Information from k-hop neighborhood
+
+    Notes
+    -----
+    The WL algorithm is a powerful graph hashing technique that distinguishes most
+    non-isomorphic graphs. It's the theoretical foundation for many GNN architectures.
+
+    Algorithm:
+    1. Initialize with degree labels (or trivial labels)
+    2. For each iteration:
+        a. Collect multiset of neighbor labels for each node
+        b. Hash (node_label, sorted_neighbor_labels) to create new label
+        c. Compress label space if needed
+    3. Return final labels after 'depth' iterations
+
+    Computational complexity: O(depth × |E|) where |E| is the number of edges.
+
+    See Also
+    --------
+    NodeLabelingBase : Base class with full documentation
+    DegreeNodeLabeling : Equivalent to WL with depth=0
+    WeisfeilerLehmanLabeledNodeLabeling : WL variant using initial node features
+    """
     def __init__(self, graph_data: GraphDataset, depth, max_labels: Optional[int] = None, label_path: Optional[Path] = None, save_times: Optional[Path] = None):
         super().__init__(base_name='wl', graph_data=graph_data, label_path=label_path, max_labels=max_labels, optional_parameters=[('depth', depth)], save_times=save_times)
 
