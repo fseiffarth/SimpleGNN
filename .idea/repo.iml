@@ -3,6 +3,22 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/.ai" />
+      <excludeFolder url="file://$MODULE_DIR$/.auto-claude" />
+      <excludeFolder url="file://$MODULE_DIR$/data" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/GCN/MUTAG/Plots" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/GCN/MUTAG/Weights" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/GIN/MUTAG/Plots" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/GIN/MUTAG/Weights" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/ShareGNN/MUTAG" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/ShareGNN/ZINC" />
+      <excludeFolder url="file://$MODULE_DIR$/results/test/ShareGNN_Test" />
+      <excludeFolder url="file://$MODULE_DIR$/src/simple_gnn.egg-info" />
+      <excludeFolder url="file://$MODULE_DIR$/test_venv/bin" />
+      <excludeFolder url="file://$MODULE_DIR$/test_venv/include" />
+      <excludeFolder url="file://$MODULE_DIR$/test_venv/lib" />
+      <excludeFolder url="file://$MODULE_DIR$/test_venv/share" />
+      <excludeFolder url="file://$MODULE_DIR$/tmp" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.13 (repo)" jdkType="Python SDK" />

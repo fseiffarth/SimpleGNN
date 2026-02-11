@@ -64,5 +64,4 @@ training_data_sampling: { type: 'default'}
 #input_features: {name: constant, value: 1.0}
 input_features: {name: node_labels, transformation: 'one_hot'}
 #input_features: {name: node_features}
-#use_feature_transformation: {out_dimension: 21, bias: True}
 best_model: True

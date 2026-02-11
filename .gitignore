@@ -222,3 +222,6 @@ results/
 .worktrees/
 .security-key
 logs/security/
+.ai
+.github
+/tmp/
