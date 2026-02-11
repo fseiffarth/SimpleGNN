@@ -105,15 +105,19 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     target_labels[property_subdict[:, 1]]
                 ], dim=1)
 
-                # TODO implement
+                # Initialize variables before try-except to avoid scoping issues
+                do_invalid_indices_exist = False
+                threshold = self.para.run_config.config.get('rule_occurrence_threshold', 1)
+                upper_threshold = self.para.run_config.config.get('rule_occurrence_upper_threshold', None)
+
                 cached_path = self.get_cache_path(head, property_key)
 
                 try:
                     indices, counts = self._load_cached_indices(cached_path, head, property_key)
-                    # TODO hit hash
-                    pass
-                except:
-                    # TODO missed hash, compute and cache
+                    print(f"✓ Cache hit: head source label {self.source_label_descriptions[head_id]}, target label {self.target_label_descriptions[head_id]} with property {self.property_descriptions[head_id]} key {property_key} loaded from cache at {cached_path.name}")
+
+                except (FileNotFoundError, Exception) as e:
+                    print(f"⊗ Cache miss: head source label {self.source_label_descriptions[head_id]}, target label {self.target_label_descriptions[head_id]} with property {self.property_descriptions[head_id]} key {property_key} - computing indices and counts ({str(e)})")
 
                     # OPTIMIZATION: Handle invalid indices with masking (2-5% speedup)
                     invalid_mask = (labeled_subdict[:, 0] == -1) | (labeled_subdict[:, 1] == -1)
@@ -142,10 +146,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
                     self._save_cached_indices(cached_path, head, property_key, indices, counts)
 
-
-                # set all indices to -1 where the count is smaller than the threshold TODO
-                threshold = self.para.run_config.config.get('rule_occurrence_threshold', 1)
-                upper_threshold = self.para.run_config.config.get('rule_occurrence_upper_threshold', None)
+                # Threshold filtering (now do_invalid_indices_exist is always defined)
                 num_weights = len(counts)
                 if do_invalid_indices_exist:
                     num_weights -= 1
@@ -256,6 +257,117 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # Cache config lookups used in forward pass
         self.use_degree_matrix = self.para.run_config.config.get('degree_matrix', False)
         self.use_in_degrees = self.para.run_config.config.get('use_in_degrees', False)
+
+    def get_cache_path(self, head, property_key) -> Path:
+        """
+        Generate cache path for indices/counts of a specific head and property.
+
+        Cache key includes all configuration that affects the computed indices:
+        - Dataset, layer, head identifiers
+        - Property configuration
+        - Label configurations (source, target)
+        - Filtering thresholds
+        """
+        # Build metadata dictionary for cache key
+        cache_metadata = {
+            'dataset': self.para.db,
+            'dataset_size': len(self.graph_data),
+            'property': self.property_descriptions[self.layer.layer_heads.index(head)],
+            'property_key': str(property_key),
+            'source_label': self.source_label_descriptions[self.layer.layer_heads.index(head)],
+            'target_label': self.target_label_descriptions[self.layer.layer_heads.index(head)],
+        }
+
+        # Generate hash from metadata
+        metadata_str = json.dumps(cache_metadata, sort_keys=True)
+        cache_hash = hashlib.md5(metadata_str.encode()).hexdigest()[:12]
+
+        # Construct cache directory path
+        data_path = Path(self.para.run_config.config['paths']['data'])
+        cache_dir = data_path / 'caches'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Return cache file path
+        return cache_dir / f'{cache_hash}.pt'
+
+    def _load_cached_indices(self, cached_path: Path, head, property_key) -> tuple:
+        """
+        Load cached indices and counts from disk.
+
+        Returns:
+            (indices, counts): Tuple of torch.Tensors
+
+        Raises:
+            FileNotFoundError: If cache file doesn't exist
+            Exception: If cache is corrupted or incompatible
+        """
+        if not cached_path.exists():
+            raise FileNotFoundError(f"Cache file not found: {cached_path}")
+
+        try:
+            # Load cache file
+            cached_data = torch.load(str(cached_path), weights_only=False)
+
+            # Validate structure
+            if not isinstance(cached_data, dict):
+                raise ValueError("Invalid cache format: expected dict")
+
+            if 'indices' not in cached_data or 'counts' not in cached_data:
+                raise ValueError("Invalid cache format: missing indices or counts")
+
+            indices = cached_data['indices']
+            counts = cached_data['counts']
+
+            # Validate tensor types
+            if not isinstance(indices, torch.Tensor) or not isinstance(counts, torch.Tensor):
+                raise ValueError("Invalid cache format: indices/counts must be tensors")
+
+            return indices, counts
+
+        except Exception as e:
+            # If any error, treat as cache miss
+            raise Exception(f"Failed to load cache: {e}")
+
+    def _save_cached_indices(self, cached_path: Path, head, property_key, indices: torch.Tensor, counts: torch.Tensor) -> None:
+        """
+        Save computed indices and counts to disk cache.
+
+        Saves both the tensor data (.pt) and human-readable metadata (.json).
+        Non-fatal: logs warning if save fails but doesn't raise exception.
+        """
+        try:
+            # Prepare cache data
+            cache_data = {
+                'indices': indices,
+                'counts': counts,
+                'metadata': {
+                    'created': datetime.now().isoformat(),
+                    'source_label': self.source_label_descriptions[self.layer.layer_heads.index(head)],
+                    'target_label': self.target_label_descriptions[self.layer.layer_heads.index(head)],
+                    'property': self.property_descriptions[self.layer.layer_heads.index(head)],
+                    'property_key': str(property_key),
+                    'indices_shape': list(indices.shape),
+                    'counts_shape': list(counts.shape),
+                    'num_unique_pairs': len(counts),
+                }
+            }
+
+            # Save tensor data
+            torch.save(cache_data, str(cached_path))
+
+            # Calculate file size
+            file_size_mb = cached_path.stat().st_size / (1024 * 1024)
+
+            # Save human-readable metadata alongside
+            meta_path = cached_path.with_suffix('.json')
+            with open(meta_path, 'w') as f:
+                json.dump(cache_data['metadata'], f, indent=2)
+
+            print(f"  Cached {file_size_mb:.2f} MB: {cached_path.name}")
+
+        except Exception as e:
+            print(f"⚠ Warning: Failed to save cache to {cached_path}: {e}")
+            # Non-fatal: continue without caching
 
     def init_weights(self, num_weights:np.float64, init_type:Optional[str]=None) -> nn.Parameter:
         """

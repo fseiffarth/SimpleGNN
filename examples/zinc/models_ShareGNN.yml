@@ -1,6 +1,6 @@
 models:
   - - { layer_type: linear,
-        out_features: 10,
+        out_features: 8,
         bias: True,
         activation: torch.nn.LeakyReLU(),
   }
@@ -134,7 +134,7 @@ models:
         ],
     }
     - { layer_type: linear,
-        out_features: 100,
+        out_features: 8,
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }
@@ -222,13 +222,13 @@ models:
         ],
     }
     - { layer_type: linear,
-        out_features: 100,
+        out_features: 8,
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }
     - { layer_type: layer_norm }
     - { layer_type: linear,
-        out_features: 100,
+        out_features: 8,
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }
