@@ -4,7 +4,7 @@
 
 ### 1. Expensive Label Computation Without Parallelism
 
-**Location:** `src/datasets/utils/node_labeling.py`
+**Location:** `src/simplegnn/datasets/utils/node_labeling.py`
 
 **Problem:** Label computation for ShareGNN (WL iterations, cycle detection, clique finding) runs sequentially across all graphs. Cycle detection and clique finding are NP-hard operations.
 
@@ -27,7 +27,7 @@ Labels are cached to disk after first computation, so this is a one-time cost pe
 
 ### 2. One-Hot Encoding Memory Overhead
 
-**Location:** `src/datasets/graph_dataset.py:588-595`
+**Location:** `src/simplegnn/datasets/graph_dataset.py:588-595`
 
 **Problem:** One-hot encoding creates dense `(num_nodes, max_label)` tensor. For datasets with many unique labels (e.g., 100+), this significantly increases memory.
 
@@ -55,7 +55,7 @@ for label_type in layer['label_type']:
 
 ### 4. NetworkX Conversion Overhead
 
-**Location:** `src/datasets/utils/node_labeling.py:554-555` (WL), `:654` (cycles)
+**Location:** `src/simplegnn/datasets/utils/node_labeling.py:554-555` (WL), `:654` (cycles)
 
 **Problem:** Several label types require NetworkX graph objects. The conversion from PyG edge_index to NetworkX happens per graph and is not cached.
 
@@ -65,7 +65,7 @@ for label_type in layer['label_type']:
 
 ### 5. Multiple Label Schemes in Memory
 
-**Location:** `src/datasets/graph_dataset.py:44-48`
+**Location:** `src/simplegnn/datasets/graph_dataset.py:44-48`
 
 **Problem:** Multiple label variants stored simultaneously in `graph_data.node_labels` dict. Using 7 label schemes on ZINC = ~20-25 MB of label tensors.
 
@@ -128,7 +128,7 @@ Example: `learnnig_rate: [0.01]` (typo) would silently use the default learning 
 
 ### 9. Merged Dataset Padding Inefficiency
 
-**Location:** `src/datasets/graph_dataset_preprocessing.py:159-186`
+**Location:** `src/simplegnn/datasets/graph_dataset_preprocessing.py:159-186`
 
 **Problem:** When merging multiple datasets, all feature dimensions are padded to the maximum across datasets. Creates intermediate tensors.
 
@@ -140,7 +140,7 @@ Example: `learnnig_rate: [0.01]` (typo) would silently use the default learning 
 
 ### 10. TUDataset Missing Feature Handling
 
-**Location:** `src/datasets/graph_dataset_preprocessing.py:364-378`
+**Location:** `src/simplegnn/datasets/graph_dataset_preprocessing.py:364-378`
 
 **Problem:** If a TUDataset has no node features, the code creates zero tensors and recomputes slices from edge_index. This is correct but slow for large datasets due to the per-graph loop for slice computation.
 

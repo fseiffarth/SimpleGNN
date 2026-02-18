@@ -260,7 +260,16 @@ class Preprocessing:
                 f"Dataset {dataset} already exists in {Path(self.experiment_configuration['paths']['data'])} . Skip the data generation.")
             return
         if isinstance(data_generation_type, str):
-            if data_generation_type != 'generate_from_function':
+            if data_generation_type == 'path':
+                try:
+                    self.graph_data = GraphDataset(root=str(self.experiment_configuration['paths']['data']),
+                                                      name=dataset,
+                                                      from_existing_data='NEL',
+                                                      task=self.dataset_configuration.get('task', None)
+                                                      )
+                except:
+                    print(f'There is no data in the path {self.experiment_configuration["paths"]["data"]} for the dataset {dataset}. Please check the configuration file.')
+            elif data_generation_type != 'generate_from_function':
                     # download the dataset
                     # create a tmp folder to store the dataset
                     if not Path('tmp').exists():

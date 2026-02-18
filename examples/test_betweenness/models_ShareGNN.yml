@@ -1,0 +1,23 @@
+# Minimal ShareGNN model using betweenness centrality labels
+
+models:
+  - - { layer_type: invariant_based_convolution,
+        activation: torch.nn.Tanh(),
+        bias: False,
+        heads: 1,
+        labels: [
+          { label_type: betweenness_centrality, num_bins: 10 }
+        ],
+        properties: [
+          { name: distances, values: [ 0,1,2,3 ] },
+        ]
+  }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Tanh(),
+        out_dim: 2,
+        bias: True,
+        heads: 1,
+        labels: [
+          { label_type: betweenness_centrality, num_bins: 10 }
+        ]
+    }

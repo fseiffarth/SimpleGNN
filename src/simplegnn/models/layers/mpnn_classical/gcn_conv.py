@@ -7,10 +7,11 @@ from simplegnn.models.layers.mpnn_classical.gnn_conv import GNNConvLayer
 
 class GCNConv(GNNConvLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'GCNConv'
         super(GCNConv, self).__init__(layer_args)
         gcn_args = {
-            'in_channels': layer_args.get('in_channels'),
-            'out_channels': layer_args.get('out_channels'),
+            'in_channels': layer_args.get('in_features'),
+            'out_channels': layer_args.get('out_features'),
             'improved': layer_args.get('improved', False),
             'cached': layer_args.get('cached', False),
             'add_self_loops': layer_args.get('add_self_loops', True),

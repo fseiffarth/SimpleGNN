@@ -6,6 +6,7 @@ from simplegnn.models.layers.framework_layer import FrameworkLayer
 
 class BatchNormLayer(FrameworkLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'BatchNorm'
         layer_args['batch_norm'] = True # Ensure batch_norm is set to True by default
         super(BatchNormLayer, self).__init__(layer_args)
         self.name = "Batch Normalization Layer"

@@ -255,7 +255,7 @@ class FrameworkLayer(torch.nn.Module, ABC):
         self.batch_norm = layer_args.get('batch_norm', False)
         if self.batch_norm:
             self.batch_norm_args = {
-                'in_channels': self.in_channels,
+                'in_channels': self.in_features,
                 'eps': layer_args.get('batch_norm_eps', 1e-5),
                 'momentum': layer_args.get('batch_norm_momentum', 0.1),
                 'affine': layer_args.get('batch_norm_affine', True),

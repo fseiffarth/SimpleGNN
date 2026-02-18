@@ -12,7 +12,7 @@ datasets:
       results: "results/test/ShareGNN_Test/", # path to save the results
       models: "examples/zinc/test_models_ShareGNN.yml", # path to the model configuration file
       hyperparameters: "examples/zinc/parameters.yml", # path to the hyperparameters configuration file
-      splits: "src/datasets/splits/fixed/ZINC_splits.json", # path to the data splits file (contains train/val/test splits)
+      splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json", # path to the data splits file (contains train/val/test splits)
     }
   }
 

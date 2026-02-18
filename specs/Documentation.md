@@ -122,7 +122,7 @@
 ---
 
 ### Phase 4: node_labeling.py (Priority: HIGH - Complex Domain Logic) ✓ COMPLETED
-**File:** `repo/src/datasets/utils/node_labeling.py` (905 lines)
+**File:** `repo/src/simplegnn/datasets/utils/node_labeling.py` (905 lines)
 **Status:** ✓ Completed
 **Estimated Documentation Effort:** 6-8 hours
 
@@ -192,7 +192,7 @@
 ---
 
 ### Phase 5: graph_dataset.py (Priority: CRITICAL - Dataset Core + Known Bugs) ✓ COMPLETED
-**File:** `repo/src/datasets/graph_dataset.py` (1,316 lines)
+**File:** `repo/src/simplegnn/datasets/graph_dataset.py` (1,316 lines)
 **Status:** ✓ Completed
 **Estimated Documentation Effort:** 10-12 hours
 

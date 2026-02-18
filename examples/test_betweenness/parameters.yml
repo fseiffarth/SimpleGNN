@@ -1,0 +1,11 @@
+# Minimal parameters for testing betweenness centrality
+
+training_parameters:
+  - input_features: node
+    optimizer: Adam
+    learning_rate: 0.001
+    loss: torch.nn.CrossEntropyLoss()
+    epochs: 5  # Just 5 epochs for quick testing
+    batch_size: 32
+    early_stopping_patience: 50
+    early_stopping_metric: val_loss

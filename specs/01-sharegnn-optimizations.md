@@ -166,7 +166,7 @@ Same quadratic `torch.cat` pattern as message passing (section 3).
 
 ## 10. Expensive Label Computation for ShareGNN
 
-**Location:** `src/datasets/utils/node_labeling.py`
+**Location:** `src/simplegnn/datasets/utils/node_labeling.py`
 
 **Problem:** Several label types used by ShareGNN are computationally expensive:
 

@@ -7,6 +7,7 @@ from simplegnn.models.layers.framework_layer import FrameworkLayer
 
 class GlobalPooling(FrameworkLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'GlobalPooling'
         super(GlobalPooling, self).__init__(layer_args)
         self.mode = layer_args.get('mode', 'mean')
         self.pooling_function = None

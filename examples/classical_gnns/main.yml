@@ -8,9 +8,9 @@ datasets:
         paths: {
           data: "data/TUDatasets/", # path to the dataset (will be downloaded if not present)
           results: "results/test/GIN/", # path to save the results
-          models: "examples/basic_example/models_GIN.yml", # path to the model configuration file
-          hyperparameters: "examples/basic_example/parameters.yml", # path to the hyperparameters configuration file
-          splits: "src/datasets/splits/standard/MUTAG_splits.json", # path to the data splits file (contains train/val/test splits)
+          models: "examples/classical_gnns/models_GIN.yml", # path to the model configuration file
+          hyperparameters: "examples/classical_gnns/parameters.yml", # path to the hyperparameters configuration file
+          splits: "src/simplegnn/datasets/splits/standard/MUTAG_splits.json", # path to the data splits file (contains train/val/test splits)
         }
     }
   - {
@@ -21,9 +21,9 @@ datasets:
         paths: {
           data: "data/TUDatasets/", # path to the dataset (will be downloaded if not present)
           results: "results/test/GCN/", # path to save the results
-          models: "examples/basic_example/models_GCN.yml", # path to the model configuration file
-          hyperparameters: "examples/basic_example/parameters.yml", # path to the hyperparameters configuration file
-          splits: "src/datasets/splits/standard/MUTAG_splits.json", # path to the data splits file (contains train/val/test splits)
+          models: "examples/classical_gnns/models_GCN.yml", # path to the model configuration file
+          hyperparameters: "examples/classical_gnns/parameters.yml", # path to the hyperparameters configuration file
+          splits: "src/simplegnn/datasets/splits/standard/MUTAG_splits.json", # path to the data splits file (contains train/val/test splits)
         }
     }
 

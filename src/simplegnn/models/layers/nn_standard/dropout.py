@@ -6,6 +6,7 @@ from simplegnn.models.layers.framework_layer import FrameworkLayer
 
 class DropoutLayer(FrameworkLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'Dropout'
         p = layer_args.get('p', 0.5)
         super(DropoutLayer, self).__init__(layer_args)
         self.dropout = torch.nn.Dropout(p)

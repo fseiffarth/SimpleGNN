@@ -345,6 +345,14 @@ def get_label_string(label_dict: dict) -> str:
             l_string = f"{l_string}_{max_labels}"
     elif label_type == "trivial":
         l_string = "trivial"
+    elif label_type == "betweenness_centrality":
+        l_string = "betweenness_centrality"
+        num_bins = label_dict.get('num_bins', None)
+        max_labels = label_dict.get('max_labels', None)
+        if num_bins is not None:
+            l_string = f"{l_string}_bins_{num_bins}"
+        if max_labels is not None:
+            l_string = f"{l_string}_max_labels_{max_labels}"
     else:
         raise ValueError(f"Layer type {label_type} is not supported")
 
@@ -1399,10 +1407,32 @@ def save_betweenness_centrality_labels(graph_data: GraphDataset, label_path: Opt
     --------
     BetweennessCentralityNodeLabeling : Implementation details
     """
+    l = 'betweenness_centrality'
+    if num_bins is not None:
+        l = f'{l}_bins_{num_bins}'
+    elif max_labels is not None:
+        l = f'{l}_max_labels_{max_labels}'
+    if label_path is None:
+        raise ValueError("No label path given")
+    else:
+        file = label_path.joinpath(f"{graph_data.name}_labels_{l}.pt")
+    if not file.exists():
+        print(f"Saving {l} labels for {graph_data.name} to {file}")
+        start_time = time.time()
+
     labeling = BetweennessCentralityNodeLabeling(
         graph_data, label_path, max_labels, num_bins, save_times
     )
-    return labeling.create_and_save_labels()
+    save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
+    if save_times is not None:
+        try:
+            with open(save_times, 'a') as f:
+                f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+        except:
+            raise ValueError("No save time path given")
+    else:
+        print(f"File {file} already exists. Skipping.")
+    return file
 
 
 def relabel_node_labels(node_labels: torch.Tensor, max_number_labels:Optional[int]) -> torch.Tensor:

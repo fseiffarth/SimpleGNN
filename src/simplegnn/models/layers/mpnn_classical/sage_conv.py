@@ -7,10 +7,11 @@ from simplegnn.models.layers.mpnn_classical.gnn_conv import GNNConvLayer
 
 class SAGEConv(GNNConvLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'SAGEConv'
         super(SAGEConv, self).__init__(layer_args)
         self.sage_args = {
-            'in_channels': layer_args.get('in_channels'),
-            'out_channels': layer_args.get('out_channels'),
+            'in_channels': layer_args.get('in_features'),
+            'out_channels': layer_args.get('out_features'),
             'aggr': layer_args.get('aggr', 'mean'),  # "mean", "max", "add"
             'normalize': layer_args.get('normalize', False),
             'root_weight': layer_args.get('root_weight', True),

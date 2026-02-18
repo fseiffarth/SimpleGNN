@@ -1,0 +1,20 @@
+# Test configuration for betweenness centrality labeling
+
+datasets:
+  - MUTAG
+
+task: graph_classification
+
+model_config_paths:
+  - examples/test_betweenness/models_ShareGNN.yml
+
+parameter_config_paths:
+  - examples/test_betweenness/parameters.yml
+
+use_data_subset_for_testing: False
+cross_val_num_folds: 10
+test_size: 0.1
+
+precision: float
+
+seed: 0

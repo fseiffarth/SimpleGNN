@@ -5,7 +5,9 @@
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/.ai" />
       <excludeFolder url="file://$MODULE_DIR$/.auto-claude" />
+      <excludeFolder url="file://$MODULE_DIR$/.github" />
       <excludeFolder url="file://$MODULE_DIR$/data" />
+      <excludeFolder url="file://$MODULE_DIR$/results" />
       <excludeFolder url="file://$MODULE_DIR$/results/test/GCN/MUTAG/Plots" />
       <excludeFolder url="file://$MODULE_DIR$/results/test/GCN/MUTAG/Weights" />
       <excludeFolder url="file://$MODULE_DIR$/results/test/GIN/MUTAG/Plots" />

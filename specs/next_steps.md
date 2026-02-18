@@ -36,7 +36,7 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 - **Status:** 🔴 NOT FIXED
 
 ### 2. Replace remaining eval() calls in graph_dataset.py
-- **Files:** `src/datasets/graph_dataset.py:876, 878`
+- **Files:** `src/simplegnn/datasets/graph_dataset.py:876, 878`
 - **Issue:** Arbitrary code execution from transformation expressions
 - **Effort:** 30 min
 - **Spec:** `03-model-infrastructure-bugs.md` Section 4
@@ -161,14 +161,14 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 ## Phase 7: Dataset & Preprocessing (medium impact, moderate effort)
 
 ### 16. Cache NetworkX graph conversions
-- **File:** `src/datasets/utils/node_labeling.py:554-555`
+- **File:** `src/simplegnn/datasets/utils/node_labeling.py:554-555`
 - **Issue:** PyG-to-NetworkX conversion happens per graph per label type, never cached
 - **Effort:** 1 hour
 - **Spec:** `04-dataset-and-config-improvements.md` Section 4
 - **Status:** 🔴 NOT IMPLEMENTED
 
 ### 17. Parallelize label computation across graphs
-- **File:** `src/datasets/utils/node_labeling.py`
+- **File:** `src/simplegnn/datasets/utils/node_labeling.py`
 - **Issue:** Expensive label types (cycles, cliques) run sequentially
 - **Effort:** 2-4 hours
 - **Spec:** `04-dataset-and-config-improvements.md` Section 1
@@ -341,13 +341,13 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 ## Phase 7: Dataset & Preprocessing (medium impact, moderate effort)
 
 ### 21. Cache NetworkX graph conversions
-- **File:** `src/datasets/utils/node_labeling.py:554-555`
+- **File:** `src/simplegnn/datasets/utils/node_labeling.py:554-555`
 - **Issue:** PyG-to-NetworkX conversion happens per graph per label type, never cached
 - **Effort:** 1 hour
 - **Spec:** `04-dataset-and-config-improvements.md` Section 4
 
 ### 22. Parallelize label computation across graphs
-- **File:** `src/datasets/utils/node_labeling.py`
+- **File:** `src/simplegnn/datasets/utils/node_labeling.py`
 - **Issue:** Expensive label types (cycles, cliques) run sequentially
 - **Effort:** 2-4 hours
 - **Spec:** `04-dataset-and-config-improvements.md` Section 1

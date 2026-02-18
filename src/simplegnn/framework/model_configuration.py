@@ -58,7 +58,7 @@ from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 from simplegnn.datasets.graph_dataset import GraphDataset, GraphData, CustomBatchLoader
 from simplegnn.framework.utils.data_sampling import curriculum_sampling
 from simplegnn.framework.utils.parameters import Parameters
-from simplegnn.models import GraphModel
+from simplegnn.models.model import GraphModel
 from simplegnn.utils.utils import get_k_lowest_nonzero_indices, valid_pruning_configuration, is_pruning
 from simplegnn.utils.timer import TimeClass
 
@@ -346,7 +346,7 @@ class ModelConfiguration:
         """
 
         # Initialize the graph neural network
-        self.initialize_model(pretrained_network=pretrained_network, use_model=self.para.run_config.config.get('use_model', 'ShareGNN'))
+        self.initialize_model(pretrained_network=pretrained_network)
         # start the timer
         timer = TimeClass()
         # Define the loss function
@@ -504,7 +504,7 @@ class ModelConfiguration:
         return target_values, target_outputs
 
 
-    def initialize_model(self, pretrained_network, use_model='ShareGNN'):
+    def initialize_model(self, pretrained_network):
         """
         Initialize GNN model from scratch or pretrained weights.
 
@@ -517,9 +517,6 @@ class ModelConfiguration:
         pretrained_network : torch.nn.Module or None
             Pretrained model for transfer learning. If None, initializes
             model with random weights using the seed.
-        use_model : str, optional
-            Model type identifier (default: 'ShareGNN'). Currently only
-            'ShareGNN' is fully supported, which uses GraphModel.
 
         Notes
         -----

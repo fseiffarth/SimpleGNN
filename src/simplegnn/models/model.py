@@ -454,42 +454,32 @@ class GraphModel(torch.nn.Module):
             return InvariantBasedMessagePassingLayer(layer=layer, parameters=self.para, graph_data=self.graph_data).type(self.precision).requires_grad_(self.convolution_grad)
 
         elif layer.layer_type == LayerTypes.INVARIANT_BASED_AGGREGATION.value:
-            self.aggregation_out_dim = layer.layer_dict.get('out_dim', self.out_dim)
+            self.aggregation_out_dim = layer_args.get('out_dim', self.out_dim)
             return InvariantBasedAggregationLayer(layer=layer,
                                                                   parameters=self.para,
                                                                   graph_data=self.graph_data,).requires_grad_(self.aggregation_grad)
-        elif layer.layer_type in [LayerTypes.GCN_CONVOLUTION.value,
-                                  LayerTypes.GAT_CONVOLUTION.value,
-                                  LayerTypes.GATv2_CONVOLUTION.value,
-                                  LayerTypes.GIN_CONVOLUTION.value,
-                                  LayerTypes.SAGE_CONVOLUTION.value]:
-            layer_args = layer.layer_dict
-            # GNN specific layers
-            if layer.layer_type == LayerTypes.GCN_CONVOLUTION.value:
-                return GCNConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
-            elif layer.layer_type == LayerTypes.GAT_CONVOLUTION.value:
-                return GATConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
-            elif layer.layer_type == LayerTypes.GATv2_CONVOLUTION.value:
-                return GATv2Conv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
-            elif layer.layer_type == LayerTypes.GIN_CONVOLUTION.value:
-                return GINConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
-            elif layer.layer_type == LayerTypes.SAGE_CONVOLUTION.value:
-                return SAGEConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
-
-
+        # GNN specific layers
+        elif layer.layer_type == LayerTypes.GCN_CONVOLUTION.value:
+            return GCNConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
+        elif layer.layer_type == LayerTypes.GAT_CONVOLUTION.value:
+            return GATConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
+        elif layer.layer_type == LayerTypes.GATv2_CONVOLUTION.value:
+            return GATv2Conv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
+        elif layer.layer_type == LayerTypes.GIN_CONVOLUTION.value:
+            return GINConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
+        elif layer.layer_type == LayerTypes.SAGE_CONVOLUTION.value:
+            return SAGEConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)
         elif layer.layer_type == LayerTypes.GLOBAL_POOLING.value:
-            layer_args = {'mode': layer.layer_dict.get('mode', 'mean')}
+            layer_args['mode'] = layer_args.get('mode', 'mean')
             return GlobalPooling(layer_args).type(self.precision).requires_grad_(self.aggregation_grad)
         elif layer.layer_type == LayerTypes.DROPOUT.value:
-            layer_args = {'p': layer.layer_dict.get('p', 0.5)}
             return DropoutLayer(layer_args)
             # Dropout does not change feature dimension
         elif layer.layer_type == LayerTypes.ACTIVATION.value:
-            layer_args = {'activation_function': layer.layer_dict.get('activation_function', torch.nn.ReLU())}
+            layer_args['activation_function'] = layer_args.get('activation_function', torch.nn.ReLU())
             return ActivationLayer(layer_args)
             # Activation does not change feature dimension
         elif layer.layer_type == LayerTypes.BATCH_NORM.value:
-            layer_args = {'batch_norm': True, 'in_channels': in_features}
             return BatchNormLayer(layer_args).type(self.precision)
             # BatchNorm does not change feature dimension
         elif layer.layer_type == LayerTypes.LAYER_NORM.value:

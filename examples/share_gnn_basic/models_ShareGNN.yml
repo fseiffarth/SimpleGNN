@@ -1,0 +1,64 @@
+models:
+  - - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: induced_cycles, min_cycle_length: 6 , max_cycle_length: 6 },
+              tail: { label_type: induced_cycles, min_cycle_length: 6 , max_cycle_length: 6 },
+             bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: betweenness_centrality, num_bins: 10000 },
+              tail: { label_type: betweenness_centrality, num_bins: 10000 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1 ] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Identity(),
+        bias: True,
+        heads: [
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: [ simple_cycles, primary ], min_cycle_length: 6 , max_cycle_length: 6 },
+          },
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: [induced_cycles, primary], min_cycle_length: 6 , max_cycle_length: 6 },
+          },
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: betweenness_centrality, num_bins: 10000 },
+          }
+        ],
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }
+

@@ -102,9 +102,10 @@ def check_main_configuration_file(main_config):
                 else:
                     if dataset['source'] not in ['generate_from_function', 'TUDataset', 'gnn_benchmark', 'ZINC',
                                                  'planetoid', 'Planetoid', 'Nell', 'ogbn', 'MoleculeNet',
-                                                 'OGB_GraphProp', 'SubstructureBenchmark', 'NEL', 'QM9', 'QM7']:
+                                                 'OGB_GraphProp', 'SubstructureBenchmark', 'NEL', 'QM9', 'QM7', 'path']:
                         raise ValueError(
-                            f'The type {dataset["source"]} is not supported. Please use "generate_from_function", "TUDataset", "gnn_benchmark" or "ZINC".')
+                            f'The type {dataset["source"]} is not supported. '
+                            f'Please use "generate_from_function", "TUDataset", "gnn_benchmark", "ZINC", "planetoid", "Planetoid", "Nell", "ogbn", "MoleculeNet", "OGB_GraphProp", "SubstructureBenchmark", "NEL", "QM9", "QM7" or "path".')
 
                 if 'source' in dataset:
                     data_generation_args = dataset.get('data_generation_args', None)

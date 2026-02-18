@@ -7,11 +7,12 @@ from simplegnn.models.layers.mpnn_classical.gnn_conv import GNNConvLayer
 
 class GATConv(GNNConvLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'GATConv'
         super(GATConv, self).__init__(layer_args)
         self.gat_args = {
-            'in_channels': layer_args.get('in_channels'),
-            'out_channels': layer_args.get('out_channels'),
-            'heads': layer_args.get('heads', 1),
+            'in_channels': layer_args.get('in_features'),
+            'out_channels': layer_args.get('out_features'),
+            'heads': layer_args.get('num_heads', 1),
             'concat': layer_args.get('concat', False),
             'negative_slope': layer_args.get('negative_slope', 0.2),
             'add_self_loops': layer_args.get('add_self_loops', True),
@@ -33,7 +34,7 @@ class GATConv(GNNConvLayer):
             if self.merge_heads:
                 node_representation = self.batch_norm_layer(node_representation)
             else: # apply batch norm to each head separately
-                node_representation = self.batch_norm_layer(node_representation.view(-1, self.gat_args['out_channels'])).view(-1, self.gat_args['out_channels'] * self.gat_args['heads'])
+                node_representation = self.batch_norm_layer(node_representation.view(-1, self.gat_args['out_features'])).view(-1, self.gat_args['out_features'] * self.gat_args['heads'])
         node_representation = self.activation(node_representation)
         if self.residual:
             if self.merge_heads:

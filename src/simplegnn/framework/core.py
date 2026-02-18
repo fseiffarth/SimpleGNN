@@ -55,6 +55,7 @@ from simplegnn.framework.utils.configuration_checks import check_model_configura
     check_main_configuration_file
 from simplegnn.framework.model_configuration import ModelConfiguration
 from simplegnn.framework.utils.evaluation import model_selection_evaluation
+from simplegnn.framework.utils.load_model import load_model
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.framework.utils.preprocessing import Preprocessing, load_preprocessed_data_and_parameters, load_splits
 from simplegnn.framework.run_configuration import get_run_configs
@@ -728,7 +729,19 @@ class FrameworkMain:
             # run the model, if a pretrained network is given, use it
             if isinstance(self.pretrained_network, tuple):
                 # tuple FrameworkMain object and experiment_db_id
-                graph_model.train_configuration(pretrained_network=self.pretrained_network[0].load_model(db_name=para.run_config.config['name'], run_id=run_id, validation_id=validation_id, best=True, experiment_db_id=self.pretrained_network[1]))
+                pretrained_framework, experiment_db_id = self.pretrained_network
+                pretrained_experiment_configuration = pretrained_framework.network_configurations[
+                    para.run_config.config["name"]
+                ][experiment_db_id]
+                pretrained_network = load_model(
+                    experiment_configuration=pretrained_experiment_configuration,
+                    db_name=para.run_config.config["name"],
+                    run_id=run_id,
+                    validation_id=validation_id,
+                    best=True,
+                    device=para.run_config.config.get("device", "cpu"),
+                )
+                graph_model.train_configuration(pretrained_network=pretrained_network)
             elif isinstance(self.pretrained_network, str):
                 if self.pretrained_network in ['best', 'Best']:
                     # TODO load only the best model that achieved the best test accuracy on the pretraining datasets
@@ -753,176 +766,28 @@ class FrameworkMain:
         else:
             print(f"Configuration file {configuration_file_name} already exists. Skipping the run for dataset {run_config.config['name']} with config_id {config_id}, run_id {run_id} and validation_id {validation_id}")
 
-    def load_ordinary_model(self, db_name, config_id=0, run_id=0,
-                            validation_id=0, best=True, experiment_db_id=0):
-        """
-        Load a trained non-ShareGNN model from disk.
 
-        Parameters
-        ----------
-        db_name : str
-            Dataset name to load model for.
-        config_id : int, optional
-            Configuration ID (default: 0). Ignored if best=True.
-        run_id : int, optional
-            Run ID for random seed variation (default: 0).
-        validation_id : int, optional
-            Validation fold index (default: 0).
-        best : bool, optional
-            Load best configuration from grid search (default: True).
-        experiment_db_id : int, optional
-            Index into network_configurations[db_name] list (default: 0).
-
-        Returns
-        -------
-        torch.nn.Module
-            Loaded model with restored state_dict.
-
-        Raises
-        ------
-        FileNotFoundError
-            If model file or model directory does not exist.
-
-        Notes
-        -----
-        This method is for loading classical GNN models (GCN, GIN, GAT, etc.).
-        For ShareGNN models, use load_model() instead.
-        """
+    def load_ordinary_model(
+        self,
+        db_name,
+        config_id=0,
+        run_id=0,
+        validation_id=0,
+        best=True,
+        experiment_db_id=0,
+    ):
+        """Load a trained model from disk for legacy compatibility."""
         experiment_configuration = self.network_configurations[db_name][experiment_db_id]
-        graph_data = preprocess_graph_data(experiment_configuration)
-        run_configs = get_run_configs(experiment_configuration)
-        # get the path to the model
-        path_to_models = experiment_configuration['paths']['results'].joinpath(db_name).joinpath('Models')
+        return load_model(
+            experiment_configuration=experiment_configuration,
+            db_name=db_name,
+            config_id=config_id,
+            run_id=run_id,
+            validation_id=validation_id,
+            best=best,
+            device=experiment_configuration.get("device", "cpu"),
+        )
 
-        if best:
-            if path_to_models.exists():
-                # get one file that contais the string 'Best_Configuration' in the name
-                curr_path = next(path_to_models.glob('*Best_Configuration*'))
-            else:
-                raise FileNotFoundError(f"Model directory {path_to_models} not found")
-            config_id = int(curr_path.name.split('_')[3])
-            model_path = path_to_models.joinpath(
-                f'model_Best_Configuration_{str(config_id).zfill(6)}_run_{run_id}_val_step_{validation_id}.pt')
-        else:
-            if not path_to_models.exists():
-                raise FileNotFoundError(f"Model directory {path_to_models} not found")
-            model_path = path_to_models.joinpath(
-                f'model_Configuration_{str(config_id).zfill(6)}_run_{run_id}_val_step_{validation_id}.pt')
-
-        run_config = run_configs[config_id]
-        # check if the model exists
-        if model_path.exists():
-            with open(model_path, 'r'):
-                para = Parameters()
-                load_preprocessed_data_and_parameters(config_id=config_id,
-                                                      run_id=run_id,
-                                                      validation_id=validation_id,
-                                                      graph_data=graph_data,
-                                                      run_config=run_config,
-                                                      para=para,
-                                                      validation_folds=experiment_configuration.get('validation_folds',
-                                                                                                    10))
-
-                """
-                    Get the first index in the results directory that is not used
-                """
-                para.set_file_index(size=6)
-                net = OrdinaryGNN(graph_data=graph_data,
-                                        para=para,
-                                        seed=0, device=run_config.config.get('device', 'cpu'))
-
-                net.load_state_dict(torch.load(model_path, weights_only=True))
-            return net
-        else:
-            raise FileNotFoundError(f"Model {model_path} not found")
-
-    def load_model(self, db_name, config_id=0, run_id=0, validation_id=0,
-                   best=True, experiment_db_id=0):
-        """
-        Load a trained ShareGNN model from disk.
-
-        Parameters
-        ----------
-        db_name : str
-            Dataset name to load model for.
-        config_id : int, optional
-            Configuration ID (default: 0). Ignored if best=True.
-        run_id : int, optional
-            Run ID for random seed variation (default: 0).
-        validation_id : int, optional
-            Validation fold index (default: 0).
-        best : bool, optional
-            Load best configuration from grid search (default: True).
-            If True, automatically finds config_id from saved best model.
-        experiment_db_id : int, optional
-            Index into network_configurations[db_name] list (default: 0).
-
-        Returns
-        -------
-        torch.nn.Module
-            Loaded ShareGNN model with restored state_dict.
-
-        Raises
-        ------
-        FileNotFoundError
-            If model file or model directory does not exist.
-
-        Notes
-        -----
-        This method is specifically for ShareGNN models. For classical
-        GNN models (GCN, GIN, etc.), use load_ordinary_model() instead.
-
-        Model files are located at:
-        {results_path}/{db_name}/Models/model_{prefix}_{config_id}_run_{run_id}_val_step_{validation_id}.pt
-
-        where prefix is 'Best_Configuration' if best=True, else
-        'Configuration'.
-        """
-        experiment_configuration = self.network_configurations[db_name][experiment_db_id]
-        graph_data = preprocess_graph_data(experiment_configuration)
-        run_configs = get_run_configs(experiment_configuration)
-        # get the path to the model
-        path_to_models = experiment_configuration['paths']['results'].joinpath(db_name).joinpath('Models')
-
-        if best:
-            if path_to_models.exists():
-                # get one file that contais the string 'Best_Configuration' in the name
-                curr_path = next(path_to_models.glob('*Best_Configuration*'))
-            else:
-                raise FileNotFoundError(f"Model directory {path_to_models} not found")
-            config_id = int(curr_path.name.split('_')[3])
-            model_path = path_to_models.joinpath(f'model_Best_Configuration_{str(config_id).zfill(6)}_run_{run_id}_val_step_{validation_id}.pt')
-        else:
-            if not path_to_models.exists():
-                raise FileNotFoundError(f"Model directory {path_to_models} not found")
-            model_path = path_to_models.joinpath(f'model_Configuration_{str(config_id).zfill(6)}_run_{run_id}_val_step_{validation_id}.pt')
-
-        run_config = run_configs[config_id]
-        # check if the model exists
-        if model_path.exists():
-            with open(model_path, 'r'):
-                para = Parameters()
-                load_preprocessed_data_and_parameters(config_id=config_id,
-                                                      run_id=run_id,
-                                                      validation_id=validation_id,
-                                                      graph_data=graph_data,
-                                                      run_config=run_config,
-                                                      para=para,
-                                                      validation_folds=len(experiment_configuration.get('splits')['train']),
-                                                        )
-
-                """
-                    Get the first index in the results directory that is not used
-                """
-                para.set_file_index(size=6)
-                net = ShareGNN.ShareGNN(graph_data=graph_data,
-                                       para=para,
-                                       seed=0, device=run_config.config.get('device', 'cpu'))
-
-                net.load_state_dict(torch.load(model_path, weights_only=True))
-            return net
-        else:
-            raise FileNotFoundError(f"Model {model_path} not found")
 
     def evaluate_model_on_graphs(self, db_name, db_id=0, graph_ids=[],
                                  config_id=0, run_id=0, validation_id=0,
@@ -973,8 +838,15 @@ class FrameworkMain:
         graph_data = preprocess_graph_data(experiment_configuration)
         data = np.asarray(graph_ids, dtype=int)
         outputs = torch.zeros((len(data), graph_data.num_classes), dtype=torch.double)
-        # load the model
-        net = self.load_model(db_name, config_id=config_id, run_id=run_id, validation_id=validation_id, best=best)
+        net = load_model(
+            experiment_configuration=experiment_configuration,
+            db_name=db_name,
+            config_id=config_id,
+            run_id=run_id,
+            validation_id=validation_id,
+            best=best,
+            device=experiment_configuration.get("device", "cpu"),
+        )
         with torch.no_grad():
             for j, data_pos in enumerate(data, 0):
                 outputs[j] = net(graph_data[data_pos].x, data_pos)
@@ -1037,8 +909,15 @@ class FrameworkMain:
         split_data = load_splits(experiment_configuration['paths']['splits'])
         test_data = np.asarray(split_data[0][validation_id], dtype=int)
         outputs = torch.zeros((len(test_data), graph_data.num_classes), dtype=torch.double)
-        # load the model
-        net = self.load_model(db_name, config_id=config_id, run_id=run_id, validation_id=validation_id, best=best)
+        net = load_model(
+            experiment_configuration=experiment_configuration,
+            db_name=db_name,
+            config_id=config_id,
+            run_id=run_id,
+            validation_id=validation_id,
+            best=best,
+            device=experiment_configuration.get("device", "cpu"),
+        )
         with torch.no_grad():
             for j, data_pos in enumerate(test_data, 0):
                 outputs[j] = net(graph_data[data_pos].x, data_pos)
@@ -1251,5 +1130,3 @@ def preprocess_graph_data(experiment_configuration: dict):
     # move the dataset to the device
     graph_data.to(experiment_configuration.get('device', 'cpu'))
     return graph_data
-
-

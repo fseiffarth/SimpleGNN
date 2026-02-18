@@ -8,9 +8,10 @@ from simplegnn.models.layers.mpnn_classical.gnn_conv import GNNConvLayer
 
 class GINConv(GNNConvLayer):
     def __init__(self, layer_args):
+        layer_args['name'] = 'GINConv'
         super(GINConv, self).__init__(layer_args)
         self.use_edge_features = layer_args.get('edge_dim', None) is not None
-        emb_dim = layer_args.get('out_channels')
+        emb_dim = layer_args.get('out_features')
         neural_network = Sequential(Linear(emb_dim, 2 * emb_dim), BatchNorm1d(2 * emb_dim), self.activation,
                         Linear(2 * emb_dim, emb_dim))
         gin_args = {
