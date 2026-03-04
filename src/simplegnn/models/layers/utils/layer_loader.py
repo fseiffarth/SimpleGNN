@@ -3,6 +3,14 @@ import numpy as np
 from simplegnn.models.layers.utils.layer_types import LayerTypes
 
 
+def _is_valid_layer_type(value):
+    try:
+        LayerTypes(value)
+        return True
+    except ValueError:
+        return False
+
+
 def layer_from_yml(layer_id, layer_yml, layers_per_architecture, network_architecture):
     """
     Creates a layer from a yml definition and adds it to the layers_per_architecture list
@@ -15,7 +23,7 @@ def layer_from_yml(layer_id, layer_yml, layers_per_architecture, network_archite
     if 'layer_type' not in layer_yml:
         raise ValueError("layer_type is required in layer_yml")
     layer_type = layer_yml['layer_type']
-    if layer_type not in LayerTypes:
+    if not _is_valid_layer_type(layer_type):
         raise ValueError(f"layer_type {layer_type} is not supported")
     elif layer_type in [LayerTypes.INVARIANT_BASED_CONVOLUTION.value, LayerTypes.INVARIANT_BASED_AGGREGATION.value]:
         layer_from_yml_invariant_based(layer_id, layer_yml, layers_per_architecture, network_architecture)
@@ -150,7 +158,7 @@ def layer_from_yml_invariant_based(layer_id, layer_yml, layers_per_architecture,
 def check_layer(i:int, layer: dict)->(bool, str):
     if 'layer_type' not in layer:
         return False, f'Layer type not defined in layer {i}, it must be convolution or aggregation'
-    if layer['layer_type'] not in LayerTypes:
+    if not _is_valid_layer_type(layer['layer_type']):
         return False, f'Layer type {layer["layer_type"]} not supported in layer {i}'
 
     if layer['layer_type'] == LayerTypes.LINEAR.value:
@@ -315,5 +323,4 @@ def check_network_architectures(network_architectures, print_errors=False):
                 print(f'Architecture {i} is invalid')
         return False
     return True
-
 
