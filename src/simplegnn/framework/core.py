@@ -444,7 +444,7 @@ class FrameworkMain:
             for i, configuration in enumerate(self.network_configurations[dataset]):
                 print(f"Running experiment for dataset {dataset}")
                 # derive validation folds from the configuration file using the splits
-                validation_folds = len(configuration.get('splits', {}).get('test', None))
+                validation_folds = len(configuration.get('splits', {}).get('validation', None))
 
                 # load the config file
                 # run the best models
