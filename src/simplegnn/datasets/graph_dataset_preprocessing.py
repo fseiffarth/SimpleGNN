@@ -229,7 +229,9 @@ class ZINCGraphDataPreprocessing(GraphDataPreprocessing):
         self.processed_dataset.node_attributes = torch.Tensor()
         self.processed_dataset.primary_edge_labels = self.processed_dataset.edge_attr
         self.slices['primary_edge_labels'] = self.slices['edge_attr']
-        self.processed_dataset.edge_attributes = torch.Tensor()
+        # set edge attributes to one hot of the edge labels
+        self.processed_dataset.edge_attributes = torch.nn.functional.one_hot(self.processed_dataset.primary_edge_labels, num_classes=self.processed_dataset.primary_edge_labels.max().item() + 1).float()
+        self.slices['edge_attributes'] = self.slices['edge_attr']
 
 
         self.set_sizes()
@@ -362,9 +364,9 @@ class TUDatasetPreprocessing(GraphDataPreprocessing):
 
     def preprocess(self, *args, **kwargs):
         tu_dataset = TUDataset(root='tmp/', name=self.name, use_node_attr=True, use_edge_attr=True)
-        if 'x' not in tu_dataset.data:
-            tu_dataset.data.x = torch.zeros((tu_dataset.num_nodes,1), dtype=torch.float)
-            tu_dataset.data.primary_node_labels = torch.zeros(tu_dataset.num_nodes, dtype=torch.long)
+        if 'x' not in tu_dataset._data:
+            tu_dataset._data.x = torch.zeros((tu_dataset.num_nodes,1), dtype=torch.float)
+            tu_dataset._data.primary_node_labels = torch.zeros(tu_dataset.num_nodes, dtype=torch.long)
             tu_dataset.slices['x'] = torch.zeros(len(tu_dataset)+1, dtype=torch.long)
             # get slices from edge_index_slices
             edge_slices = tu_dataset.slices['edge_index']

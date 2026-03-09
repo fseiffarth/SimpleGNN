@@ -896,6 +896,8 @@ class ModelConfiguration:
                     # check if output is two dimensional and task is graph classification
                     if self.para.run_config.config.get('task', None) == 'graph_classification' and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                         labels = torch.nn.functional.one_hot(labels, num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
+                    elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1:
+                        labels = labels.unsqueeze(1)
                 elif self.para.run_config.task == 'node_classification':
                     labels, outputs = self.evaluate_node_task(self.validate_data)
                 else:
@@ -1021,6 +1023,8 @@ class ModelConfiguration:
                     # check if output is two dimensional and task is graph classification
                     if self.para.run_config.config.get('task', None) == 'graph_classification' and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                         labels = torch.nn.functional.one_hot(labels, num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
+                    elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1:
+                        labels = labels.unsqueeze(1)
                 elif self.para.run_config.task == 'node_classification':
                     labels, outputs = self.evaluate_node_task(self.test_data)
                 else:
@@ -1263,10 +1267,7 @@ class ModelConfiguration:
             batch_ids = train_batches[batch_counter]
             timer.measure("forward")
             self.optimizer.zero_grad()
-            if self.graph_data.num_classes == 1:
-                outputs = torch.zeros((len(batch)), dtype=self.dtype).to(self.device)
-            else:
-                outputs = torch.zeros((len(batch), self.graph_data.num_classes), dtype=self.dtype).to(self.device)
+            outputs = torch.zeros((len(batch), self.graph_data.num_classes), dtype=self.dtype).to(self.device)
 
 
             # Run ordinary GNN
@@ -1291,6 +1292,8 @@ class ModelConfiguration:
             # check if output is two dimensional and task is graph classification
             if self.para.run_config.config.get('task', None) == 'graph_classification'  and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                 target_labels = torch.nn.functional.one_hot(self.graph_data.y[batch_ids], num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
+            elif self.para.run_config.config.get('task', None) == 'graph_regression' and outputs.shape[1] == 1:
+                target_labels = target_labels.unsqueeze(1)
             loss = self.criterion(outputs, target_labels)
             timer.measure("forward")
 
@@ -1338,9 +1341,6 @@ class ModelConfiguration:
             total_out_len = 0
             for batch in batches:
                 total_out_len += len(batch)
-            if self.graph_data.num_classes == 1:
-                outputs = torch.zeros((total_out_len), dtype=self.dtype).to(self.device)
-            else:
                 outputs = torch.zeros((total_out_len, self.graph_data.num_classes), dtype=self.dtype).to(self.device)
             loader = CustomBatchLoader(self.graph_data, batches)
             batch_counter = 0

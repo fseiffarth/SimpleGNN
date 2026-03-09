@@ -1,6 +1,19 @@
 # main configuration file for running a basic graph classification experiment using the GIN and GCN models on the MUTAG dataset from the TUDataset collection.
 datasets:
   - {
+    # all the options are mandatory (paths should be relative to the PYTHONPATH path)
+    name: "ZINC", # dataset name
+    source: "ZINC",  # dataset source type
+    task: "graph_regression", # task type
+    paths: {
+      data: "data/ZINC/", # path to the dataset (will be downloaded if not present)
+      results: "results/test/GIN/", # path to save the results
+      models: "examples/classical_gnns/models_GIN_ZINC.yml", # path to the model configuration file
+      hyperparameters: "examples/classical_gnns/parameters_ZINC.yml", # path to the hyperparameters configuration file
+      splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json", # path to the data splits file (contains train/val/test splits)
+    }
+  }
+  - {
         # all the options are mandatory (paths should be relative to the PYTHONPATH path)
         name: "MUTAG", # dataset name
         source: "TUDataset",  # dataset source type
