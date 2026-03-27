@@ -225,3 +225,6 @@ logs/security/
 .ai
 .github
 /tmp/
+/.ai/
+/.github/
+/.idea/

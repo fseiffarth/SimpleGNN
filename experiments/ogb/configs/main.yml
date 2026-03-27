@@ -1,0 +1,18 @@
+# main configuration file for running a basic graph classification experiment using the GIN and GCN models on the MUTAG dataset from the TUDataset collection.
+datasets:
+  - {
+    # all the options are mandatory (paths should be relative to the PYTHONPATH path)
+    name: "ogbg-moltox21", # dataset name
+    source: "OGB_GraphProp",  # dataset source type
+    task: "graph_classification", # task type
+    paths: {
+      data: "data/OGB/", # path to the dataset (will be downloaded if not present)
+      labels: "data/OGB/labels/", # path to the labels
+      properties: "data/OGB/properties/", # path to the precomputed properties
+      results: "results/ogb/", # path to save the results
+      models: "experiments/ogb/models_ShareGNN.yml", # path to the model configuration file
+      hyperparameters: "experiments/ogb/parameters.yml", # path to the hyperparameters configuration file
+      split_function: ogb_splits, # function to split the data (if with_splits is False, this function will be used to create the splits)
+      split_function_args: {db_name: 'ogbg-moltox21'}, # arguments for the split function
+    }
+  }
