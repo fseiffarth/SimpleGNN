@@ -4,9 +4,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.Experiment.ExperimentMain import ExperimentMain
-from src.Architectures.ShareGNN.ShareGNNLayers import InvariantBasedMessagePassingLayer, InvariantBasedAggregationLayer
-from src.Experiment.RunConfiguration import get_run_configs
+from simplegnn.framework.core import FrameworkMain
+from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
+from simplegnn.models.ShareGNN.layers.inv_based_pooling import InvariantBasedAggregationLayer
+from simplegnn.framework.run_configuration import get_run_configs
 
 
 def baseline_results(algorithm: str, datasets:list[str], path:str, sota:bool=False, first_column:str=''):
@@ -226,28 +227,28 @@ def fair_table():
     baseline_algorithms = ['NoGKernel', 'WLKernel']
     baseline_first_columns = ['\\cite{Schulz2019OnTN}', '\\cite{DBLP:journals/jmlr/ShervashidzeSLMB11}']
     for i, algorithm in enumerate(baseline_algorithms):
-        row_string, row_results = baseline_results(algorithm, datasets, 'paper_experiments/Results/RealWorld/Baseline/', first_column=baseline_first_columns[i])
+        row_string, row_results = baseline_results(algorithm, datasets, 'results/base_paper/classification/RealWorld/Baseline/', first_column=baseline_first_columns[i])
         rows.append(row_string)
         results.append(row_results)
 
     fair_algorithms = ['GCN', 'GraphSAGE', 'GIN', 'GAT', 'GATv2']
     fair_first_columns = ['\\cite{DBLP:conf/iclr/KipfW17}', '\\cite{Hamilton2017InductiveRL}', '\\cite{DBLP:conf/iclr/XuHLJ19}', '\\cite{Velickovic2017GraphAN}', '\\cite{DBLP:conf/iclr/Brody0Y22}']
-    fair_path = 'paper_experiments/RESULTS/'
+    fair_path = 'results/base_paper/classification/'
     for i, algorithm in enumerate(fair_algorithms):
         row_string, row_results = fair_gnn_results(algorithm, datasets, fair_path, first_column=fair_first_columns[i])
         rows.append(row_string)
         results.append(row_results)
 
-    row, row_results = share_gnn_results('\\MyGNN (ours)', datasets, 'paper_experiments/Results/RealWorld/')
+    row, row_results = share_gnn_results('\\MyGNN (ours)', datasets, 'results/base_paper/classification/RealWorld/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', datasets, 'paper_experiments/Results/RealWorld/Random/')
+    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', datasets, 'results/base_paper/classification/RealWorld/Random/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Encoder (ours)', datasets, 'paper_experiments/Results/RealWorld/Encoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Encoder (ours)', datasets, 'results/base_paper/classification/RealWorld/Encoder/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Decoder (ours)', datasets, 'paper_experiments/Results/RealWorld/Decoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Decoder (ours)', datasets, 'results/base_paper/classification/RealWorld/Decoder/')
     rows.append(row)
     results.append(row_results)
     # results to numpy array
@@ -270,28 +271,28 @@ def fair_table_full():
     baseline_algorithms = ['NoGKernel', 'WLKernel']
     baseline_first_columns = ['\\cite{Schulz2019OnTN}', '\\cite{DBLP:journals/jmlr/ShervashidzeSLMB11}']
     for i, algorithm in enumerate(baseline_algorithms):
-        row_string, row_results = baseline_results(algorithm, datasets, 'paper_experiments/Results/RealWorld/Baseline/', first_column=baseline_first_columns[i])
+        row_string, row_results = baseline_results(algorithm, datasets, 'results/base_paper/classification/RealWorld/Baseline/', first_column=baseline_first_columns[i])
         rows.append(row_string)
         results.append(row_results)
 
     fair_algorithms = ['GCN', 'GraphSAGE', 'GIN', 'GAT', 'GATv2']
     fair_first_columns = ['\\cite{DBLP:conf/iclr/KipfW17}', '\\cite{Hamilton2017InductiveRL}', '\\cite{DBLP:conf/iclr/XuHLJ19}', '\\cite{Velickovic2017GraphAN}', '\\cite{DBLP:conf/iclr/Brody0Y22}']
-    fair_path = 'paper_experiments/RESULTS/'
+    fair_path = 'results/base_paper/classification/'
     for i, algorithm in enumerate(fair_algorithms):
         row_string, row_results = fair_gnn_results(algorithm, datasets, fair_path, first_column=fair_first_columns[i])
         rows.append(row_string)
         results.append(row_results)
 
-    row, row_results = share_gnn_results('\\MyGNN (ours)', datasets, 'paper_experiments/Results/RealWorld/')
+    row, row_results = share_gnn_results('\\MyGNN (ours)', datasets, 'results/base_paper/classification/RealWorld/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', datasets, 'paper_experiments/Results/RealWorld/Random/')
+    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', datasets, 'results/base_paper/classification/RealWorld/Random/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Encoder (ours)', datasets, 'paper_experiments/Results/RealWorld/Encoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Encoder (ours)', datasets, 'results/base_paper/classification/RealWorld/Encoder/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Decoder (ours)', datasets, 'paper_experiments/Results/RealWorld/Decoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Decoder (ours)', datasets, 'results/base_paper/classification/RealWorld/Decoder/')
     rows.append(row)
     results.append(row_results)
     # results to numpy array
@@ -301,7 +302,7 @@ def fair_table_full():
     synthetic_rows = []
     synthetic_results = []
     for i, algorithm in enumerate(baseline_algorithms):
-        row_string, row_results = baseline_results(algorithm, synthetic_datasets, 'paper_experiments/Results/Synthetic/Baseline/', first_column=baseline_first_columns[i])
+        row_string, row_results = baseline_results(algorithm, synthetic_datasets, 'results/base_paper/classification/Synthetic/Baseline/', first_column=baseline_first_columns[i])
         synthetic_rows.append(row_string)
         synthetic_results.append(row_results)
 
@@ -310,16 +311,16 @@ def fair_table_full():
         synthetic_rows.append(row_string)
         synthetic_results.append(row_results)
 
-    row, row_results = share_gnn_results('\\MyGNN (ours)', synthetic_datasets, 'paper_experiments/Results/Synthetic/')
+    row, row_results = share_gnn_results('\\MyGNN (ours)', synthetic_datasets, 'results/base_paper/classification/Synthetic/')
     synthetic_rows.append(row)
     synthetic_results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', synthetic_datasets, 'paper_experiments/Results/Synthetic/Random/')
+    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', synthetic_datasets, 'results/base_paper/classification/Synthetic/Random/')
     synthetic_rows.append(row)
     synthetic_results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Encoder (ours)', synthetic_datasets, 'paper_experiments/Results/Synthetic/Encoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Encoder (ours)', synthetic_datasets, 'results/base_paper/classification/Synthetic/Encoder/')
     synthetic_rows.append(row)
     synthetic_results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Decoder (ours)', synthetic_datasets, 'paper_experiments/Results/Synthetic/Decoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Decoder (ours)', synthetic_datasets, 'results/base_paper/classification/Synthetic/Decoder/')
     synthetic_rows.append(row)
     synthetic_results.append(row_results)
     # results to numpy array
@@ -347,14 +348,14 @@ def sota_baseline_and_share():
     baseline_algorithms = ['NoGKernel', 'WLKernel']
     baseline_first_columns = ['\\cite{Schulz2019OnTN}', '\\cite{DBLP:journals/jmlr/ShervashidzeSLMB11}']
     for i, algorithm in enumerate(baseline_algorithms):
-        row_string, row_results = baseline_results(algorithm, datasets, 'paper_experiments/Results/Sota/Baseline/', first_column=baseline_first_columns[i], sota=True)
+        row_string, row_results = baseline_results(algorithm, datasets, 'results/base_paper/classification/Sota/Baseline/', first_column=baseline_first_columns[i], sota=True)
         rows.append(row_string)
         results.append(row_results)
 
-    row, row_results = share_gnn_results('\\MyGNN (ours)', datasets, 'paper_experiments/Results/Sota/', sota=True)
+    row, row_results = share_gnn_results('\\MyGNN (ours)', datasets, 'results/base_paper/classification/Sota/', sota=True)
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', datasets, 'paper_experiments/Results/Sota/Random/', sota=True)
+    row, row_results = share_gnn_results('\\MyGNN-Random (ours)', datasets, 'results/base_paper/classification/Sota/Random/', sota=True)
     rows.append(row)
     results.append(row_results)
     first_columns = ([f'{x} {baseline_first_columns[i]}' for i, x in enumerate(baseline_algorithms)]
@@ -372,28 +373,28 @@ def synthetic_table():
     baseline_algorithms = ['NoGKernel', 'WLKernel']
     baseline_first_columns = ['\\cite{Schulz2019OnTN}', '\\cite{DBLP:journals/jmlr/ShervashidzeSLMB11}']
     for i, algorithm in enumerate(baseline_algorithms):
-        row_string, row_results = baseline_results(algorithm, datasets, 'paper_experiments/Results/Synthetic/Baseline/', first_column=baseline_first_columns[i])
+        row_string, row_results = baseline_results(algorithm, datasets, 'results/base_paper/classification/Synthetic/Baseline/', first_column=baseline_first_columns[i])
         rows.append(row_string)
         results.append(row_results)
 
     fair_algorithms = ['GCN', 'GraphSAGE', 'GIN', 'GAT', 'GATv2']
     fair_first_columns = ['\\cite{DBLP:conf/iclr/KipfW17}', '\\cite{Hamilton2017InductiveRL}', '\\cite{DBLP:conf/iclr/XuHLJ19}', '\\cite{Velickovic2017GraphAN}', '\\cite{DBLP:conf/iclr/Brody0Y22}']
-    fair_path = 'paper_experiments/RESULTS/'
+    fair_path = 'results/base_paper/classification/'
     for i, algorithm in enumerate(fair_algorithms):
         row_string, row_results = fair_gnn_results(algorithm, datasets, fair_path, first_column=fair_first_columns[i])
         rows.append(row_string)
         results.append(row_results)
 
-    row, row_results = share_gnn_results('\\MyGNN', datasets, 'paper_experiments/Results/Synthetic/')
+    row, row_results = share_gnn_results('\\MyGNN', datasets, 'results/base_paper/classification/Synthetic/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Random', datasets, 'paper_experiments/Results/Synthetic/Random/')
+    row, row_results = share_gnn_results('\\MyGNN-Random', datasets, 'results/base_paper/classification/Synthetic/Random/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Encoder', datasets, 'paper_experiments/Results/Synthetic/Encoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Encoder', datasets, 'results/base_paper/classification/Synthetic/Encoder/')
     rows.append(row)
     results.append(row_results)
-    row, row_results = share_gnn_results('\\MyGNN-Decoder', datasets, 'paper_experiments/Results/Synthetic/Decoder/')
+    row, row_results = share_gnn_results('\\MyGNN-Decoder', datasets, 'results/base_paper/classification/Synthetic/Decoder/')
     rows.append(row)
     results.append(row_results)
 
@@ -416,7 +417,7 @@ def features_evaluation():
     rows = []
     features_results = []
     results = []
-    fair_path = 'paper_experiments/RESULTS/'
+    fair_path = 'results/base_paper/classification/'
 
     for i, algorithm in enumerate(fair_algorithms):
         row_string, row_results = fair_gnn_results(algorithm, datasets, fair_path,
@@ -532,12 +533,12 @@ def training_and_preprocessing_time(share_gnn_type=''):
     appendix = ''
     if share_gnn_type != '':
         appendix = f'_{share_gnn_type}'
-    if Path(f'paper_experiments/Results/Latex/training_preprocessing_time{appendix}.json').exists():
-        results = json.load(open(f'paper_experiments/Results/Latex/training_preprocessing_time{appendix}.json', 'r'))
+    if Path(f'results/base_paper/classification/Latex/training_preprocessing_time{appendix}.json').exists():
+        results = json.load(open(f'results/base_paper/classification/Latex/training_preprocessing_time{appendix}.json', 'r'))
     else:
 
-        path_real_world = f'paper_experiments/Results/RealWorld/{share_gnn_type}'
-        path_synthetic = f'paper_experiments/Results/Synthetic/{share_gnn_type}'
+        path_real_world = f'results/base_paper/classification/RealWorld/{share_gnn_type}'
+        path_synthetic = f'results/base_paper/classification/Synthetic/{share_gnn_type}'
         for path, datasets in [[path_real_world, datasets_real_world], [path_synthetic, dataset_synthetic]]:
             if Path(path).exists():
                 # get number of parameters
@@ -623,20 +624,20 @@ def training_and_preprocessing_time(share_gnn_type=''):
                 # best label strings per dataset
                 ## Real World Data
                 if share_gnn_type == '':
-                    config_path = Path('paper_experiments/Configs/main_config_fair_real_world.yml')
+                    config_path = Path('experiments/base_paper/classification/configs/main_config_fair_real_world.yml')
                 elif share_gnn_type == 'Random':
-                    config_path = Path('paper_experiments/Configs/main_config_fair_real_world_random_variation.yml')
+                    config_path = Path('experiments/base_paper/classification/configs/main_config_fair_real_world_random_variation.yml')
                 else:
                     raise ValueError('share_gnn_type not recognized')
                 if path == path_synthetic:
                     if share_gnn_type == '':
-                        config_path = Path('paper_experiments/Configs/main_config_fair_synthetic.yml')
+                        config_path = Path('experiments/base_paper/classification/configs/main_config_fair_synthetic.yml')
                     elif share_gnn_type == 'Random':
-                        config_path = Path('paper_experiments/Configs/main_config_fair_synthetic_random_variation.yml')
+                        config_path = Path('experiments/base_paper/classification/configs/main_config_fair_synthetic_random_variation.yml')
                     else:
                         raise ValueError('share_gnn_type not recognized')
-                experiment = ExperimentMain(Path(config_path))
-                experiment.ExperimentPreprocessing()
+                experiment = FrameworkMain(Path(config_path))
+                experiment.preprocessing(num_threads=1)
 
 
                 for dataset in datasets:
@@ -691,7 +692,7 @@ def training_and_preprocessing_time(share_gnn_type=''):
                         results[dataset]['preprocessing_time_labels'] = sum([preprocessing_times[dataset][label] for label in label_strings])
 
         # save results in file
-        with open(f'paper_experiments/Results/Latex/training_preprocessing_time{appendix}.json', 'w') as f:
+        with open(f'results/base_paper/classification/Latex/training_preprocessing_time{appendix}.json', 'w') as f:
             json.dump(results, f)
 
 
@@ -711,7 +712,7 @@ def training_and_preprocessing_time(share_gnn_type=''):
     table_str += '\\bottomrule\n'
     table_str += '\\end{tabular}\n'
     # save table under best run properties table
-    with open(f'paper_experiments/Results/Latex/best_run_details_table{appendix}.txt', 'w') as f:
+    with open(f'results/base_paper/classification/Latex/best_run_details_table{appendix}.txt', 'w') as f:
         f.write(table_str)
 
     if share_gnn_type == '':
@@ -729,17 +730,17 @@ def training_and_preprocessing_time(share_gnn_type=''):
         table_str += '\\bottomrule\n'
         table_str += '\\end{tabular}\n'
         # save table under best run properties table
-        with open('paper_experiments/Results/Latex/preprocessing_times.txt', 'w') as f:
+        with open('results/base_paper/classification/Latex/preprocessing_times.txt', 'w') as f:
             f.write(table_str)
 
 
 
 def hyper_parameter_configurations():
     # check if json has been produced
-    json_files = ['paper_experiments/Results/Latex/molecule_convolution_configs.json',
-                    'paper_experiments/Results/Latex/molecule_aggregation_configs.json',
-                    'paper_experiments/Results/Latex/social_convolution_configs.json',
-                    'paper_experiments/Results/Latex/social_aggregation_configs.json']
+    json_files = ['results/base_paper/classification/Latex/molecule_convolution_configs.json',
+                    'results/base_paper/classification/Latex/molecule_aggregation_configs.json',
+                    'results/base_paper/classification/Latex/social_convolution_configs.json',
+                    'results/base_paper/classification/Latex/social_aggregation_configs.json']
     if all([Path(x).exists() for x in json_files]):
         pass
     else:
@@ -747,9 +748,9 @@ def hyper_parameter_configurations():
         social = 'IMDB-BINARY'
         # best label strings per dataset
         ## Real World Data
-        config_path = Path('paper_experiments/Configs/main_config_fair_real_world.yml')
-        experiment = ExperimentMain(Path(config_path))
-        experiment.ExperimentPreprocessing()
+        config_path = Path('experiments/base_paper/classification/configs/main_config_fair_real_world.yml')
+        experiment = FrameworkMain(Path(config_path))
+        experiment.preprocessing(num_threads=1)
         run_configs_molecule = get_run_configs(experiment.network_configurations[molecule][0])
         run_configs_social = get_run_configs(experiment.network_configurations[social][0])
         for run_configs in [run_configs_molecule, run_configs_social]:
@@ -769,21 +770,21 @@ def hyper_parameter_configurations():
             aggregation_configs = sorted(list(aggregation_configs))
             # save the configurations in a file
             if run_configs == run_configs_molecule:
-                with open(f'paper_experiments/Results/Latex/molecule_convolution_configs.json', 'w') as f:
+                with open(f'results/base_paper/classification/Latex/molecule_convolution_configs.json', 'w') as f:
                     json.dump(list(convolution_configs), f)
-                with open(f'paper_experiments/Results/Latex/molecule_aggregation_configs.json', 'w') as f:
+                with open(f'results/base_paper/classification/Latex/molecule_aggregation_configs.json', 'w') as f:
                     json.dump(list(aggregation_configs), f)
             elif run_configs == run_configs_social:
-                with open(f'paper_experiments/Results/Latex/social_convolution_configs.json', 'w') as f:
+                with open(f'results/base_paper/classification/Latex/social_convolution_configs.json', 'w') as f:
                     json.dump(list(convolution_configs), f)
-                with open(f'paper_experiments/Results/Latex/social_aggregation_configs.json', 'w') as f:
+                with open(f'results/base_paper/classification/Latex/social_aggregation_configs.json', 'w') as f:
                     json.dump(list(aggregation_configs), f)
     molecule_convolution_configs = json.load(
-        open('paper_experiments/Results/Latex/molecule_convolution_configs.json', 'r'))
+        open('results/base_paper/classification/Latex/molecule_convolution_configs.json', 'r'))
     molecule_aggregation_configs = json.load(
-        open('paper_experiments/Results/Latex/molecule_aggregation_configs.json', 'r'))
-    social_convolution_configs = json.load(open('paper_experiments/Results/Latex/social_convolution_configs.json', 'r'))
-    social_aggregation_configs = json.load(open('paper_experiments/Results/Latex/social_aggregation_configs.json', 'r'))
+        open('results/base_paper/classification/Latex/molecule_aggregation_configs.json', 'r'))
+    social_convolution_configs = json.load(open('results/base_paper/classification/Latex/social_convolution_configs.json', 'r'))
+    social_aggregation_configs = json.load(open('results/base_paper/classification/Latex/social_aggregation_configs.json', 'r'))
 
     # create four tables: Molecules Encoder Invariants, Molecules Decoder Invariants, Social Encoder Invariants, Social Decoder Invariants
     for x, y, z in zip([molecule_convolution_configs, molecule_aggregation_configs, social_convolution_configs, social_aggregation_configs],
@@ -798,12 +799,12 @@ def hyper_parameter_configurations():
             table_string += f'{config} \\\\ \n'
         table_string += '\\bottomrule\n'
         table_string += '\\end{tabular}\n'
-        with open(f'paper_experiments/Results/Latex/{z}.txt', 'w') as f:
+        with open(f'results/base_paper/classification/Latex/{z}.txt', 'w') as f:
             f.write(table_string)
 
 def main():
     # create Latex dir under Results
-    Path('paper_experiments/Results/Latex').mkdir(parents=True, exist_ok=True)
+    Path('results/base_paper/classification/Latex').mkdir(parents=True, exist_ok=True)
     hyper_parameter_configurations()
     training_and_preprocessing_time()
     training_and_preprocessing_time('Random')

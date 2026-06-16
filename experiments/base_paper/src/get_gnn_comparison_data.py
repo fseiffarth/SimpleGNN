@@ -1,3 +1,22 @@
+"""
+DEPRECATED — kept for reference only.
+
+This script depends on modules that were removed from the repository during the
+`simplegnn` package migration (`src.Preprocessing.GraphData.*`,
+`src.utils.EvaluationFinal`, `src.Preprocessing.load_labels`, `src.utils.utils`).
+They have no equivalent in the current code, so the script cannot run. The early
+guard below prints a notice and exits non-zero before the now-missing imports are
+reached.
+"""
+import sys
+
+if __name__ == "__main__":
+    sys.stderr.write(
+        "get_gnn_comparison_data.py is DEPRECATED: it relied on GraphData / preprocessing "
+        "modules that were removed in the simplegnn migration and have no current "
+        "equivalent. Nothing to run.\n")
+    sys.exit(1)
+
 import os
 from pathlib import Path
 

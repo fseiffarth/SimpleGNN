@@ -5,9 +5,9 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.Experiment.ExperimentMain import ExperimentMain
-from src.utils.GraphDrawing import GraphDrawing
-from src.utils.load_splits import Load_Splits
+from simplegnn.framework.core import FrameworkMain
+from simplegnn.datasets.utils.graph_drawing import GraphDrawing
+from simplegnn.framework.utils.preprocessing import load_splits
 
 
 def parameter_update():
@@ -47,8 +47,8 @@ class CustomColorMap:
 
 def main():
     parameter_update()
-    experiment = ExperimentMain(Path('paper_experiments/regression/ZINC/configs/main_config_ZINC.yml'))
-    experiment.ExperimentPreprocessing()
+    experiment = FrameworkMain(Path('experiments/base_paper/regression/ZINC/configs/main_config_ZINC.yml'))
+    experiment.preprocessing(num_threads=1)
     graph_ids = [500]
     db_name = 'ZINC'
     net = experiment.load_model(db_name=db_name, config_id=0, run_id=0, validation_id=0)
@@ -73,8 +73,8 @@ def main():
         GraphDrawing(node_size=40, edge_width=1, weight_edge_width=2.5, weight_arrow_size=10, draw_type='kawai'),
     )
 
-    Path('paper_experiments/Results/Latex/Plots/Positions/').mkdir(exist_ok=True, parents=True)
-    save_pos_path = Path('paper_experiments/Results/Latex/Plots/Positions/')
+    Path('results/base_paper/regression/Latex/Plots/Positions/').mkdir(exist_ok=True, parents=True)
+    save_pos_path = Path('results/base_paper/regression/Latex/Plots/Positions/')
     pos_path = save_pos_path.joinpath(f'{db_name}_{graph_ids[0]}_pos.txt')
 
     for idx, graph_id in enumerate(graph_ids):
@@ -97,7 +97,7 @@ def main():
 
     # use latex backend for matplotlib
     graph_ids_string = '_'.join([str(x) for x in graph_ids])
-    plt.savefig(f'paper_experiments/Results/Latex/{db_name}_{graph_ids_string}_message_passing.pdf', bbox_inches='tight', backend='pgf')
+    plt.savefig(f'results/base_paper/regression/Latex/{db_name}_{graph_ids_string}_message_passing.pdf', bbox_inches='tight', backend='pgf')
     plt.show()
 
     return

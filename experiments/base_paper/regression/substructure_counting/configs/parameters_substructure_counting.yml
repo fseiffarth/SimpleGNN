@@ -1,0 +1,33 @@
+# Hyperparameters for substructure counting (migrated from old monolithic main config).
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+
+loss:
+  - MAE
+
+rule_occurrence_threshold: 1
+
+weight_initialization: { convolution: { type: 'lower_upper', value: 0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0 },
+                         aggregation: { type: 'lower_upper', value: 0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 } }
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.001
+epochs:
+  - 1000
+
+early_stopping:
+  enabled: False
+  patience: 25
+
+training_data_sampling: { type: 'default' }
+
+input_features: { name: constant, value: 1.0 }
+best_model: True

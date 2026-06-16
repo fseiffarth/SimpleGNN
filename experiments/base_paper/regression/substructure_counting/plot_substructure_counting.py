@@ -5,9 +5,9 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.Experiment.ExperimentMain import ExperimentMain
-from src.utils.GraphDrawing import GraphDrawing
-from src.utils.load_splits import Load_Splits
+from simplegnn.framework.core import FrameworkMain
+from simplegnn.datasets.utils.graph_drawing import GraphDrawing
+from simplegnn.framework.utils.preprocessing import load_splits
 
 def parameter_update():
     plt.rcParams.update({
@@ -46,14 +46,14 @@ class CustomColorMap:
 
 def main():
     parameter_update()
-    experiment = ExperimentMain(Path('paper_experiments/regression/substructure_counting/configs/main_config_substructure_counting.yml'))
-    experiment.ExperimentPreprocessing()
+    experiment = FrameworkMain(Path('experiments/base_paper/regression/substructure_counting/configs/main_config_substructure_counting.yml'))
+    experiment.preprocessing(num_threads=1)
     graph_ids = [3947]
     for counter, db_name in enumerate(['triangle', 'tri_tail', 'cycle5', 'cycle4', 'cycle6', 'star', 'substructure_counting']):
         validation_id = 0
         configuration = experiment.network_configurations[db_name][0]
-        split_data = Load_Splits(configuration['paths']['splits'], db_name)
-        test_data = np.asarray(split_data[0][validation_id], dtype=int)
+        split_data = load_splits(configuration['paths']['splits'])
+        test_data = np.asarray(split_data['test'][validation_id], dtype=int)
         # get five random graphs from the test data
         #np.random.seed(42)  # for reproducibility
         #graph_ids = np.random.choice(test_data, size=1, replace=False)
@@ -125,7 +125,7 @@ def main():
 
 
         # use latex backend for matplotlib
-        plt.savefig(f'paper_experiments/regression/substructure_counting/Plots/{db_name}_substructure_counting.pdf', bbox_inches='tight', backend='pgf')
+        plt.savefig(f'experiments/base_paper/regression/substructure_counting/Plots/{db_name}_substructure_counting.pdf', bbox_inches='tight', backend='pgf')
         plt.show()
 
 

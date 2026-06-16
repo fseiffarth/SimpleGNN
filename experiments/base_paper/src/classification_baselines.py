@@ -1,3 +1,21 @@
+"""
+DEPRECATED — kept for reference only.
+
+This script depends on modules that were removed from the repository during the
+`simplegnn` package migration (`src.Competitors.Kernels.*`,
+`src.Preprocessing.GraphData.*`). They have no equivalent in the current code, so
+the script cannot run. The early guard below prints a notice and exits non-zero
+before the now-missing imports are reached.
+"""
+import sys
+
+if __name__ == "__main__":
+    sys.stderr.write(
+        "classification_baselines.py is DEPRECATED: it relied on graph-kernel and "
+        "GraphData modules that were removed in the simplegnn migration and have no "
+        "current equivalent. Nothing to run.\n")
+    sys.exit(1)
+
 import os
 from pathlib import Path
 

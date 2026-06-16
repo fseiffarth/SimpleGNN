@@ -1,0 +1,35 @@
+# Ablation (threshold) hyperparameters for upper/7
+# (migrated from old monolithic main config).
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+
+loss:
+  - CrossEntropyLoss
+
+convolution_grad: True
+aggregation_grad: True
+
+rule_occurrence_upper_threshold: 7
+
+weight_initialization: { convolution: { type: 'constant', value: 0.001 },
+                         convolution_bias: { type: 'constant', value: 0.0 },
+                         aggregation: { type: 'constant', value: 0.001 },
+                         aggregation_bias: { type: 'constant', value: 0.0 } }
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.01
+epochs:
+  - 200
+
+early_stopping:
+  enabled: True
+  patience: 25
+
+num_workers: 30
+input_features: { name: constant, value: 1.0 }

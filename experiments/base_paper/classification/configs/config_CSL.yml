@@ -1,21 +1,26 @@
-networks:
-  - - { layer_type: invariant_based_convolution,
-        activation: 'tanh',
-        bias: False,
-        heads: [1],
-        labels: [
-          { label_type: simple_cycles, max_cycle_length: [ 10 ] }
-        ],
-        properties: [
-          { name: distances, values: [ 0, 1 ] }
-        ]
-  }
-    - { layer_type: invariant_based_aggregation,
-        activation: 'tanh',
-        bias: True,
-        heads: [1],
-        labels: [
-          { label_type: simple_cycles, max_cycle_length: [ 10 ] }
-        ]
-    }
-    - { layer_type: reshape }
+# Migrated from old-schema network config (see MIGRATION_PLAN.md).
+models:
+- - layer_type: invariant_based_convolution
+    activation: torch.nn.Tanh()
+    bias: false
+    heads:
+    - 1
+    labels:
+    - label_type: simple_cycles
+      max_cycle_length:
+      - 10
+    properties:
+    - name: distances
+      values:
+      - 0
+      - 1
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Tanh()
+    bias: true
+    heads:
+    - 1
+    labels:
+    - label_type: simple_cycles
+      max_cycle_length:
+      - 10
+  - layer_type: reshape

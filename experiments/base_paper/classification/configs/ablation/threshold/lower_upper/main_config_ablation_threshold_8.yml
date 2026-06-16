@@ -1,91 +1,26 @@
+# Ablation (threshold) experiment lower_upper/8 (migrated to three-tier schema).
 datasets:
-  # real-world datasets
-  - {name: "IMDB-BINARY", task: 'graph_classification', validation_folds: 10, network_config_file: "paper_experiments/classification/configs/ablation/threshold/config_ablation_threshold_IMDB_BINARY.yml", type: "TUDataset"}
-  - {name: "NCI1", task: 'graph_classification', validation_folds: 10, network_config_file: "paper_experiments/classification/configs/ablation/threshold/config_ablation_threshold_NCI1.yml", type: "TUDataset"}
-  - {name: "IMDB-MULTI", task: 'graph_classification', validation_folds: 10, network_config_file: "paper_experiments/classification/configs/ablation/threshold/config_ablation_threshold_IMDB_MULTI.yml", type: "TUDataset"}
-  - {name: "NCI109", task: 'graph_classification', validation_folds: 10, network_config_file: "paper_experiments/classification/configs/ablation/threshold/config_ablation_threshold_NCI109.yml", type: "TUDataset"}
-  - {name: "Mutagenicity", task: 'graph_classification', validation_folds: 10, network_config_file: "paper_experiments/classification/configs/ablation/threshold/config_ablation_threshold_Mutagenicity.yml", type: "TUDataset"}
-  - {name: "DHFR", task: 'graph_classification', validation_folds: 10, network_config_file: "paper_experiments/classification/configs/ablation/threshold/config_ablation_threshold_DHFR.yml", type: "TUDataset"}
-
-paths:
-  # all the paths are relative to the PYTHONPATH path, can be also defined dataset-wise in the network_config_file
-  data:
-    "paper_experiments/Data/Graphs/"
-  properties:
-    "paper_experiments/Data/Properties/" # Precomputed properties will be loaded from this folder
-  labels:
-    "paper_experiments/Data/Labels/" # Path to the folder containing the labels
-  splits:
-    "paper_experiments/Data/Splits/" # Path to the folder containing the data splits
-  results:
-    "paper_experiments/Results/classification/Ablation/Threshold/LowerUpper/8/" # Results will be saved in this folder
-
-# rule_occurrence_threshold: threshold for the rule occurrence, determines how often a rule has to be present to be used in the network
-# -type: [graph, total], graph: the rule has to be present in a graph, total: the rule has to be present in the whole dataset
-# -threshold: the threshold for the rule occurrence at least this many times
-rule_occurrence_threshold: 8
-
-rule_occurrence_upper_threshold: 20
-
-device: cpu
-mode: experiments # if debug printing and plotting options are enabled, for the experiments mode should be 'experiments'
-precision: double
-
-# network options
-
-# optimizer: optimizer for the network
-optimizer:
-  - Adam
-
-
-
-# convolution_grad: Turn on or off learning for the convolutional layers
-convolution_grad: True
-
-# aggregation_grad: Turn on or off learning for the aggregation layer
-aggregation_grad: True
-
-
-
-# loss: loss function for the network
-loss:
-  - CrossEntropyLoss
-
-
-
-
-
-# weight initialization: weight initialization for the network (TODO)
-# - convolution: weight initialization for the convolutional layers
-# - convolution_bias: weight initialization for the convolutional bias
-# - aggregation: weight initialization for the aggregation layer
-# - aggregation_bias: weight initialization for the aggregation bias
-# keys:
-#     - type: [uniform, normal, constant, lower_upper], uniform: uniform distribution, normal: normal distribution, constant: constant value, lower_upper: uniform distribution with lower and upper bound from the number of weights
-#     - min: minimum value for the uniform distribution
-#     - max: maximum value for the uniform distribution
-#     - value: constant value for the constant distribution
-#     - mean for the normal distribution
-#     - std: variance for the normal distribution
-weight_initialization: { convolution: {  type: 'constant', value: 0.001 },
-                         convolution_bias: { type: 'constant', value: 0.0},
-                         aggregation: {  type: 'constant', value: 0.001 },
-                         aggregation_bias: { type: 'constant', value: 0.0 }}
-
-batch_size:
-  - 64
-learning_rate:
-  - 0.01
-epochs:
-  - 200
-
-early_stopping:
-  enabled:
-    True
-  patience:
-    25
-
-
-# num_workers: number of workers used
-num_workers: 30
-
+  - { name: "IMDB-BINARY", source: "TUDataset", task: "graph_classification", validation_folds: 10,
+      paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
+               results: "results/base_paper/classification/Ablation/Threshold/LowerUpper/8/", models: "experiments/base_paper/classification/configs/ablation/threshold/config_ablation_threshold_IMDB_BINARY.yml",
+               hyperparameters: "experiments/base_paper/classification/configs/ablation/threshold/lower_upper/parameters_ablation_threshold_8.yml", splits: "src/simplegnn/datasets/splits/fair/IMDB-BINARY_splits.json" } }
+  - { name: "NCI1", source: "TUDataset", task: "graph_classification", validation_folds: 10,
+      paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
+               results: "results/base_paper/classification/Ablation/Threshold/LowerUpper/8/", models: "experiments/base_paper/classification/configs/ablation/threshold/config_ablation_threshold_NCI1.yml",
+               hyperparameters: "experiments/base_paper/classification/configs/ablation/threshold/lower_upper/parameters_ablation_threshold_8.yml", splits: "src/simplegnn/datasets/splits/fair/NCI1_splits.json" } }
+  - { name: "IMDB-MULTI", source: "TUDataset", task: "graph_classification", validation_folds: 10,
+      paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
+               results: "results/base_paper/classification/Ablation/Threshold/LowerUpper/8/", models: "experiments/base_paper/classification/configs/ablation/threshold/config_ablation_threshold_IMDB_MULTI.yml",
+               hyperparameters: "experiments/base_paper/classification/configs/ablation/threshold/lower_upper/parameters_ablation_threshold_8.yml", splits: "src/simplegnn/datasets/splits/fair/IMDB-MULTI_splits.json" } }
+  - { name: "NCI109", source: "TUDataset", task: "graph_classification", validation_folds: 10,
+      paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
+               results: "results/base_paper/classification/Ablation/Threshold/LowerUpper/8/", models: "experiments/base_paper/classification/configs/ablation/threshold/config_ablation_threshold_NCI109.yml",
+               hyperparameters: "experiments/base_paper/classification/configs/ablation/threshold/lower_upper/parameters_ablation_threshold_8.yml", splits: "src/simplegnn/datasets/splits/fair/NCI109_splits.json" } }
+  - { name: "Mutagenicity", source: "TUDataset", task: "graph_classification", validation_folds: 10,
+      paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
+               results: "results/base_paper/classification/Ablation/Threshold/LowerUpper/8/", models: "experiments/base_paper/classification/configs/ablation/threshold/config_ablation_threshold_Mutagenicity.yml",
+               hyperparameters: "experiments/base_paper/classification/configs/ablation/threshold/lower_upper/parameters_ablation_threshold_8.yml", splits: "src/simplegnn/datasets/splits/fair/Mutagenicity_splits.json" } }
+  - { name: "DHFR", source: "TUDataset", task: "graph_classification", validation_folds: 10,
+      paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
+               results: "results/base_paper/classification/Ablation/Threshold/LowerUpper/8/", models: "experiments/base_paper/classification/configs/ablation/threshold/config_ablation_threshold_DHFR.yml",
+               hyperparameters: "experiments/base_paper/classification/configs/ablation/threshold/lower_upper/parameters_ablation_threshold_8.yml", splits: "src/simplegnn/datasets/splits/fair/DHFR_splits.json" } }

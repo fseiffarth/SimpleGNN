@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.Experiment.ExperimentMain import ExperimentMain
-from src.Architectures.ShareGNN.ShareGNNLayers import InvariantBasedMessagePassingLayer
-from src.utils.GraphDrawing import GraphDrawing, CustomColorMap, RandomColorMap
+from simplegnn.framework.core import FrameworkMain
+from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
+from simplegnn.datasets.utils.graph_drawing import GraphDrawing, CustomColorMap, RandomColorMap
 
 
 def ablation_threshold(dataset, threshold_type):
-    if not Path(f'paper_experiments/Results/classification_old/Latex/Plots/ablation_threshold_{dataset}_{threshold_type}.pdf').exists():
+    if not Path(f'results/base_paper/classification/Latex/Plots/ablation_threshold_{dataset}_{threshold_type}.pdf').exists():
         plt.rcParams.update({
             "font.family": "serif",  # use serif/main font for text elements
             "font.size": 12,
@@ -23,7 +23,7 @@ def ablation_threshold(dataset, threshold_type):
                 r"\setmainfont{DejaVu Serif}",  # serif font via preamble
             ])
         })
-        ablation_results_path = Path(f'paper_experiments/Results/classification_old/Ablation/{threshold_type}/')
+        ablation_results_path = Path(f'results/base_paper/classification/Ablation/{threshold_type}/')
 
         ablation_results = dict()
         for i in list(range(1, 21)) + [30, 40, 50]:
@@ -117,11 +117,11 @@ def ablation_threshold(dataset, threshold_type):
             ax1.set_xlabel('Maximum \\# of Occurrences per Shared Weight (Encoder)')
         elif threshold_type == 'LowerUpper':
             ax1.set_xlabel('Minimum \\# of Occurrences per Shared Weight (Encoder)')
-        plt.savefig(f'paper_experiments/Results/classification_old/Latex/Plots/ablation_threshold_{dataset}_{threshold_type}.pdf', bbox_inches='tight', backend='pgf')
+        plt.savefig(f'results/base_paper/classification/Latex/Plots/ablation_threshold_{dataset}_{threshold_type}.pdf', bbox_inches='tight', backend='pgf')
         pass
 
 def ablation_distance(dataset='NCI1', max_distance=12, fontsize=9):
-    if not Path(f'paper_experiments/Results/classification_old/Latex/Plots/ablation_distance_{dataset}_{max_distance}.pdf').exists():
+    if not Path(f'results/base_paper/classification/Latex/Plots/ablation_distance_{dataset}_{max_distance}.pdf').exists():
         plt.rcParams.update({
             "font.family": "serif",  # use serif/main font for text elements
             "font.size": 12,
@@ -136,7 +136,7 @@ def ablation_distance(dataset='NCI1', max_distance=12, fontsize=9):
         })
 
         from mpl_toolkits.axes_grid1 import make_axes_locatable
-        path = Path(f'paper_experiments/Results/classification_old/Distance/{dataset}/')
+        path = Path(f'results/base_paper/classification/Distance/{dataset}/')
         # get the summary.csv file
         df = pd.read_csv(path.joinpath('summary.csv'), delimiter=",")
         model_layers_depths = []
@@ -214,13 +214,13 @@ def ablation_distance(dataset='NCI1', max_distance=12, fontsize=9):
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
         plt.colorbar(im, cax=cax).set_label('Accuracy in $\\%$')
-        plt.savefig(f'paper_experiments/Results/classification_old/Latex/Plots/ablation_distance_{dataset}_{max_distance}.pdf', bbox_inches='tight', backend='pgf')
+        plt.savefig(f'results/base_paper/classification/Latex/Plots/ablation_distance_{dataset}_{max_distance}.pdf', bbox_inches='tight', backend='pgf')
         pass
 
 def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_labels_from_invariant=True, with_aggregation=False, molecule=False, channel=0, headers=True):
     graph_id_string = '_'.join([str(graph_id) for graph_id in graph_ids])
     # check if file exists
-    if not Path(f'paper_experiments/Results/classification_old/Latex/Plots/visualization_{db_name}_{graph_id_string}.pdf').exists():
+    if not Path(f'results/base_paper/classification/Latex/Plots/visualization_{db_name}_{graph_id_string}.pdf').exists():
         #mpl.use("pgf")
         import matplotlib.pyplot as plt
 
@@ -243,9 +243,9 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
         plt.rcParams['axes.spines.right'] = False
         plt.rcParams['axes.spines.top'] = False
         plt.rcParams['axes.spines.bottom'] = False
-        #experiment = ExperimentMain(Path('paper_experiments/classification/configs/main_config_fair_real_world.yml'))
-        #experiment = ExperimentMain(Path('Examples/TUExample/classification/configs/config_main.yml'))
-        experiment = ExperimentMain(Path(path))
+        #experiment = FrameworkMain(Path('experiments/base_paper/classification/configs/main_config_fair_real_world.yml'))
+        #experiment = FrameworkMain(Path('Examples/TUExample/classification/configs/config_main.yml'))
+        experiment = FrameworkMain(Path(path))
 
         net = experiment.load_model(db_name=db_name, run_id=0, validation_id=0, best=True)
         num_convolution_layers = 0
@@ -273,8 +273,8 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
             GraphDrawing(node_size=160, edge_width=1, weight_edge_width=2.5, weight_arrow_size=10, draw_type=draw_type)
         )
 
-        Path('paper_experiments/Results/Latex/Plots/Positions/').mkdir(exist_ok=True, parents=True)
-        save_pos_path = Path('paper_experiments/Results/Latex/Plots/Positions/')
+        Path('results/base_paper/classification/Latex/Plots/Positions/').mkdir(exist_ok=True, parents=True)
+        save_pos_path = Path('results/base_paper/classification/Latex/Plots/Positions/')
 
         if len(graph_ids) == 1:
             pos_path = save_pos_path.joinpath(f'{db_name}_{graph_ids[0]}_pos.txt')
@@ -355,7 +355,7 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
                 axs[idx][0].set_ylabel(f'Graph Label: ${net.graph_data.y[graph_id].item()}$')
 
 
-        plt.savefig(f'paper_experiments/Results/Latex/Plots/visualization_{db_name}_{graph_id_string}.pdf', bbox_inches='tight', backend='pgf')
+        plt.savefig(f'results/base_paper/classification/Latex/Plots/visualization_{db_name}_{graph_id_string}.pdf', bbox_inches='tight', backend='pgf')
         # remove matplotlib frame
         # remove frame from each side of plot
         plt.rcParams['axes.spines.left'] = True
@@ -366,7 +366,7 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
 
 def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_size=200, output_path=None):
     if output_path is None:
-        output_path = Path(f'paper_experiments/Results/Latex/Plots/')
+        output_path = Path(f'results/base_paper/classification/Latex/Plots/')
     else:
         output_path = Path(output_path)
     if not output_path.joinpath(f'{db_name}_{"_".join(map(str, graph_ids))}.pdf').exists():
@@ -395,7 +395,7 @@ def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_
         plt.rcParams['axes.spines.top'] = False
         plt.rcParams['axes.spines.bottom'] = False
 
-        experiment = ExperimentMain(Path(path))
+        experiment = FrameworkMain(Path(path))
         net = experiment.load_model(db_name=db_name, run_id=0, validation_id=0, best=True)
 
         fig, ax = plt.subplots(1, len(graph_ids), figsize=(5*len(graph_ids), 5*1))
@@ -426,7 +426,7 @@ def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_
         plt.rcParams['axes.spines.bottom'] = True
 
 def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, channel=0, appendix='') -> np.ndarray:
-    if not Path(f'paper_experiments/Results/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png').exists():
+    if not Path(f'results/base_paper/classification/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png').exists():
 
         plt.rcParams.update({
             "font.family": "serif",  # use serif/main font for text elements
@@ -494,12 +494,12 @@ def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, chann
 
         #plt.title('Number of occurrences per rule')
         # use pgf backend for latex
-        plt.savefig(f'paper_experiments/Results/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png', bbox_inches='tight')
+        plt.savefig(f'results/base_paper/classification/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png', bbox_inches='tight')
         return sort_indices, steps
     return None
 
 def rules_vs_weights(layer:InvariantBasedMessagePassingLayer, sort_indices:np.ndarray, steps,db_name, channel=0, appendix=''):
-    if not Path(f'paper_experiments/Results/Latex/Plots/weights_per_rule_{db_name}{appendix}.png').exists():
+    if not Path(f'results/base_paper/classification/Latex/Plots/weights_per_rule_{db_name}{appendix}.png').exists():
         weights = layer.Param_W.detach().cpu().numpy()
         weights = weights[sort_indices]
         # colors from tab20
@@ -531,16 +531,16 @@ def rules_vs_weights(layer:InvariantBasedMessagePassingLayer, sort_indices:np.nd
         # plt.title(f'{dataset}')
 
         #plt.title('Distribution of rules')
-        plt.savefig(f'paper_experiments/Results/Latex/Plots/weights_per_rule_{db_name}{appendix}.png', bbox_inches='tight')
+        plt.savefig(f'results/base_paper/classification/Latex/Plots/weights_per_rule_{db_name}{appendix}.png', bbox_inches='tight')
 
 
 def plot_shared_weights(path, db_name, appendix=''):
     if appendix != '':
         appendix = f'_{appendix}'
-    paths = [f'paper_experiments/Results/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png',
-             f'paper_experiments/Results/Latex/Plots/weights_per_rule_{db_name}{appendix}.png']
+    paths = [f'results/base_paper/classification/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png',
+             f'results/base_paper/classification/Latex/Plots/weights_per_rule_{db_name}{appendix}.png']
     if not all([Path(p).exists() for p in paths]):
-        experiment = ExperimentMain(Path(path))
+        experiment = FrameworkMain(Path(path))
         net = experiment.load_model(db_name=db_name, best=True)
         convolution_layer = net.net_layers[0]
         channel = 0
@@ -551,15 +551,15 @@ def plot_shared_weights(path, db_name, appendix=''):
 
 def main():
     # create Latex dir under Results
-    Path('paper_experiments/Results/Latex').mkdir(parents=True, exist_ok=True)
-    Path('paper_experiments/Results/Latex/Plots').mkdir(parents=True, exist_ok=True)
-    plot_network_path = 'paper_experiments/classification/configs/main_config_fair_real_world.yml'
-    plot_network_path_random = 'paper_experiments/classification/configs/main_config_fair_real_world_random_variation.yml'
-    plot_network_path_synthetic = 'paper_experiments/classification/configs/main_config_fair_synthetic.yml'
-    plot_regression_path = 'paper_experiments/regression/ZINC/configs/main_config_ZINC.yml'
+    Path('results/base_paper/classification/Latex').mkdir(parents=True, exist_ok=True)
+    Path('results/base_paper/classification/Latex/Plots').mkdir(parents=True, exist_ok=True)
+    plot_network_path = 'experiments/base_paper/classification/configs/main_config_fair_real_world.yml'
+    plot_network_path_random = 'experiments/base_paper/classification/configs/main_config_fair_real_world_random_variation.yml'
+    plot_network_path_synthetic = 'experiments/base_paper/classification/configs/main_config_fair_synthetic.yml'
+    plot_regression_path = 'experiments/base_paper/regression/ZINC/configs/main_config_ZINC.yml'
 
-    plot_network_path_ablation_threshold = lambda x : f'paper_experiments/classification/configs/ablation/threshold/lower/main_config_ablation_threshold_{x}.yml'
-    plot_network_path_ablation_distance = 'paper_experiments/classification/configs/ablation/distances/main_config_ablation_distances.yml'
+    plot_network_path_ablation_threshold = lambda x : f'experiments/base_paper/classification/configs/ablation/threshold/lower/main_config_ablation_threshold_{x}.yml'
+    plot_network_path_ablation_distance = 'experiments/base_paper/classification/configs/ablation/distances/main_config_ablation_distances.yml'
 
 
     plot_network(plot_regression_path, 'ZINC', [500], draw_type='kawai', filtering=[None, {'absolute' : 3}], molecule=True, headers=False)

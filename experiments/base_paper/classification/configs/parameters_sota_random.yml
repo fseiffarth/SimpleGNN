@@ -1,0 +1,29 @@
+# SOTA-comparison TU hyperparameters (migrated from old monolithic main config).
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+
+loss:
+  - CrossEntropyLoss
+
+convolution_grad: True
+aggregation_grad: True
+
+rule_occurrence_threshold: 1
+
+weight_initialization: { convolution: { type: 'constant', value: 0.001 },
+                         convolution_bias: { type: 'constant', value: 0.0 },
+                         aggregation: { type: 'constant', value: 0.001 },
+                         aggregation_bias: { type: 'constant', value: 0.0 } }
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.01
+epochs:
+  - 50
+
+input_features: { name: constant, value: 1.0, random_variation: { mean: 0.0, variance: 0.5 } }

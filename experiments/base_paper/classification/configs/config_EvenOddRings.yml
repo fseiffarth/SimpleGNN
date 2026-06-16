@@ -1,32 +1,32 @@
-networks:
-  - - { layer_type: invariant_based_convolution,
-        activation: 'tanh',
-        bias: False,
-        heads: [1],
-        labels: [
-          { label_type: primary}
-        ],
-        properties: [
-          { name: distances, values: [ 8 ] }
-        ]
-      }
-    - { layer_type: invariant_based_convolution,
-        activation: 'tanh',
-        bias: False,
-        heads: [1],
-        labels: [
-          { label_type: primary}
-        ],
-        properties: [
-          { name: distances, values: [ 4 ] }
-        ]
-    }
-    - { layer_type: invariant_based_aggregation,
-        activation: 'tanh',
-        bias: True,
-        heads: [1],
-        labels: [
-          { label_type: primary }
-        ]
-    }
-    - { layer_type: reshape }
+# Migrated from old-schema network config (see MIGRATION_PLAN.md).
+models:
+- - layer_type: invariant_based_convolution
+    activation: torch.nn.Tanh()
+    bias: false
+    heads:
+    - 1
+    labels:
+    - label_type: primary
+    properties:
+    - name: distances
+      values:
+      - 8
+  - layer_type: invariant_based_convolution
+    activation: torch.nn.Tanh()
+    bias: false
+    heads:
+    - 1
+    labels:
+    - label_type: primary
+    properties:
+    - name: distances
+      values:
+      - 4
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Tanh()
+    bias: true
+    heads:
+    - 1
+    labels:
+    - label_type: primary
+  - layer_type: reshape

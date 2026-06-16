@@ -219,6 +219,8 @@ results/
 .auto-claude-security.json
 .auto-claude-status
 .claude_settings.json
+# Machine-local Claude Code settings (keep .claude/CLAUDE.md tracked)
+.claude/settings.local.json
 .worktrees/
 .security-key
 logs/security/
