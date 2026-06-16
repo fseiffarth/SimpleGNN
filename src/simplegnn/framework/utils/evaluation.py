@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
@@ -698,6 +699,207 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
                     f.write(f'{config_id},{summary_best_model_mean["Epoch Mean"]},{summary_best_model_mean["Epoch Std"]},{summary_best_model_mean["Epoch Accuracy Mean"]},{summary_best_model_mean["Epoch Accuracy Std"]},{summary_best_model_mean["Epoch Loss Mean"]},{summary_best_model_mean["Epoch Loss Std"]},{summary_best_model_mean["Validation Accuracy Mean"]},{summary_best_model_mean["Validation Accuracy Std"]},{summary_best_model_mean["Validation Loss Mean"]},{summary_best_model_mean["Validation Loss Std"]},{summary_best_model_mean["Test Accuracy Mean"]},{summary_best_model_mean["Test Accuracy Std"]},{summary_best_model_mean["Test Loss Mean"]},{summary_best_model_mean["Test Loss Std"]}')
 
     return best_configuration_id
+
+
+def fair_model_selection_evaluation(db_name, evaluate_best_model=False, experiment_config=None,
+                                    get_best_per_fold=False, print_results=False):
+    """
+    Errica-style "fair" per-fold model selection and assessment.
+
+    Implements the fair comparison protocol of Errica et al., *"A Fair Comparison
+    of Graph Neural Networks for Graph Classification"* (ICLR 2020,
+    arXiv:1912.09893): a 10-fold outer cross-validation for model *assessment*,
+    with an independent inner model *selection* inside each outer fold. Unlike the
+    global :func:`model_selection_evaluation` (which picks a single best
+    configuration shared by every fold), this function may select a **different**
+    best hyperparameter configuration per fold and reports the test estimate as
+    mean +/- std **across folds**.
+
+    The per-fold ``validation`` split is the inner-holdout selection signal and the
+    per-fold ``test`` split is the outer assessment. Selection and best-epoch logic
+    mirror :func:`model_selection_evaluation` exactly so behaviour matches the
+    global path; only the *aggregation* differs (group by fold, select per fold).
+
+    Parameters
+    ----------
+    db_name : str
+        Dataset name. Results are expected at <results_path>/<db_name>/Results/.
+    evaluate_best_model : bool, optional
+        If False (default), compute the fair estimate directly from the grid result
+        CSVs (files *without* ``Best_Configuration`` in the name), using the grid
+        runs as the per-fold runs. If True, aggregate the per-fold re-run files
+        tagged ``Best_Configuration_Fair`` produced by
+        ``run_best_configuration_fair``.
+    experiment_config : dict
+        Experiment configuration; uses ``['paths']['results']`` and
+        ``get('evaluation_type', 'accuracy')`` ('accuracy' or 'loss').
+    get_best_per_fold : bool, optional
+        If True, return ``{validation_id: config_id}`` mapping each outer fold to its
+        selected configuration id (used by the per-fold re-run). Default: False.
+    print_results : bool, optional
+        If True, print progress to console. Default: False.
+
+    Returns
+    -------
+    dict or int
+        If ``get_best_per_fold=True``: ``{validation_id (int): config_id (int)}``.
+        Otherwise the number of folds evaluated (0 if no results found).
+
+    Notes
+    -----
+    **Output files** (written next to ``summary.csv``):
+
+    - ``summary_fair.csv`` (or ``summary_fair_best.csv`` when
+      ``evaluate_best_model=True``): one row per outer fold for the selected config
+      with columns ``ValidationNumber, ConfigurationId, N_runs, Validation Accuracy
+      Mean/Std, Validation Loss Mean/Std, Test Accuracy Mean/Std, Test Loss
+      Mean/Std, Epoch``.
+    - ``summary_fair_mean.csv`` (or ``summary_fair_best_mean.csv``): the headline
+      Errica number -- ``Test Accuracy Mean/Std`` are the cross-fold mean/std of the
+      per-fold selected test accuracy, plus cross-fold validation accuracy/loss and
+      the list of selected config ids.
+
+    See Also
+    --------
+    model_selection_evaluation : Global (single best config) model selection.
+    """
+    result_path = Path(os.path.abspath(experiment_config['paths']['results']))
+    evaluation_type = experiment_config.get('evaluation_type', 'accuracy')
+    if print_results:
+        print(f"Fair Model Selection Evaluation for {db_name}")
+
+    search_path = result_path.joinpath(db_name).joinpath('Results')
+    if not search_path.exists():
+        print(f"Path {search_path} does not exist")
+        return {} if get_best_per_fold else 0
+
+    # load the relevant per-run CSVs
+    db = None
+    for file in os.listdir(search_path):
+        if file.find('run_id') == -1 or file.find('validation_step') == -1 or not file.endswith(".csv"):
+            continue
+        is_fair_best = file.find('Best_Configuration_Fair') != -1
+        if evaluate_best_model:
+            if not is_fair_best:
+                continue
+            # name: <db>_Best_Configuration_Fair_<id>_Results_...
+            config_id = int(file.split('Fair_')[-1].split('_')[0])
+        else:
+            # skip any best-configuration re-run files; keep only grid results
+            if file.find('Best_Configuration') != -1:
+                continue
+            config_id = int(file.split('Configuration_')[-1].split('_')[0])
+        df_local = pd.read_csv(search_path.joinpath(file), delimiter=";")
+        df_local['ConfigurationId'] = config_id
+        db = df_local if db is None else pd.concat([db, df_local], ignore_index=True)
+
+    if db is None:
+        if evaluate_best_model:
+            print(f"No files found for {db_name} with Best_Configuration_Fair")
+        else:
+            print(f"No files found for {db_name}")
+        return {} if get_best_per_fold else 0
+
+    # find column name that contains EpochLoss (header has variable spacing)
+    epoch_loss_column_name = None
+    for col in db.columns:
+        if 'EpochLoss' in col:
+            epoch_loss_column_name = col
+            break
+    if epoch_loss_column_name is None:
+        print("No column found that contains 'EpochLoss'")
+        return {} if get_best_per_fold else 0
+
+    # best epoch per (config, run, fold) -- identical criterion to the global path
+    indices = []
+    for name, group in db.groupby(['ConfigurationId', 'RunNumber', 'ValidationNumber']):
+        if is_pruning(experiment_config):
+            group = group[group['Epoch'] >= group['Epoch'].max() - experiment_config['pruning']['pruning_step']]
+        if evaluation_type == 'loss':
+            best_metric = group['ValidationLoss'].min()
+            max_row = group[group['ValidationLoss'] == best_metric]
+        else:
+            best_metric = group['ValidationAccuracy'].max()
+            max_row = group[group['ValidationAccuracy'] == best_metric]
+        # ties broken by lowest validation loss (last occurrence), as in the global path
+        min_val_loss = max_row['ValidationLoss'].min()
+        max_row = max_row[max_row['ValidationLoss'] == min_val_loss]
+        indices.append(max_row.iloc[-1].name)
+
+    df_best = db.loc[indices]
+
+    # aggregate over runs within each (fold, config)
+    per_fold_config_rows = []
+    for (config_id, validation_id), group in df_best.groupby(['ConfigurationId', 'ValidationNumber']):
+        # sizes are constant within a fold, so a plain mean over runs is exact
+        per_fold_config_rows.append({
+            'ValidationNumber': int(validation_id),
+            'ConfigurationId': int(config_id),
+            'N_runs': int(group['RunNumber'].nunique()),
+            'Validation Accuracy Mean': group['ValidationAccuracy'].mean(),
+            'Validation Accuracy Std': group['ValidationAccuracy'].std(ddof=0),
+            'Validation Loss Mean': group['ValidationLoss'].mean(),
+            'Validation Loss Std': group['ValidationLoss'].std(ddof=0),
+            'Test Accuracy Mean': group['TestAccuracy'].mean(),
+            'Test Accuracy Std': group['TestAccuracy'].std(ddof=0),
+            'Test Loss Mean': group['TestLoss'].mean(),
+            'Test Loss Std': group['TestLoss'].std(ddof=0),
+            'Epoch': group['Epoch'].mean(),
+        })
+    per_fold_config = pd.DataFrame(per_fold_config_rows)
+
+    # per-fold model selection: best config by validation metric (tie -> loss)
+    selected_rows = []
+    best_per_fold = {}
+    for validation_id, fold_group in per_fold_config.groupby('ValidationNumber'):
+        if evaluation_type == 'loss':
+            candidates = fold_group[fold_group['Validation Loss Mean'] == fold_group['Validation Loss Mean'].min()]
+            if candidates.shape[0] > 1:
+                candidates = candidates[candidates['Validation Accuracy Mean'] == candidates['Validation Accuracy Mean'].max()]
+        else:
+            candidates = fold_group[fold_group['Validation Accuracy Mean'] == fold_group['Validation Accuracy Mean'].max()]
+            if candidates.shape[0] > 1:
+                candidates = candidates[candidates['Validation Loss Mean'] == candidates['Validation Loss Mean'].min()]
+        best_row = candidates.iloc[0]
+        selected_rows.append(best_row)
+        best_per_fold[int(validation_id)] = int(best_row['ConfigurationId'])
+
+    if get_best_per_fold:
+        return best_per_fold
+
+    selected = pd.DataFrame(selected_rows)
+    selected = selected.sort_values('ValidationNumber')
+
+    suffix = '_best' if evaluate_best_model else ''
+    per_fold_path = result_path.joinpath(db_name).joinpath(f'summary_fair{suffix}.csv')
+    mean_path = result_path.joinpath(db_name).joinpath(f'summary_fair{suffix}_mean.csv')
+
+    column_order = ['ValidationNumber', 'ConfigurationId', 'N_runs',
+                    'Validation Accuracy Mean', 'Validation Accuracy Std',
+                    'Validation Loss Mean', 'Validation Loss Std',
+                    'Test Accuracy Mean', 'Test Accuracy Std',
+                    'Test Loss Mean', 'Test Loss Std', 'Epoch']
+    selected[column_order].to_csv(per_fold_path, index=False)
+
+    # headline Errica number: mean +/- std across folds of the per-fold selected scores
+    selected_config_ids = ' '.join(str(int(c)) for c in selected['ConfigurationId'].values)
+    with open(mean_path, 'w') as f:
+        f.write('N_folds,Test Accuracy Mean,Test Accuracy Std,Test Loss Mean,Test Loss Std,'
+                'Validation Accuracy Mean,Validation Accuracy Std,Validation Loss Mean,Validation Loss Std,'
+                'Selected Configuration Ids\n')
+        f.write(f"{selected.shape[0]},"
+                f"{selected['Test Accuracy Mean'].mean()},{selected['Test Accuracy Mean'].std(ddof=0)},"
+                f"{selected['Test Loss Mean'].mean()},{selected['Test Loss Mean'].std(ddof=0)},"
+                f"{selected['Validation Accuracy Mean'].mean()},{selected['Validation Accuracy Mean'].std(ddof=0)},"
+                f"{selected['Validation Loss Mean'].mean()},{selected['Validation Loss Mean'].std(ddof=0)},"
+                f"{selected_config_ids}\n")
+
+    if print_results:
+        print(f"Fair test accuracy for {db_name}: "
+              f"{selected['Test Accuracy Mean'].mean():.4f} +/- {selected['Test Accuracy Mean'].std(ddof=0):.4f} "
+              f"across {selected.shape[0]} folds")
+
+    return selected.shape[0]
 
 
 def model_selection_evaluation_mae(db_name, path:Path, ids=None):

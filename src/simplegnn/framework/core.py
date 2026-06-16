@@ -54,7 +54,7 @@ from simplegnn.datasets.graph_dataset import GraphDataset, get_graph_data
 from simplegnn.framework.utils.configuration_checks import check_model_configuration_file, check_hyperparameter_configuration_file, \
     check_main_configuration_file
 from simplegnn.framework.model_configuration import ModelConfiguration
-from simplegnn.framework.utils.evaluation import model_selection_evaluation
+from simplegnn.framework.utils.evaluation import model_selection_evaluation, fair_model_selection_evaluation
 from simplegnn.framework.utils.load_model import load_model
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.framework.utils.preprocessing import Preprocessing, load_preprocessed_data_and_parameters, load_splits
@@ -475,6 +475,117 @@ class FrameworkMain:
                                                             validation_id=validation_id,
                                                             run_id=run_id,
                                                             config_id=config_id)
+                                                 for run_id, validation_id in parallelization_pairs)
+
+    def evaluate_results_fair(self, evaluate_best_model=False):
+        """
+        Errica-style "fair" per-fold model selection and assessment.
+
+        Companion to :meth:`evaluate_results` that implements the fair comparison
+        protocol of Errica et al. (ICLR 2020): an independent model selection inside
+        each outer fold, allowing a different best hyperparameter configuration per
+        fold, with the final test estimate reported as mean +/- std across folds.
+        The existing global evaluation path is left untouched.
+
+        Parameters
+        ----------
+        evaluate_best_model : bool, optional
+            - False: compute the fair estimate directly from the grid results,
+              using the grid runs (``num_runs``) as the per-fold runs (default).
+              Writes ``summary_fair.csv`` / ``summary_fair_mean.csv``.
+            - True: aggregate the per-fold re-runs produced by
+              :meth:`run_best_configuration_fair`. Writes ``summary_fair_best.csv``
+              / ``summary_fair_best_mean.csv``.
+
+        See Also
+        --------
+        evaluate_results : Global (single best config) model selection.
+        run_best_configuration_fair : Per-fold re-run of selected configurations.
+        framework.utils.evaluation.fair_model_selection_evaluation : Core evaluator.
+        """
+        # set omp_num_threads to 1 to avoid conflicts with OpenMP
+        os.environ['OMP_NUM_THREADS'] = '1'
+        suffix = '_best' if evaluate_best_model else ''
+        for dataset in self.network_configurations.keys():
+            for i, configuration in enumerate(self.network_configurations[dataset]):
+                out_path = configuration['paths']['results'].joinpath(dataset).joinpath(f'summary_fair{suffix}.csv')
+                if out_path.exists():
+                    print(f"Fair evaluation for dataset {dataset} already exists. Skipping the evaluation.")
+                    continue
+                if evaluate_best_model:
+                    print(f"Evaluate the fair per-fold re-runs of the experiment for dataset {dataset}")
+                else:
+                    print(f"Evaluate the fair per-fold results of the experiment for dataset {dataset}")
+                fair_model_selection_evaluation(db_name=dataset,
+                                                evaluate_best_model=evaluate_best_model,
+                                                experiment_config=configuration,
+                                                print_results=True)
+
+    def run_best_configuration_fair(self, num_threads=-1):
+        """
+        Re-run each fold's selected configuration for the fair protocol.
+
+        Companion to :meth:`run_best_configuration`. Instead of re-training a single
+        global best configuration on every fold, this retrieves the per-fold winners
+        from the fair evaluation (``{fold: config_id}``) and re-trains *that fold's*
+        configuration on *that fold* for ``evaluation_run_number`` runs (Errica's 3
+        final runs per fold). Output files are tagged ``Best_Configuration_Fair`` and
+        stay distinct per fold via the ``validation_step_{fold}`` filename suffix.
+        Parallelized over ``(fold, run)`` pairs exactly like
+        :meth:`run_best_configuration`.
+
+        Parameters
+        ----------
+        num_threads : int, optional
+            Number of parallel worker threads (-1 = all CPU cores, default).
+
+        See Also
+        --------
+        run_best_configuration : Global best-configuration re-run.
+        evaluate_results_fair : Fair per-fold model selection and assessment.
+        """
+        # set omp_num_threads to 1 to avoid conflicts with OpenMP
+        os.environ['OMP_NUM_THREADS'] = '1'
+        for dataset in self.network_configurations.keys():
+            for i, configuration in enumerate(self.network_configurations[dataset]):
+                print(f"Running fair per-fold experiment for dataset {dataset}")
+                # derive validation folds from the configuration file using the splits
+                validation_folds = len(configuration.get('splits', {}).get('validation', None))
+
+                evaluation_run_number = configuration.get('evaluation_run_number', 3)
+
+                # determine the number of parallel jobs
+                max_threads = os.cpu_count()
+                num_threads = min(configuration.get('num_workers', num_threads), num_threads)
+                if num_threads == -1:
+                    num_threads = max_threads
+
+                graph_data = preprocess_graph_data(configuration)
+                configuration['best_model'] = True
+
+                # get the per-fold selected configuration ids
+                best_per_fold = fair_model_selection_evaluation(db_name=dataset,
+                                                                get_best_per_fold=True,
+                                                                experiment_config=configuration)
+                if not best_per_fold:
+                    print(f"No fair per-fold selection found for dataset {dataset}. Run evaluate_results_fair() first.")
+                    continue
+
+                run_configs = get_run_configs(configuration)
+                # only re-run folds that have a selection (and exist in the splits)
+                parallelization_pairs = [(run_id, validation_id)
+                                         for run_id in range(evaluation_run_number)
+                                         for validation_id in range(validation_folds)
+                                         if validation_id in best_per_fold]
+                num_threads = min(num_threads, len(parallelization_pairs))
+                print(f"Run the fair per-fold models of dataset {dataset} using {evaluation_run_number} runs per fold. "
+                      f"The number of parallel jobs is {num_threads}")
+                joblib.Parallel(n_jobs=num_threads)(joblib.delayed(self.run_configuration)(
+                                                            graph_data=graph_data,
+                                                            run_config=run_configs[best_per_fold[validation_id]],
+                                                            validation_id=validation_id,
+                                                            run_id=run_id,
+                                                            config_id=f'Best_Configuration_Fair_{str(best_per_fold[validation_id]).zfill(6)}')
                                                  for run_id, validation_id in parallelization_pairs)
 
     def merge_configuration_files(self, dataset_configuration):
