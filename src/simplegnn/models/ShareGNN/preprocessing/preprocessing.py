@@ -164,8 +164,13 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
                     raise ValueError(
                         f'Please specify the subgraphs in the config files under the key "subgraphs" as folllows: subgraphs: - "[nx.complete_graph(4)]"')
                 else:
-                    import ast
-                    subgraph_list = ast.literal_eval(experiment_configuration['subgraphs'][layer['id']])
+                    import networkx as nx
+                    # The subgraph specs are strings like "[nx.complete_graph(4)]"
+                    # (see the format documented in the ValueError above), so they
+                    # must be evaluated with networkx in scope rather than parsed as
+                    # plain literals.
+                    subgraph_list = eval(
+                        experiment_configuration['subgraphs'][layer['id']], {'nx': nx})
                     file_path = save_subgraph_labels(graph_data=graph_data,
                                                      subgraphs=subgraph_list,
                                                      subgraph_id=layer['id'],
