@@ -325,7 +325,7 @@ experiment.evaluate_results(evaluate_best_model=True)  # Final test-set evaluati
 - **Main branch**: `main`
 - **Commit messages**: Imperative mood, descriptive ("Refactor linear layer implementation to support 'aggr_channels' mode")
 - **Tests**: A `pytest` suite lives in `tests/` (unit tests + import/API smoke tests). Integration experiments (example scripts and `experiments/` shell scripts) remain the end-to-end check. Run `pytest tests -q` before opening a PR.
-- **Gitignored**: `data/`, `results/`, `*.csv`, `venv/`, `__pycache__/`, `.auto-claude/`, `.claude_settings.json`, `.claude/settings.local.json`. Note: `.idea/` and the agent docs (`AGENTS.md`, `.claude/CLAUDE.md`) **are** tracked.
+- **Gitignored**: `data/`, `results/`, `*.csv`, `venv/`, `__pycache__/`, `.auto-claude/`, `.claude_settings.json`, `.claude/settings.local.json`, `.idea/` (untracked — it held personal SFTP deployment config, not shared settings). Note: the agent docs (`AGENTS.md`, `.claude/CLAUDE.md`) **are** tracked.
 
 ---
 
