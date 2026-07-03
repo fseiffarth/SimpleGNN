@@ -221,6 +221,9 @@ results/
 .claude_settings.json
 # Machine-local Claude Code settings (keep .claude/CLAUDE.md tracked)
 .claude/settings.local.json
+# Machine-local agent-runner artifacts
+project.json
+.eldrun/
 .worktrees/
 .security-key
 logs/security/
