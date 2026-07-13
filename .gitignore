@@ -224,9 +224,13 @@ results/
 .worktrees/
 .security-key
 logs/security/
+
+# Machine-local agent-runner artifacts
+project.json
+.eldrun/
+
+# Machine-local IDE/tooling artifacts
 .ai
-.github
-/tmp/
 /.ai/
-/.github/
 /.idea/
+/tmp/
