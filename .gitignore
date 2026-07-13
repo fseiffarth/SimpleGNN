@@ -234,3 +234,7 @@ project.json
 /.ai/
 /.idea/
 /tmp/
+
+# Regenerable TU dataset split files (~380MB; regenerate with
+# src/simplegnn/utils/tu_splits.py)
+src/simplegnn/datasets/splits/tu_splits/
