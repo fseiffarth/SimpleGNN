@@ -230,3 +230,7 @@ logs/security/
 /.ai/
 /.github/
 /.idea/
+
+# Local editor/runner state
+.eldrun/
+project.json
