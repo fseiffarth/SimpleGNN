@@ -1,6 +1,11 @@
 # General options
 
 device: cpu
+# batched ShareGNN forward: process all graphs of a batch jointly (one matmul per
+# invariant layer instead of one per graph) — recommended on both GPU and CPU.
+# mode (auto|dense|sparse) picks the batched implementation; auto = padded dense
+# on CPU, block-diagonal sparse on GPU. See specs/07-batched-share-gnn-forward.md
+# share_gnn_forward: { batched: True }
 mode: experiments # if debug printing and plotting options are enabled, for the experiments mode should be 'experiments'
 precision: double
 

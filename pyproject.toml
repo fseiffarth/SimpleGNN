@@ -49,6 +49,10 @@ include = ["simplegnn*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# speed benchmarks take minutes and are excluded from the default run;
+# select them explicitly with `pytest -m speed`
+addopts = "-m 'not speed'"
 markers = [
     "integration: exercises a full FrameworkMain pipeline end-to-end (slower, needs network for dataset download)",
+    "speed: benchmarks runtime of a training configuration (minutes, not run by default; select with -m speed)",
 ]

@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 import hashlib
 import json
 
@@ -19,7 +19,7 @@ from simplegnn.datasets.utils.NodeLabels import NodeLabels
 from simplegnn.datasets.utils.graph_drawing import GraphDrawing
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
-from simplegnn.models.ShareGNN.utils import Layer
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos
 
 
 class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
@@ -485,11 +485,18 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # (sparse construction overhead dominates) while sparse wins for large
         # ones (no (H, N, N) allocation; ~6x faster at N=1024).
         forward_config = self.para.run_config.config.get('share_gnn_forward', None) or {}
-        self.forward_mode = forward_config.get('mode', 'auto')
+        self.forward_mode_config = forward_config.get('mode', 'auto')
+        if self.forward_mode_config not in ('auto', 'sparse', 'dense'):
+            raise ValueError(f"share_gnn_forward.mode must be 'auto', 'sparse' or 'dense', got '{self.forward_mode_config}'")
+        self.forward_mode = self.forward_mode_config
         if self.forward_mode == 'auto':
             self.forward_mode = 'sparse' if max(self._num_nodes_list, default=0) >= 256 else 'dense'
-        if self.forward_mode not in ('sparse', 'dense'):
-            raise ValueError(f"share_gnn_forward.mode must be 'auto', 'sparse' or 'dense', got '{self.forward_mode}'")
+        # The *batched* forward has its own mode (see _use_dense_batch): the two
+        # implementations trade off differently than in the per-graph case, and
+        # the winner depends on the device, so 'auto' is resolved per forward.
+        self._dense_batch_max_nodes = forward_config.get('dense_batch_max_nodes', 256)
+        self._dense_batch_max_bytes = forward_config.get('dense_batch_max_bytes', 128 * 1024 ** 2)
+        self._precision_itemsize = torch.empty(0, dtype=self.precision).element_size()
         # Per-forward wall-clock timing is pure overhead (and misleading on
         # CUDA without a synchronize) — gate it behind a config flag.
         self.profile_layers = self.para.run_config.config.get('profile_layers', False)
@@ -527,6 +534,21 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         self.register_buffer('_fwd_param_idx', weight_distribution[order, 3].contiguous(), persistent=False)
         # per-graph offsets as plain ints (Python slicing, no device syncs)
         self._fwd_slices = [int(x) for x in self.weight_distribution_slices]
+
+        # Second, NODE-MAJOR ordering for the batched forward: row = i * H + h.
+        # With node-major rows the global row of graph g becomes
+        # o_g * H + local_row (o_g = node offset in the batch), so concatenated
+        # per-graph blocks occupy strictly increasing row ranges and the batch
+        # block-diagonal COO can be built with is_coalesced=True as well.
+        rows_b = weight_distribution[:, 1] * self.num_heads + weight_distribution[:, 0]
+        linear_b = rows_b * n_per_row + cols
+        max_linear_b = int(linear_b.max().item()) + 1 if linear_b.numel() > 0 else 1
+        order_b = torch.argsort(graph_per_row * max_linear_b + linear_b)
+        self.register_buffer('_fwd_b_rows', rows_b[order_b].contiguous(), persistent=False)
+        self.register_buffer('_fwd_b_cols', cols[order_b].contiguous(), persistent=False)
+        self.register_buffer('_fwd_b_param_idx', weight_distribution[order_b, 3].contiguous(), persistent=False)
+        if self.bias:
+            self._bias_slices = [int(x) for x in self.bias_distribution_slices]
 
     def _get_layer_cache_path(self) -> Path:
         """
@@ -987,6 +1009,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         """
         # get pos from kwargs
         pos = kwargs.get('pos', 0)
+        if is_batched_pos(pos):
+            return self._forward_batched(node_representation, pos)
         begin = time.time() if self.profile_layers else None
         num_nodes = self._num_nodes_list[pos]
         if self.forward_mode == 'sparse':
@@ -1013,6 +1037,164 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         if self.profile_layers:
             self.forward_step_time += time.time() - begin
         return node_representation
+
+    def _use_dense_batch(self, device: torch.device, batch_size: int, max_nodes: int) -> bool:
+        """
+        Pick the batched implementation: padded dense or block-diagonal sparse.
+
+        Unlike the per-graph case, the winner depends on the *device*, so
+        ``mode: auto`` is resolved here instead of in __init__ (measured on
+        NCI1, 64 graphs of <= 93 nodes, one conv layer, forward+backward):
+
+            implementation            CPU        GPU (Radeon 890M)
+            per-graph dense         11.3 ms      15.8 ms
+            batched sparse          40.8 ms       6.2 ms
+            batched padded-dense     3.1 ms       7.6 ms
+
+        On CPU the padded (B, H, N_max, N_max) matmul goes through BLAS and
+        beats both the sparse mm and the per-graph loop; on GPU the sparse
+        block-diagonal mm wins because it does not pay for the padding, and
+        kernel-launch overhead (the reason batching helps there) is already
+        gone. An explicit ``mode`` overrides this choice.
+
+        Dense padding costs B * H * N_max^2 elements, which grows quadratically
+        with the largest graph in the batch, so ``auto`` also falls back to
+        sparse beyond ``dense_batch_max_nodes`` nodes or
+        ``dense_batch_max_bytes`` of padded weights.
+        """
+        if self.forward_mode_config == 'sparse':
+            return False
+        if self.forward_mode_config == 'dense':
+            return True
+        if device.type != 'cpu':
+            return False
+        if max_nodes >= self._dense_batch_max_nodes:
+            return False
+        dense_bytes = batch_size * self.num_heads * max_nodes * max_nodes * self._precision_itemsize
+        return dense_bytes <= self._dense_batch_max_bytes
+
+    def _forward_batched(self, node_representation: torch.Tensor, positions) -> torch.Tensor:
+        """
+        Batched forward over several graphs at once.
+
+        ``node_representation`` must be the row-wise concatenation of the batch
+        graphs' node features, in the order given by ``positions`` (duplicate
+        graph ids are allowed and get independent node blocks). Returns the
+        concatenated per-node output, shape (sum(N_g), F * H) — row-identical to
+        running the per-graph forward on each graph. Both implementations
+        (see _use_dense_batch) produce bit-identical results.
+        """
+        begin = time.time() if self.profile_layers else None
+        positions = [int(p) for p in positions]
+        sizes = [self._num_nodes_list[p] for p in positions]
+        node_offsets = [0]
+        for size in sizes:
+            node_offsets.append(node_offsets[-1] + size)
+
+        if self._use_dense_batch(node_representation.device, len(positions), max(sizes, default=0)):
+            out = self._batched_dense_messages(node_representation, positions, sizes, node_offsets)
+        else:
+            out = self._batched_sparse_messages(node_representation, positions, node_offsets)
+
+        if self.bias:
+            out = out + self._batched_bias(positions, node_offsets, out.device)
+
+        # (N, H, F) -> (N, F, H) -> (N, F*H): same output layout as the
+        # per-graph path's (H, N, F).permute(1, 2, 0).flatten(1)
+        out = self.activation(out.permute(0, 2, 1).flatten(start_dim=1))
+        if self.profile_layers:
+            self.forward_step_time += time.time() - begin
+        return out
+
+    def _batched_sparse_messages(self, node_representation: torch.Tensor, positions: List[int],
+                                 node_offsets: List[int]) -> torch.Tensor:
+        """One block-diagonal sparse mm over the concatenated batch nodes -> (N_total, H, F)."""
+        device = node_representation.device
+        num_heads = self.num_heads
+        total_nodes = node_offsets[-1]
+        offsets = torch.as_tensor(node_offsets[:-1], dtype=torch.int64, device=device)
+
+        # concatenate the node-major per-graph index blocks and shift them by
+        # the batch node offsets (rows are node-major, see
+        # _build_forward_index_structures, so the result stays sorted/coalesced)
+        nnz = torch.as_tensor([self._fwd_slices[p + 1] - self._fwd_slices[p] for p in positions],
+                              dtype=torch.int64, device=device)
+        rows = torch.cat([self._fwd_b_rows[self._fwd_slices[p]:self._fwd_slices[p + 1]] for p in positions])
+        cols = torch.cat([self._fwd_b_cols[self._fwd_slices[p]:self._fwd_slices[p + 1]] for p in positions])
+        param_idx = torch.cat([self._fwd_b_param_idx[self._fwd_slices[p]:self._fwd_slices[p + 1]] for p in positions])
+        rows = rows + torch.repeat_interleave(offsets * num_heads, nnz)
+        cols = cols + torch.repeat_interleave(offsets, nnz)
+
+        # gathering from Param_W every forward keeps the graph differentiable
+        values = self.Param_W[param_idx]
+        current_W = torch.sparse_coo_tensor(torch.stack([rows, cols]), values,
+                                            (total_nodes * num_heads, total_nodes),
+                                            is_coalesced=True)
+        return torch.sparse.mm(current_W, node_representation).view(total_nodes, num_heads, -1)
+
+    def _batched_dense_messages(self, node_representation: torch.Tensor, positions: List[int],
+                                sizes: List[int], node_offsets: List[int]) -> torch.Tensor:
+        """
+        Pad the batch to (B, H, N_max, N_max) @ (B, 1, N_max, F) -> (N_total, H, F).
+
+        Uses the raw (head, i, j, param_idx) rows of weight_distribution, so no
+        extra index buffers are needed. The padded rows/columns stay zero and
+        are dropped again when the per-node outputs are gathered back into the
+        concatenated (N_total, ...) layout, so the padding cannot leak between
+        graphs.
+        """
+        device = node_representation.device
+        num_heads = self.num_heads
+        batch_size = len(positions)
+        max_nodes = max(sizes, default=0)
+        total_nodes = node_offsets[-1]
+
+        counts = torch.as_tensor([self._fwd_slices[p + 1] - self._fwd_slices[p] for p in positions],
+                                 dtype=torch.int64, device=device)
+        blocks = torch.cat([self.weight_distribution[self._fwd_slices[p]:self._fwd_slices[p + 1]]
+                            for p in positions])
+        graph_slot = torch.repeat_interleave(
+            torch.arange(batch_size, dtype=torch.int64, device=device), counts)
+
+        # gathering from Param_W every forward keeps the graph differentiable
+        current_W = torch.zeros((batch_size, num_heads, max_nodes, max_nodes),
+                                dtype=self.precision, device=device)
+        current_W[graph_slot, blocks[:, 0], blocks[:, 1], blocks[:, 2]] = self.Param_W[blocks[:, 3]]
+
+        # scatter the concatenated node features into the padded (B, N_max, F) layout
+        node_slot, local_index = self._batched_node_index(sizes, node_offsets, device)
+        padded_x = torch.zeros((batch_size, max_nodes, node_representation.shape[1]),
+                               dtype=self.precision, device=device)
+        padded_x[node_slot, local_index] = node_representation
+
+        out = torch.matmul(current_W, padded_x.unsqueeze(1))  # (B, H, N_max, F)
+        # gather the real nodes back, dropping the padding: -> (N_total, H, F)
+        return out[node_slot, :, local_index].view(total_nodes, num_heads, -1)
+
+    def _batched_node_index(self, sizes: List[int], node_offsets: List[int],
+                            device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+        """(batch slot, node index within its graph) for every row of the batch."""
+        sizes_tensor = torch.as_tensor(sizes, dtype=torch.int64, device=device)
+        offsets = torch.as_tensor(node_offsets[:-1], dtype=torch.int64, device=device)
+        node_slot = torch.repeat_interleave(
+            torch.arange(len(sizes), dtype=torch.int64, device=device), sizes_tensor)
+        local_index = (torch.arange(node_offsets[-1], dtype=torch.int64, device=device)
+                       - torch.repeat_interleave(offsets, sizes_tensor))
+        return node_slot, local_index
+
+    def _batched_bias(self, positions: List[int], node_offsets: List[int],
+                      device: torch.device) -> torch.Tensor:
+        """Scatter Param_b into the concatenated (N_total, H, F) bias tensor."""
+        bias_rows = torch.cat([self.bias_distribution[self._bias_slices[p]:self._bias_slices[p + 1]]
+                               for p in positions])
+        b_counts = torch.as_tensor([self._bias_slices[p + 1] - self._bias_slices[p] for p in positions],
+                                   dtype=torch.int64, device=device)
+        offsets = torch.as_tensor(node_offsets[:-1], dtype=torch.int64, device=device)
+        node_idx = bias_rows[:, 1] + torch.repeat_interleave(offsets, b_counts)
+        current_B = torch.zeros((node_offsets[-1], self.num_heads, self.in_features),
+                                dtype=self.precision, device=device)
+        current_B[node_idx, bias_rows[:, 0], bias_rows[:, 2]] = torch.take(self.Param_b, bias_rows[:, 3])
+        return current_B
 
 
     def get_weights(self):

@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from simplegnn.datasets.graph_dataset import GraphDataset
+from simplegnn.models.ShareGNN.utils import is_batched_pos
 from simplegnn.models.layers.framework_layer import FrameworkLayer
 
 
@@ -35,5 +36,8 @@ class Reshape(FrameworkLayer):
 
 
     def forward(self, node_representation:torch.Tensor, *args, **kwargs):
+        if is_batched_pos(kwargs.get('pos', None)):
+            # batched graph-level forward: keep the leading batch dimension
+            return node_representation.reshape([len(kwargs['pos'])] + list(self.shape))
         node_representation = node_representation.reshape(shape=self.shape)
         return node_representation

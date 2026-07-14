@@ -1,0 +1,66 @@
+# ShareGNN architecture used by tests/test_speed_share_gnn_nci1.py.
+#
+# Mirrors the examples/share_gnn_basic model (two invariant layers with a linear
+# layer in between), but sized for NCI1 (4110 molecules): cycle labels of length
+# 5-6 (the rings that occur in NCI1) plus primary labels, and distances up to 8.
+# Betweenness heads are deliberately left out: with 4110 graphs the fine-grained
+# betweenness bins produce a very large label alphabet, which blows up the
+# invariant weight tensors without adding anything to the speed comparison.
+models:
+  - - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 6 },
+              tail: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 6 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3,4,5,6,7,8 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: primary },
+              tail: { label_type: primary },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3 ] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Identity(),
+        bias: True,
+        heads: [
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: primary },
+          },
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: [ induced_cycles, primary ], min_cycle_length: 5, max_cycle_length: 6 },
+          },
+        ],
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }

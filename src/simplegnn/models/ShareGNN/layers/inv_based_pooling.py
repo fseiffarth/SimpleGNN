@@ -12,7 +12,7 @@ from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.graph_drawing import GraphDrawing
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
-from simplegnn.models.ShareGNN.utils import Layer
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos
 
 
 class InvariantBasedAggregationLayer(InvariantBasedLayer):
@@ -63,6 +63,8 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
                 weight_distribution[:, column_base + h_num] = indices + h_num * self.n_node_labels[head_id] + weight_base
         # Non-persistent buffer: moved by net.to(device), kept out of state_dict
         self.register_buffer('weight_distribution', weight_distribution, persistent=False)
+        # per-graph offsets as plain ints (Python slicing, no device syncs)
+        self._agg_slices = [int(x) for x in self.weight_distribution_slices]
 
 
 
@@ -159,6 +161,8 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
     def forward(self, node_representation:torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
         pos = kwargs.get('pos', 0)
+        if is_batched_pos(pos):
+            return self._forward_batched(node_representation, pos)
         begin = time.time() if self.profile_layers else None
         self.set_weights(pos)
         # (H, N) @ (N, F) -> (H, F); same as einsum('no,nf->of') with less dispatch overhead
@@ -170,6 +174,37 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         if self.profile_layers:
             self.forward_step_time += time.time() - begin
         return node_representation
+
+    def _forward_batched(self, node_representation: torch.Tensor, positions) -> torch.Tensor:
+        """
+        Batched aggregation over several graphs at once.
+
+        ``node_representation`` is the row-wise concatenation of the batch
+        graphs' node representations in the order given by ``positions``
+        (duplicates allowed). Computes out[b, h, f] = sum_{i in graph b}
+        W[i, h] * x[i, f] via a segment reduction and returns shape
+        (B, H * F) — row b equals the per-graph forward on positions[b].
+        """
+        begin = time.time() if self.profile_layers else None
+        device = node_representation.device
+        positions = [int(p) for p in positions]
+        counts = torch.as_tensor([self._agg_slices[p + 1] - self._agg_slices[p] for p in positions],
+                                 dtype=torch.int64, device=device)
+        weight_distr = torch.cat([self.weight_distribution[self._agg_slices[p]:self._agg_slices[p + 1]] for p in positions])
+        node_weights = self.Param_W[weight_distr]  # (total_nodes, H)
+        contributions = node_weights.unsqueeze(-1) * node_representation.unsqueeze(1)  # (total_nodes, H, F)
+        graph_idx = torch.repeat_interleave(
+            torch.arange(len(positions), dtype=torch.int64, device=device), counts)
+        out = torch.zeros((len(positions), self.num_heads, node_representation.shape[-1]),
+                          dtype=node_representation.dtype, device=device)
+        out.index_add_(0, graph_idx, contributions)
+        if self.bias:
+            out = out + self.Param_b
+        out = out.flatten(start_dim=1)
+        out = self.activation(out)
+        if self.profile_layers:
+            self.forward_step_time += time.time() - begin
+        return out
 
     def get_weights(self):
         return [x.item() for x in self.Param_W]

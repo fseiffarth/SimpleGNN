@@ -45,6 +45,7 @@ models.model.GraphModel : PyTorch model class
 """
 import datetime
 import os
+from types import SimpleNamespace
 from typing import Tuple
 
 import numpy as np
@@ -1260,8 +1261,36 @@ class ModelConfiguration:
         self._csv_buffer.clear()
 
 
+    def _share_gnn_batched_enabled(self) -> bool:
+        """True if the batched ShareGNN forward is enabled via
+        ``share_gnn_forward: {batched: true}`` in the configuration."""
+        forward_config = self.para.run_config.config.get('share_gnn_forward', None) or {}
+        return bool(forward_config.get('batched', False))
+
+    def _assemble_share_gnn_batch(self, graph_ids) -> Tuple[SimpleNamespace, list]:
+        """
+        Concatenate the node features of all graphs in the batch (in order,
+        duplicate ids allowed) and move them to the execution device in a
+        single transfer, so the whole batch is loaded to the GPU together.
+        Returns (batch_data, positions) for the batched ShareGNN forward.
+        """
+        slices = self.graph_data.slices['x']
+        x = self.graph_data.x
+        positions = [int(g) for g in graph_ids]
+        x_cat = torch.cat([x[int(slices[g]):int(slices[g + 1])] for g in positions])
+        if x_cat.device != self.device:
+            x_cat = x_cat.to(self.device)
+        return SimpleNamespace(x=x_cat), positions
+
     def train_graph_task(self, epoch, values, train_batches, timer):
-        loader = CustomBatchLoader(self.graph_data, train_batches)
+        with_invariant_layers = self.para.run_config.config.get('with_invariant_layers', True)
+        batched_share_gnn = with_invariant_layers and self._share_gnn_batched_enabled()
+        if batched_share_gnn:
+            # the batch features are assembled directly from the collated
+            # dataset tensors, no PyG batch collation needed
+            loader = train_batches
+        else:
+            loader = CustomBatchLoader(self.graph_data, train_batches)
         for batch_counter, batch in enumerate(loader, 0):
             batch_ids = train_batches[batch_counter]
             timer.measure("forward")
@@ -1270,12 +1299,18 @@ class ModelConfiguration:
 
 
             # Run ordinary GNN
-            if not self.para.run_config.config.get('with_invariant_layers', True):
+            if not with_invariant_layers:
                 timer.measure("forward_step")
                 outputs = self.net(batch)
                 timer.measure("forward_step")
+            elif batched_share_gnn:
+                # Batched Share GNN: all graphs of the batch are processed jointly
+                timer.measure("forward_step")
+                batch_data, positions = self._assemble_share_gnn_batch(batch_ids)
+                outputs = self.net(batch_data, pos=positions)
+                timer.measure("forward_step")
             else:
-                # Batch-wise processing for Share GNN is not possible (at the moment), so we process each graph individually
+                # Unbatched Share GNN: process each graph individually
                 for j, graph_id in enumerate(batch_ids, 0):
                     timer.measure("forward_step")
                     outputs[j] = self.net(self.graph_data[graph_id], pos=graph_id)
@@ -1344,6 +1379,14 @@ class ModelConfiguration:
                 for i, batch in enumerate(loader):
                     outputs[batch_counter:batch_counter + len(batch)] = self.net(batch_data=batch)
                     batch_counter += len(batch)
+            elif self._share_gnn_batched_enabled():
+                # Batched Share GNN: evaluate in eval_batch_size chunks
+                eval_batch_size = self.para.run_config.config.get('eval_batch_size', 512)
+                batch_counter = 0
+                for i in range(0, len(graph_ids), eval_batch_size):
+                    batch_data, positions = self._assemble_share_gnn_batch(graph_ids[i:i + eval_batch_size])
+                    outputs[batch_counter:batch_counter + len(positions)] = self.net(batch_data, pos=positions)
+                    batch_counter += len(positions)
             else:
                 # Run Share GNN (per-graph forward; the batch loader is not used here)
                 for j, data_pos in enumerate(graph_ids):

@@ -1,8 +1,21 @@
 from typing import Optional
 
+import numpy as np
+import torch
+
 from simplegnn.datasets.utils.node_labeling import get_label_string
 
 
+def is_batched_pos(pos) -> bool:
+    """
+    True if `pos` addresses multiple graphs at once (batched ShareGNN forward),
+    False for the classical single-graph forward where `pos` is an int.
+    """
+    if isinstance(pos, (list, tuple, np.ndarray)):
+        return True
+    if isinstance(pos, torch.Tensor):
+        return pos.dim() > 0
+    return False
 
 
 class LabelDict:
