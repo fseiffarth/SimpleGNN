@@ -30,7 +30,9 @@ class LinearLayer(FrameworkLayer):
         if self.mode == 'aggr_channels':
             self.out_channels = 1
             k = math.sqrt(1.0 / (self.num_heads * self.in_features))
-            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.in_features, self.out_features, dtype=self.precision), -k, k))
+            # The channels are flattened into the feature dimension before the
+            # matmul, so the weight matrix needs num_heads * in_features rows.
+            self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.num_heads * self.in_features, self.out_features, dtype=self.precision), -k, k))
             self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_features, dtype=self.precision), -k, k))
         elif self.mode == 'aggr_features':
             k = math.sqrt(1.0/self.in_features)
@@ -39,7 +41,9 @@ class LinearLayer(FrameworkLayer):
         elif self.mode == 'channel_wise':
             k = math.sqrt(1.0 / self.in_features)
             self.Param_W = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.num_heads, self.in_features, self.out_features, dtype=self.precision), -k, k))
-            self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.out_channels, self.out_features, dtype=self.precision), -k, k))
+            # One bias per channel; the singleton node dimension makes the add
+            # broadcast over N instead of colliding with it.
+            self.Param_b = nn.Parameter(torch.nn.init.uniform_(torch.zeros(self.num_heads, 1, self.out_features, dtype=self.precision), -k, k))
 
         self.layer = torch.nn.Linear(self.in_features, self.out_features, self.bias, self.device, self.precision)
 
@@ -53,13 +57,15 @@ class LinearLayer(FrameworkLayer):
             # apply linear transformation, input is (N, F) self.Param_W is (F, F') and output is (N, F')
             node_representation = node_representation @ self.Param_W
         elif self.mode == 'aggr_channels':
-            # merge channels and features and apply a single linear transformation, i.e., input is (C, N, F) -> (N, CxF) self.Param_W is (CxF, F') and output is (1, N, F')
-            # permute (C, N, F) to (N, C, F)
-            node_representation = node_representation.permute(1,0,2)
-            # convert to (N, CxF)
-            node_representation = node_representation.reshape(node_representation.shape[0], -1)
+            # merge channels and features and apply a single linear transformation, i.e., input is (C, N, F) -> (N, CxF) self.Param_W is (CxF, F') and output is (N, F')
+            # 2D input (N, CxF) arrives with the channels already flattened
+            # (e.g. from the invariant message-passing layers) and is used as is
+            if node_representation.dim() == 3:
+                # permute (C, N, F) to (N, C, F)
+                node_representation = node_representation.permute(1,0,2)
+                # convert to (N, CxF)
+                node_representation = node_representation.reshape(node_representation.shape[0], -1)
             node_representation = node_representation @ self.Param_W
-            #node_representation = node_representation.unsqueeze(0)
         elif self.mode == 'channel_wise':
             # apply a separate linear transformation to each head
             node_representation = node_representation @ self.Param_W

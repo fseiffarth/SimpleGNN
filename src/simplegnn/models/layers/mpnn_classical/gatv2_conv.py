@@ -12,7 +12,7 @@ class GATv2Conv(GNNConvLayer):
         self.gatv2_args = {
             'in_channels': layer_args.get('in_features'),
             'out_channels': layer_args.get('out_features'),
-            'heads': layer_args.get('heads', 1),
+            'heads': layer_args.get('num_heads', 1),  # 'num_heads' like GATConv; 'heads' is reserved for ShareGNN-style head lists in FrameworkLayer
             'concat': layer_args.get('concat', False),
             'negative_slope': layer_args.get('negative_slope', 0.2),
             'add_self_loops': layer_args.get('add_self_loops', True),
@@ -39,7 +39,7 @@ class GATv2Conv(GNNConvLayer):
             if self.merge_heads:
                 node_representation = self.batch_norm_layer(node_representation)
             else: # apply batch norm to each head separately
-                node_representation = self.batch_norm_layer(node_representation.view(-1, self.gatv2_args['out_features'])).view(-1, self.gatv2_args['out_features'] * self.gatv2_args['heads'])
+                node_representation = self.batch_norm_layer(node_representation.view(-1, self.gatv2_args['out_channels'])).view(-1, self.gatv2_args['out_channels'] * self.gatv2_args['heads'])
         node_representation = self.activation(node_representation)
         if self.residual:
             if self.merge_heads:

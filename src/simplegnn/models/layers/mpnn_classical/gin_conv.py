@@ -12,7 +12,9 @@ class GINConv(GNNConvLayer):
         super(GINConv, self).__init__(layer_args)
         self.use_edge_features = layer_args.get('edge_dim', None) is not None
         emb_dim = layer_args.get('out_features')
-        neural_network = Sequential(Linear(emb_dim, 2 * emb_dim), BatchNorm1d(2 * emb_dim), self.activation,
+        # The MLP receives the aggregation of in_features-dimensional node
+        # features and maps them to out_features dimensions.
+        neural_network = Sequential(Linear(self.in_features, 2 * emb_dim), BatchNorm1d(2 * emb_dim), self.activation,
                         Linear(2 * emb_dim, emb_dim))
         gin_args = {
             'nn': neural_network,

@@ -34,7 +34,7 @@ class GATConv(GNNConvLayer):
             if self.merge_heads:
                 node_representation = self.batch_norm_layer(node_representation)
             else: # apply batch norm to each head separately
-                node_representation = self.batch_norm_layer(node_representation.view(-1, self.gat_args['out_features'])).view(-1, self.gat_args['out_features'] * self.gat_args['heads'])
+                node_representation = self.batch_norm_layer(node_representation.view(-1, self.gat_args['out_channels'])).view(-1, self.gat_args['out_channels'] * self.gat_args['heads'])
         node_representation = self.activation(node_representation)
         if self.residual:
             if self.merge_heads:

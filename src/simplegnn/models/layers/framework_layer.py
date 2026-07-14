@@ -2,8 +2,6 @@ from abc import abstractmethod, ABC
 
 import torch
 import torch_geometric
-from torch._C.cpp import nn
-from torch.nn import Sequential, Linear, ReLU, BatchNorm1d
 
 from simplegnn.datasets.graph_dataset import GraphDataset
 
@@ -254,8 +252,10 @@ class FrameworkLayer(torch.nn.Module, ABC):
         # Whether to use batch normalization in this layer
         self.batch_norm = layer_args.get('batch_norm', False)
         if self.batch_norm:
+            # Batch norm is applied to the layer *output* in all forward
+            # implementations, so it must be sized by out_features.
             self.batch_norm_args = {
-                'in_channels': self.in_features,
+                'in_channels': self.out_features,
                 'eps': layer_args.get('batch_norm_eps', 1e-5),
                 'momentum': layer_args.get('batch_norm_momentum', 0.1),
                 'affine': layer_args.get('batch_norm_affine', True),
