@@ -70,7 +70,9 @@ def test_check_hyperparameter_configuration_sets_defaults(minimal_hyper_config):
     check_hyperparameter_configuration_file(cfg)
 
     assert cfg["device"] == "cpu"
-    assert cfg["precision"] == "double"
+    # unified implicit precision default (model/data/checks all default 'float';
+    # the previous mixed float/double defaults caused dtype mismatches)
+    assert cfg["precision"] == "float"
     assert cfg["mode"] == "experiments"
     assert cfg["early_stopping"]["enabled"] is False
     assert cfg["rule_occurrence_threshold"] == 1

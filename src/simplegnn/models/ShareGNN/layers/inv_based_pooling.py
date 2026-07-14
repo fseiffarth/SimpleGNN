@@ -47,7 +47,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             self.n_heads_per_label.append(head.num)
 
         self.weight_num = np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(len(layer.layer_heads))])
-        self.weight_distribution = torch.zeros((len(self.graph_data.x), self.num_heads), dtype=torch.int64)
+        weight_distribution = torch.zeros((len(self.graph_data.x), self.num_heads), dtype=torch.int64)
         # merge the bias distribution of all graphs (creating additionally slicing information)
         self.weight_distribution_slices = self.graph_data.slices['x']
 
@@ -55,9 +55,14 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             node_labels = self.graph_data.node_labels[self.node_label_descriptions[head_id]].node_labels
             # Set the bias weights
             _, indices, counts = torch.unique(node_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
-            for idx in range(len(self.graph_data)):
-                for h_num in range(head.num):
-                    self.weight_distribution[self.graph_data.slices['x'][idx]:self.graph_data.slices['x'][idx+1], np.sum(self.n_heads_per_label[:head_id], dtype=int) + h_num] = indices[self.graph_data.slices['x'][idx]:self.graph_data.slices['x'][idx+1]] + h_num * self.n_node_labels[head_id] + np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(head_id)], dtype=int)
+            # VECTORIZED: the old per-graph loop only partitioned a contiguous
+            # global assignment — write each head column for all nodes at once
+            column_base = np.sum(self.n_heads_per_label[:head_id], dtype=int)
+            weight_base = np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(head_id)], dtype=int)
+            for h_num in range(head.num):
+                weight_distribution[:, column_base + h_num] = indices + h_num * self.n_node_labels[head_id] + weight_base
+        # Non-persistent buffer: moved by net.to(device), kept out of state_dict
+        self.register_buffer('weight_distribution', weight_distribution, persistent=False)
 
 
 
@@ -65,8 +70,11 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
 
         if self.bias:
-            self.Param_b = self.init_weights(shape=(self.num_heads, self.in_features), init_type='aggregation_bias').to(self.device)
+            # No .to(self.device): that would demote the Parameter to a plain
+            # tensor on CUDA and hide it from the optimizer (net.to moves it).
+            self.Param_b = self.init_weights(shape=(self.num_heads, self.in_features), init_type='aggregation_bias')
         self.forward_step_time = 0
+        self.profile_layers = self.para.run_config.config.get('profile_layers', False)
 
 
 
@@ -115,13 +123,10 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         return weights
 
     def set_weights(self, pos):
-        input_size = self.graph_data.num_nodes[pos]
-        self.current_W = torch.zeros((input_size, self.num_heads), dtype=self.precision).to(self.device)
         weight_distr = self.weight_distribution[self.weight_distribution_slices[pos]:self.weight_distribution_slices[pos+1]]
         self.current_W = torch.take(self.Param_W, weight_distr)
         # divide the weights by the number of nodes in the graph
         #self.current_W = self.current_W / input_size
-        pass
 
     def print_weights(self):
         print("Weights of the Resize layer")
@@ -154,14 +159,16 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
 
     def forward(self, node_representation:torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
         pos = kwargs.get('pos', 0)
-        begin = time.time()
+        begin = time.time() if self.profile_layers else None
         self.set_weights(pos)
-        node_representation = torch.einsum('no,nf->of', self.current_W, node_representation)
+        # (H, N) @ (N, F) -> (H, F); same as einsum('no,nf->of') with less dispatch overhead
+        node_representation = torch.matmul(self.current_W.t(), node_representation)
         if self.bias:
             node_representation = node_representation + self.Param_b
         node_representation = node_representation.flatten().unsqueeze(0)
         node_representation = self.activation(node_representation)
-        self.forward_step_time += time.time() - begin
+        if self.profile_layers:
+            self.forward_step_time += time.time() - begin
         return node_representation
 
     def get_weights(self):

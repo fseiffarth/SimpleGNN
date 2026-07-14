@@ -303,12 +303,10 @@ class GraphModel(torch.nn.Module):
         if self.random_variation_bool:
             mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
             std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
-            if self.para.run_config.config.get('precision', 'double') == 'float':
-                random_variation = torch.normal(mean=mean, std=std, size=x.size(),
-                                                dtype=torch.float)
-            else:
-                random_variation = torch.normal(mean=mean, std=std, size=x.size(),
-                                                dtype=torch.double)
+            # match the input's dtype/device instead of re-reading the precision
+            # config (whose default was inconsistent with the model's default)
+            random_variation = torch.normal(mean=mean, std=std, size=x.size(),
+                                            dtype=x.dtype, device=x.device)
             x = x + random_variation
 
         for i, layer in enumerate(self.net_layers):
@@ -451,13 +449,15 @@ class GraphModel(torch.nn.Module):
         layer_args['out_features'] = layer_args.get('out_features', layer_args['in_features'])
 
         if layer.layer_type == LayerTypes.INVARIANT_BASED_CONVOLUTION.value:
-            return InvariantBasedMessagePassingLayer(layer=layer, parameters=self.para, graph_data=self.graph_data).type(self.precision).requires_grad_(self.convolution_grad)
+            # .to(dtype) instead of .type(dtype): .type() would also cast the
+            # int64 index buffers (weight_distribution), breaking torch.take
+            return InvariantBasedMessagePassingLayer(layer=layer, parameters=self.para, graph_data=self.graph_data).to(self.precision).requires_grad_(self.convolution_grad)
 
         elif layer.layer_type == LayerTypes.INVARIANT_BASED_AGGREGATION.value:
             self.aggregation_out_dim = layer_args.get('out_dim', self.out_dim)
             return InvariantBasedAggregationLayer(layer=layer,
                                                                   parameters=self.para,
-                                                                  graph_data=self.graph_data,).requires_grad_(self.aggregation_grad)
+                                                                  graph_data=self.graph_data,).to(self.precision).requires_grad_(self.aggregation_grad)
         # GNN specific layers
         elif layer.layer_type == LayerTypes.GCN_CONVOLUTION.value:
             return GCNConv(layer_args).type(self.precision).requires_grad_(self.convolution_grad)

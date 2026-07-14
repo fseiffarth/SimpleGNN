@@ -239,8 +239,36 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         self.b_head_offset = 0
         self.weight_offset_description = [None]
         self.weight_offset_description_text = [None]
-        weight_distribution_chunks = [[] for _ in range(len(graph_data))]
-        bias_distribution_chunks = [[] for _ in range(len(graph_data))]
+
+        # Coarse per-layer cache: the merged distributions are deterministic
+        # given the layer configuration + dataset and are fold/run-invariant,
+        # yet they used to be rebuilt for every fold x run x grid-config
+        # combination. On a hit the whole head/property assembly is skipped.
+        layer_cache_path = self._get_layer_cache_path()
+        if not self._load_layer_distribution_cache(layer_cache_path):
+            self._build_distributions(graph_data)
+            self._save_layer_distribution_cache(layer_cache_path)
+
+        self._finalize_initialization()
+    def _build_distributions(self, graph_data: GraphDataset) -> None:
+        """
+        Build the merged weight/bias distribution tensors for all heads.
+
+        Vectorized over graphs: the rows for all graphs are built in one pass
+        per (head, property value), and the historical per-graph append order
+        (head -> property value -> head replica) is reproduced bit for bit by a
+        single stable sort over the row-wise graph ids at merge time.
+        """
+        num_graphs = len(graph_data)
+        x_slices = self.graph_data.slices['x']
+        num_nodes_per_graph = x_slices.diff()
+        total_num_nodes = int(x_slices[-1])
+
+        weight_chunks = []           # (K, 4) row blocks, all graphs at once
+        weight_chunk_graph_ids = []  # (K,) graph id of every row in the block
+        bias_chunks = []
+        bias_chunk_graph_ids = []
+        bias_unique_cache = {}       # bias label description -> unique inverse indices
 
         # Iterate over all heads in the layer
         for head_id, head in enumerate(self.layer.layer_heads):
@@ -274,7 +302,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 cached_path = self.get_cache_path(head, property_key)
 
                 try:
-                    indices, counts = self._load_cached_indices(cached_path, head, property_key)
+                    indices, counts, do_invalid_indices_exist = self._load_cached_indices(cached_path, head, property_key)
                     print(f"✓ Cache hit: head source label {self.source_label_descriptions[head_id]}, target label {self.target_label_descriptions[head_id]} with property {self.property_descriptions[head_id]} key {property_key} loaded from cache at {cached_path.name}")
 
                 except (FileNotFoundError, Exception) as e:
@@ -305,7 +333,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     if do_invalid_indices_exist:
                         counts[-1] = 0
 
-                    self._save_cached_indices(cached_path, head, property_key, indices, counts)
+                    self._save_cached_indices(cached_path, head, property_key, indices, counts, do_invalid_indices_exist)
 
                 # Threshold filtering (now do_invalid_indices_exist is always defined)
                 num_weights = len(counts)
@@ -325,30 +353,30 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     num_weights = valid_values.numel()
                 for n in range(self.n_heads_per_label[head_id]):
                     head_weight_num.append(num_weights)
-                start_time = time.time()
-                for idx in range(len(graph_data)):
-                    # if number of graphs is larger than 10000 print progress
-                    if len(graph_data) > 5000 and idx % 3000 == 0:
-                        print(
-                            f'Heads {self.n_heads_per_label[head_id] + current_head_id}/{self.num_heads} with property {property_key}: {idx}/{len(graph_data)} graphs processed ({(idx / len(graph_data)) * 100:.2f}%) time so far (in s): {time.time() - start_time:.2f}',
-                            flush=True)
-                    # get the valid indices for the current graph
-                    if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
-                        valid_indices_graph = torch.where(
-                            valid_indices_bool[property_subdict_slices[idx]:property_subdict_slices[idx + 1]])[0] + \
-                                              property_subdict_slices[idx]
-                    else:
-                        valid_indices_graph = torch.arange(property_subdict_slices[idx],
-                                                           property_subdict_slices[idx + 1], dtype=torch.int64)
-                    w_indices = indices[valid_indices_graph]
-                    p_indices = property_subdict[valid_indices_graph] - self.graph_data.slices['x'][idx]  # check if subtracting is necessary
-                    # create new tensor where each row is the concatenation of head_id, property_subdict_row, and indices
-                    for n in range(self.n_heads_per_label[head_id]):
-                        new_weight_distribution = torch.zeros((len(valid_indices_graph), 4), dtype=torch.int64)
-                        new_weight_distribution[:, 0] = current_head_id + n
-                        new_weight_distribution[:, 1:3] = p_indices
-                        new_weight_distribution[:, 3] = w_indices + self.weight_offset[-1] + n * num_weights
-                        weight_distribution_chunks[idx].append(new_weight_distribution)
+
+                # VECTORIZED: build the rows for ALL graphs in one pass (the
+                # old per-graph loop only partitioned rows that are already
+                # stored grouped by graph)
+                property_subdict_slices = torch.as_tensor(property_subdict_slices, dtype=torch.int64)
+                if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
+                    kept_rows = torch.nonzero(valid_indices_bool, as_tuple=False).squeeze(1)
+                else:
+                    kept_rows = torch.arange(property_subdict.shape[0], dtype=torch.int64)
+                # graph id of every kept row
+                row_graph = torch.repeat_interleave(torch.arange(num_graphs, dtype=torch.int64),
+                                                    property_subdict_slices.diff())
+                kept_graph = row_graph[kept_rows]
+                w_indices = indices[kept_rows]
+                # global -> graph-local node ids
+                p_indices = property_subdict[kept_rows] - x_slices[kept_graph].unsqueeze(1)
+                base_offset = self.weight_offset[-1]
+                for n in range(self.n_heads_per_label[head_id]):
+                    block = torch.empty((kept_rows.numel(), 4), dtype=torch.int64)
+                    block[:, 0] = current_head_id + n
+                    block[:, 1:3] = p_indices
+                    block[:, 3] = w_indices + base_offset + n * num_weights
+                    weight_chunks.append(block)
+                    weight_chunk_graph_ids.append(kept_graph)
 
                 for n in range(self.n_heads_per_label[head_id]):
                     self.weight_offset.append(self.weight_offset[-1] + num_weights)
@@ -358,51 +386,75 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             # TODO symmetric case
 
             if self.bias:
-                # Set the bias weights
-                _, indices, counts = torch.unique(bias_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
-                for idx in range(len(graph_data)):
-                    arranged_tensor = torch.arange(graph_data.num_nodes[idx].item(), dtype=torch.int64) # alternative torch.arange(start=graph_data.slices['x'][idx], end=graph_data.slices['x'][idx+1], dtype=torch.int64)
-                    w_indices = indices[graph_data.slices['x'][idx]:graph_data.slices['x'][idx+1]]
-                    for n in range(self.n_heads_per_label[head_id]):
-                        for feature_id in range(self.in_features):
-                            w_index_offset = n*self.in_features*self.n_bias_labels[head_id] + feature_id*self.n_bias_labels[head_id]
-                            new_bias_distribution = torch.zeros((graph_data.num_nodes[idx].item(), 4), dtype=torch.int64)
-                            new_bias_distribution[:, 0] = current_head_id + n
-                            new_bias_distribution[:, 1] = arranged_tensor
-                            new_bias_distribution[:, 2] = feature_id
-                            new_bias_distribution[:, 3] = w_indices + self.b_head_offset + w_index_offset
-                            bias_distribution_chunks[idx].append(new_bias_distribution)
+                # Set the bias weights; the unique inverse only depends on the
+                # bias label description, so it is computed once per description
+                bias_label_key = self.bias_label_descriptions[head_id]
+                if bias_label_key not in bias_unique_cache:
+                    _, bias_indices, _ = torch.unique(bias_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
+                    bias_unique_cache[bias_label_key] = bias_indices
+                bias_indices = bias_unique_cache[bias_label_key]
+                # VECTORIZED over graphs: graph id and graph-local position per node
+                node_graph = torch.repeat_interleave(torch.arange(num_graphs, dtype=torch.int64), num_nodes_per_graph)
+                arranged_tensor = torch.arange(total_num_nodes, dtype=torch.int64) - x_slices[node_graph]
+                for n in range(self.n_heads_per_label[head_id]):
+                    for feature_id in range(self.in_features):
+                        w_index_offset = n*self.in_features*self.n_bias_labels[head_id] + feature_id*self.n_bias_labels[head_id]
+                        block = torch.empty((total_num_nodes, 4), dtype=torch.int64)
+                        block[:, 0] = current_head_id + n
+                        block[:, 1] = arranged_tensor
+                        block[:, 2] = feature_id
+                        block[:, 3] = bias_indices + self.b_head_offset + w_index_offset
+                        bias_chunks.append(block)
+                        bias_chunk_graph_ids.append(node_graph)
                 # Determine the number of different learnable parameters in the bias vector
                 for n in range(self.n_heads_per_label[head_id]):
                     self.bias_num.append(self.in_features * self.n_bias_labels[head_id])
                     self.b_head_offset += self.bias_num[-1]
 
             self.weight_num += head_weight_num
-        # All weight distributions are computed, now merge them and create the final weight distribution tensor and bias distribution tensor
-        # Merge the weight distribution of all graphs (creating additionally slicing information)
-        # Single torch.cat per graph instead of repeated incremental concatenation
-        merged_weight_distributions = [
-            torch.cat(chunks, dim=0) if chunks else torch.zeros((0, 4), dtype=torch.int64)
-            for chunks in weight_distribution_chunks
-        ]
-        self.weight_distribution_slices = torch.tensor([0] + [len(w) for w in merged_weight_distributions], dtype=torch.int64).cumsum(dim=0)
-        self.weight_distribution = torch.cat(merged_weight_distributions, dim=0).to(self.device)
+        # All weight distributions are computed, now merge them and create the final weight distribution tensor and bias distribution tensor.
+        # A single stable sort by graph id restores the historical per-graph
+        # chunk order (chunks were appended head -> property -> head replica).
+        weight_distribution, self.weight_distribution_slices = self._merge_distribution_chunks(
+            weight_chunks, weight_chunk_graph_ids, num_graphs)
+        # Non-persistent buffer: moved by net.to(device), kept out of state_dict
+        self.register_buffer('weight_distribution', weight_distribution, persistent=False)
         if self.bias:
-            # Merge the bias distribution of all graphs (creating additionally slicing information)
-            merged_bias_distributions = [
-                torch.cat(chunks, dim=0) if chunks else torch.zeros((0, 4), dtype=torch.int64)
-                for chunks in bias_distribution_chunks
-            ]
-            self.bias_distribution_slices = torch.tensor([0] + [len(b) for b in merged_bias_distributions], dtype=torch.int64).cumsum(dim=0)
-            self.bias_distribution = torch.cat(merged_bias_distributions, dim=0).to(self.device)
+            bias_distribution, self.bias_distribution_slices = self._merge_distribution_chunks(
+                bias_chunks, bias_chunk_graph_ids, num_graphs)
+            self.register_buffer('bias_distribution', bias_distribution, persistent=False)
 
+    @staticmethod
+    def _merge_distribution_chunks(chunks, chunk_graph_ids, num_graphs) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Merge row blocks into one (rows, slices) pair ordered by graph id."""
+        if chunks:
+            rows = torch.cat(chunks, dim=0)
+            graph_ids = torch.cat(chunk_graph_ids)
+            order = torch.argsort(graph_ids, stable=True)
+            rows = rows[order]
+            rows_per_graph = torch.bincount(graph_ids, minlength=num_graphs)
+        else:
+            rows = torch.zeros((0, 4), dtype=torch.int64)
+            rows_per_graph = torch.zeros(num_graphs, dtype=torch.int64)
+        slices = torch.cat([torch.zeros(1, dtype=torch.int64), rows_per_graph.cumsum(dim=0)])
+        return rows, slices
 
+    def _finalize_initialization(self):
+        """
+        Allocate the learnable parameters and forward-pass structures.
+
+        Runs after the distributions are available (built or cache-loaded).
+        """
         if self.bias:
-            # Set learnable parameters for the bias
-            self.Param_b = self.init_weights(np.sum(self.bias_num), init_type='convolution_bias').to(self.device)
+            # Set learnable parameters for the bias.
+            # NOTE: no .to(self.device) here — on CUDA that would return a plain
+            # (non-Parameter) tensor, silently removing the weights from
+            # net.parameters() so the optimizer never updates them. Devices are
+            # handled by the whole-model net.to(device) call.
+            self.Param_b = self.init_weights(np.sum(self.bias_num), init_type='convolution_bias')
 
-        # Set learnable parameters for the weights
-        self.Param_W = self.init_weights(np.sum(self.weight_num), init_type='convolution').to(self.device)
+        # Set learnable parameters for the weights (see device note above)
+        self.Param_W = self.init_weights(np.sum(self.weight_num), init_type='convolution')
 
 
         # TODO add pruning
@@ -415,9 +467,174 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
         self.forward_step_time = 0
 
-        # Cache config lookups used in forward pass
-        self.use_degree_matrix = self.para.run_config.config.get('degree_matrix', False)
-        self.use_in_degrees = self.para.run_config.config.get('use_in_degrees', False)
+        # Per-graph node counts as plain Python ints: avoids a per-forward
+        # .item() call (a host-device sync point once the data lives on GPU)
+        self._num_nodes_list = [int(n) for n in self.graph_data.num_nodes]
+
+        # The degree-matrix normalization branches relied on attributes
+        # (self.D, self.in_edges) that are never assigned anywhere; enabling
+        # them crashed in forward. Fail early instead of at forward time.
+        if self.para.run_config.config.get('degree_matrix', False) or self.para.run_config.config.get('use_in_degrees', False):
+            raise ValueError("The 'degree_matrix' and 'use_in_degrees' options are not supported: "
+                             "their implementation was incomplete (self.D / self.in_edges were never initialized).")
+
+        # Forward mode: 'sparse' builds a per-graph block COO matrix and uses
+        # torch.sparse.mm; 'dense' keeps the original scatter into a dense
+        # (H, N, N) tensor (equivalence oracle / fallback). 'auto' (default)
+        # picks by graph size: measured on CPU, dense wins for small graphs
+        # (sparse construction overhead dominates) while sparse wins for large
+        # ones (no (H, N, N) allocation; ~6x faster at N=1024).
+        forward_config = self.para.run_config.config.get('share_gnn_forward', None) or {}
+        self.forward_mode = forward_config.get('mode', 'auto')
+        if self.forward_mode == 'auto':
+            self.forward_mode = 'sparse' if max(self._num_nodes_list, default=0) >= 256 else 'dense'
+        if self.forward_mode not in ('sparse', 'dense'):
+            raise ValueError(f"share_gnn_forward.mode must be 'auto', 'sparse' or 'dense', got '{self.forward_mode}'")
+        # Per-forward wall-clock timing is pure overhead (and misleading on
+        # CUDA without a synchronize) — gate it behind a config flag.
+        self.profile_layers = self.para.run_config.config.get('profile_layers', False)
+
+        self._build_forward_index_structures()
+
+    def _build_forward_index_structures(self) -> None:
+        """
+        Precompute per-graph sparse index structures for the forward pass.
+
+        Folds the head dimension into the row index (row = head * N + i) so the
+        per-graph weight matrix becomes a single 2-D block COO matrix of shape
+        (num_heads * N, N). The entries are sorted per graph block so the COO
+        tensor can be constructed with ``is_coalesced=True`` (skipping the
+        runtime coalesce). Only the *index* structure is precomputed here — the
+        weight values are gathered from ``Param_W`` inside every forward pass,
+        which is the only differentiable link back to the parameters.
+        Precomputing the values instead would silently freeze training.
+        """
+        weight_distribution = self.weight_distribution
+        row_counts = self.weight_distribution_slices.diff()
+        nodes_per_graph = torch.as_tensor(self._num_nodes_list, dtype=torch.int64)
+        n_per_row = torch.repeat_interleave(nodes_per_graph, row_counts)
+        graph_per_row = torch.repeat_interleave(torch.arange(len(self._num_nodes_list), dtype=torch.int64), row_counts)
+
+        rows = weight_distribution[:, 0] * n_per_row + weight_distribution[:, 1]
+        cols = weight_distribution[:, 2]
+        # sort within each graph block by (row, col); the (head, i, j) cells are
+        # unique per graph, so sorted order makes the block a valid coalesced COO
+        linear_index = rows * n_per_row + cols
+        max_linear = int(linear_index.max().item()) + 1 if linear_index.numel() > 0 else 1
+        order = torch.argsort(graph_per_row * max_linear + linear_index)
+
+        self.register_buffer('_fwd_indices', torch.stack([rows, cols])[:, order].contiguous(), persistent=False)
+        self.register_buffer('_fwd_param_idx', weight_distribution[order, 3].contiguous(), persistent=False)
+        # per-graph offsets as plain ints (Python slicing, no device syncs)
+        self._fwd_slices = [int(x) for x in self.weight_distribution_slices]
+
+    def _get_layer_cache_path(self) -> Path:
+        """
+        Cache path for the merged per-layer weight/bias distributions.
+
+        Unlike the fine-grained (indices, counts) cache, the stored artifact is
+        post-threshold-filtering, so the thresholds and every head's full
+        configuration (including the resolved valid property values) must be
+        part of the cache key.
+        """
+        heads_metadata = []
+        for head_id in range(len(self.layer.layer_heads)):
+            valid_values = self.graph_data.properties[self.property_descriptions[head_id]].valid_values[(self.layer_id, head_id)]
+            heads_metadata.append({
+                'source_label': self.source_label_descriptions[head_id],
+                'target_label': self.target_label_descriptions[head_id],
+                'bias_label': self.bias_label_descriptions[head_id],
+                'property': self.property_descriptions[head_id],
+                'valid_property_values': [str(v) for v in valid_values],
+                'num': int(self.n_heads_per_label[head_id]),
+                'bias': bool(self.bias_list[head_id]),
+            })
+        cache_metadata = {
+            'format_version': 1,
+            'dataset': self.para.db,
+            'dataset_size': len(self.graph_data),
+            'layer_id': self.layer_id,
+            'in_features': int(self.in_features),
+            'heads': heads_metadata,
+            'threshold': self.para.run_config.config.get('rule_occurrence_threshold', 1),
+            'upper_threshold': self.para.run_config.config.get('rule_occurrence_upper_threshold', None),
+        }
+        metadata_str = json.dumps(cache_metadata, sort_keys=True)
+        cache_hash = hashlib.md5(metadata_str.encode()).hexdigest()[:12]
+        data_path = Path(self.para.run_config.config['paths']['data'])
+        cache_dir = data_path / 'caches'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / f'layerdist_{cache_hash}.pt'
+
+    _LAYER_CACHE_FORMAT_VERSION = 1
+
+    def _load_layer_distribution_cache(self, cached_path: Path) -> bool:
+        """
+        Load the merged per-layer distributions from disk. Returns True on a
+        usable cache hit; on any mismatch or error falls back to a rebuild.
+        """
+        if not cached_path.exists():
+            return False
+        try:
+            cached = torch.load(str(cached_path), weights_only=False)
+            if not isinstance(cached, dict) or cached.get('format_version') != self._LAYER_CACHE_FORMAT_VERSION:
+                return False
+            required = ['weight_num', 'weight_offset', 'weight_offset_description',
+                        'weight_offset_description_text', 'weight_distribution',
+                        'weight_distribution_slices', 'bias_num', 'b_head_offset']
+            if self.bias:
+                required += ['bias_distribution', 'bias_distribution_slices']
+            if any(key not in cached for key in required):
+                return False
+            # validate everything BEFORE registering buffers (register twice raises)
+            self.weight_num = list(cached['weight_num'])
+            self.weight_offset = list(cached['weight_offset'])
+            self.weight_offset_description = list(cached['weight_offset_description'])
+            self.weight_offset_description_text = list(cached['weight_offset_description_text'])
+            self.bias_num = list(cached['bias_num'])
+            self.b_head_offset = int(cached['b_head_offset'])
+            self.weight_distribution_slices = cached['weight_distribution_slices']
+            self.register_buffer('weight_distribution', cached['weight_distribution'], persistent=False)
+            if self.bias:
+                self.bias_distribution_slices = cached['bias_distribution_slices']
+                self.register_buffer('bias_distribution', cached['bias_distribution'], persistent=False)
+            print(f"✓ Layer cache hit: merged weight/bias distributions loaded from {cached_path.name}")
+            return True
+        except Exception as e:
+            print(f"⚠ Warning: failed to load layer distribution cache {cached_path}: {e}")
+            return False
+
+    def _save_layer_distribution_cache(self, cached_path: Path) -> None:
+        """Save the merged per-layer distributions. Non-fatal on failure."""
+        try:
+            cache_data = {
+                'format_version': self._LAYER_CACHE_FORMAT_VERSION,
+                'weight_num': list(self.weight_num),
+                'weight_offset': list(self.weight_offset),
+                'weight_offset_description': list(self.weight_offset_description),
+                'weight_offset_description_text': list(self.weight_offset_description_text),
+                'weight_distribution': self.weight_distribution,
+                'weight_distribution_slices': self.weight_distribution_slices,
+                'bias_num': list(self.bias_num),
+                'b_head_offset': int(self.b_head_offset),
+            }
+            if self.bias:
+                cache_data['bias_distribution'] = self.bias_distribution
+                cache_data['bias_distribution_slices'] = self.bias_distribution_slices
+            torch.save(cache_data, str(cached_path))
+            file_size_mb = cached_path.stat().st_size / (1024 * 1024)
+            meta_path = cached_path.with_suffix('.json')
+            with open(meta_path, 'w') as f:
+                json.dump({
+                    'created': datetime.now().isoformat(),
+                    'dataset': self.para.db,
+                    'layer_id': self.layer_id,
+                    'num_weight_rows': int(self.weight_distribution.shape[0]),
+                    'num_weights': int(np.sum(self.weight_num)),
+                }, f, indent=2)
+            print(f"  Cached layer distributions ({file_size_mb:.2f} MB): {cached_path.name}")
+        except Exception as e:
+            print(f"⚠ Warning: Failed to save layer distribution cache to {cached_path}: {e}")
 
     def get_cache_path(self, head, property_key) -> Path:
         """
@@ -453,14 +670,16 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
     def _load_cached_indices(self, cached_path: Path, head, property_key) -> tuple:
         """
-        Load cached indices and counts from disk.
+        Load cached indices, counts and the invalid-pair flag from disk.
 
         Returns:
-            (indices, counts): Tuple of torch.Tensors
+            (indices, counts, do_invalid_indices_exist)
 
         Raises:
             FileNotFoundError: If cache file doesn't exist
-            Exception: If cache is corrupted or incompatible
+            Exception: If cache is corrupted, incompatible, or from an older
+                format that did not store `do_invalid_indices_exist` (treated
+                as a cache miss so the file self-heals on re-save).
         """
         if not cached_path.exists():
             raise FileNotFoundError(f"Cache file not found: {cached_path}")
@@ -476,22 +695,28 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             if 'indices' not in cached_data or 'counts' not in cached_data:
                 raise ValueError("Invalid cache format: missing indices or counts")
 
+            if 'do_invalid_indices_exist' not in cached_data:
+                # Old cache format: without this flag a cache hit would treat the
+                # invalid (-1 label) bucket as a real weight. Recompute and re-save.
+                raise ValueError("Invalid cache format: missing do_invalid_indices_exist")
+
             indices = cached_data['indices']
             counts = cached_data['counts']
+            do_invalid_indices_exist = bool(cached_data['do_invalid_indices_exist'])
 
             # Validate tensor types
             if not isinstance(indices, torch.Tensor) or not isinstance(counts, torch.Tensor):
                 raise ValueError("Invalid cache format: indices/counts must be tensors")
 
-            return indices, counts
+            return indices, counts, do_invalid_indices_exist
 
         except Exception as e:
             # If any error, treat as cache miss
             raise Exception(f"Failed to load cache: {e}")
 
-    def _save_cached_indices(self, cached_path: Path, head, property_key, indices: torch.Tensor, counts: torch.Tensor) -> None:
+    def _save_cached_indices(self, cached_path: Path, head, property_key, indices: torch.Tensor, counts: torch.Tensor, do_invalid_indices_exist: bool = False) -> None:
         """
-        Save computed indices and counts to disk cache.
+        Save computed indices, counts and the invalid-pair flag to disk cache.
 
         Saves both the tensor data (.pt) and human-readable metadata (.json).
         Non-fatal: logs warning if save fails but doesn't raise exception.
@@ -501,6 +726,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             cache_data = {
                 'indices': indices,
                 'counts': counts,
+                'do_invalid_indices_exist': bool(do_invalid_indices_exist),
                 'metadata': {
                     'created': datetime.now().isoformat(),
                     'source_label': self.source_label_descriptions[self.layer.layer_heads.index(head)],
@@ -510,6 +736,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     'indices_shape': list(indices.shape),
                     'counts_shape': list(counts.shape),
                     'num_unique_pairs': len(counts),
+                    'do_invalid_indices_exist': bool(do_invalid_indices_exist),
                 }
             }
 
@@ -628,8 +855,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         :param pos:
         :return:
         """
-        input_size = self.graph_data.num_nodes[pos].item()
-        self.current_W = torch.zeros((self.num_heads, input_size, input_size), dtype=self.precision, device=self.device)
+        input_size = self._num_nodes_list[pos]
+        self.current_W = torch.zeros((self.num_heads, input_size, input_size), dtype=self.precision, device=self.Param_W.device)
         graph_weight_distribution = self.weight_distribution[self.weight_distribution_slices[pos]:self.weight_distribution_slices[pos+1]]
         if len(graph_weight_distribution) != 0:
             # get third column of the weight_distribution: the index of self.Param_W
@@ -645,8 +872,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         :param pos:
         :return:
         """
-        input_size = self.graph_data.num_nodes[pos].item()
-        self.current_B = torch.zeros((self.num_heads, input_size, self.in_features), dtype=self.precision, device=self.device)
+        input_size = self._num_nodes_list[pos]
+        self.current_B = torch.zeros((self.num_heads, input_size, self.in_features), dtype=self.precision, device=self.Param_b.device)
         graph_bias_distribution = self.bias_distribution[self.bias_distribution_slices[pos]:self.bias_distribution_slices[pos+1]]
         param_indices = graph_bias_distribution[:, 3]
         matrix_indices = graph_bias_distribution[:, 0:3].T
@@ -760,15 +987,22 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         """
         # get pos from kwargs
         pos = kwargs.get('pos', 0)
-        begin = time.time()
-        # set the weights, i.e., sets self.current_W to (C, N, N) where C is the number of channels and N is the number of nodes in graph at position pos of the dataset
-        self.set_weights(pos)
-        if self.use_degree_matrix:
-            node_representation = self.in_edges[pos]*torch.einsum('cij,jk->cik', torch.diag(self.D[pos]) @ self.current_W @ torch.diag(self.D[pos]), node_representation)
-        elif self.use_in_degrees:
-            node_representation = self.in_edges[pos]*torch.einsum('cij,jk->cik', self.current_W, node_representation)
+        begin = time.time() if self.profile_layers else None
+        num_nodes = self._num_nodes_list[pos]
+        if self.forward_mode == 'sparse':
+            # Gather the weight values from Param_W (differentiable — this must
+            # happen every forward, see _build_forward_index_structures) and
+            # multiply as one block COO matrix of shape (H * N, N).
+            start, end = self._fwd_slices[pos], self._fwd_slices[pos + 1]
+            values = self.Param_W[self._fwd_param_idx[start:end]]
+            current_W = torch.sparse_coo_tensor(self._fwd_indices[:, start:end], values,
+                                                (self.num_heads * num_nodes, num_nodes),
+                                                is_coalesced=True)
+            node_representation = torch.sparse.mm(current_W, node_representation).view(self.num_heads, num_nodes, -1)
         else:
-            node_representation = torch.einsum('hij,jf->hif', self.current_W, node_representation)
+            # dense fallback: scatter into (H, N, N) and use a batched matmul
+            self.set_weights(pos)
+            node_representation = torch.matmul(self.current_W, node_representation)
         if self.bias:
             self.set_bias(pos)
             node_representation = node_representation + self.current_B
@@ -776,7 +1010,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # merge dimensions 1 and 2
         node_representation = node_representation.flatten(start_dim=1)
         node_representation = self.activation(node_representation)
-        self.forward_step_time += time.time() - begin
+        if self.profile_layers:
+            self.forward_step_time += time.time() - begin
         return node_representation
 
 

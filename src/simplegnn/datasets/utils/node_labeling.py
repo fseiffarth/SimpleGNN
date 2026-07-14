@@ -1420,16 +1420,16 @@ def save_betweenness_centrality_labels(graph_data: GraphDataset, label_path: Opt
         print(f"Saving {l} labels for {graph_data.name} to {file}")
         start_time = time.time()
 
-    labeling = BetweennessCentralityNodeLabeling(
-        graph_data, label_path, max_labels, num_bins, save_times
-    )
-    save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
-    if save_times is not None:
-        try:
-            with open(save_times, 'a') as f:
-                f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
-        except:
-            raise ValueError("No save time path given")
+        labeling = BetweennessCentralityNodeLabeling(
+            graph_data, label_path, max_labels, num_bins, save_times
+        )
+        save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
+        if save_times is not None:
+            try:
+                with open(save_times, 'a') as f:
+                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+            except:
+                raise ValueError("No save time path given")
     else:
         print(f"File {file} already exists. Skipping.")
     return file

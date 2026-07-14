@@ -1,0 +1,24 @@
+# Minimal GCN architecture used by
+# tests/test_classical_gnn_mutag_integration.py to smoke-test the
+# GCN wrapper end-to-end on real MUTAG data.
+models:
+  - - { layer_type: linear,
+        out_features: 8,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: gcn_convolution,
+        bias: True,
+        out_channels: 8,
+        activation: torch.nn.LeakyReLU(),
+        batch_norm: True,
+        residual: False,
+        dropout: 0.0,
+    }
+    - { layer_type: global_pooling,
+        mode: mean,
+    }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+    }

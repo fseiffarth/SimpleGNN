@@ -365,8 +365,6 @@ class ModelConfiguration:
         # Create the seeds for the different epochs and validation runs
         seeds = np.arange(self.para.n_epochs*self.para.n_val_runs)
         seeds = np.reshape(seeds, (self.para.n_epochs, self.para.n_val_runs))
-        # set data to device
-        #self.graph_data.to(self.device)
 
         # Run through the epochs
         for epoch in range(self.para.n_epochs):
@@ -475,8 +473,6 @@ class ModelConfiguration:
         evaluate_graph_task : Graph-level evaluation implementation
         evaluate_node_task : Node-level evaluation implementation
         """
-        # set data to device
-        #self.graph_data.to(self.device)
         self.net.eval()
         # Evaluate the network on the given graph ids
 
@@ -537,6 +533,9 @@ class ModelConfiguration:
 
         # set the network to device
         self.net.to(self.device)
+        # move the graph data to the same device as the network (features,
+        # labels, attributes); slices/num_nodes bookkeeping stays on CPU
+        self.graph_data.to(self.device)
         print(f'Network initialized with seed {self.seed}')
 
 
@@ -1266,7 +1265,7 @@ class ModelConfiguration:
         for batch_counter, batch in enumerate(loader, 0):
             batch_ids = train_batches[batch_counter]
             timer.measure("forward")
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             outputs = torch.zeros((len(batch), self.graph_data.num_classes), dtype=self.dtype).to(self.device)
 
 
@@ -1334,24 +1333,19 @@ class ModelConfiguration:
 
         with torch.no_grad():
             self.net.train(False)
-            # split the graph ids into batches to avoid memory issues
-            eval_batch_size = self.para.run_config.config.get('eval_batch_size', 512)
-            batches = [graph_ids[i:i + eval_batch_size] for i in range(0, len(graph_ids), eval_batch_size)]
-            # deduce output size from batches and graph data
-            total_out_len = 0
-            for batch in batches:
-                total_out_len += len(batch)
-                outputs = torch.zeros((total_out_len, self.graph_data.num_classes), dtype=self.dtype).to(self.device)
-            loader = CustomBatchLoader(self.graph_data, batches)
-            batch_counter = 0
+            # allocate the output tensor once (size is known up front)
+            outputs = torch.zeros((len(graph_ids), self.graph_data.num_classes), dtype=self.dtype, device=self.device)
             if not self.para.run_config.config.get('with_invariant_layers', True):
-                # Run ordinary GNN
+                # Run ordinary GNN; split the graph ids into batches to avoid memory issues
+                eval_batch_size = self.para.run_config.config.get('eval_batch_size', 512)
+                batches = [graph_ids[i:i + eval_batch_size] for i in range(0, len(graph_ids), eval_batch_size)]
+                loader = CustomBatchLoader(self.graph_data, batches)
+                batch_counter = 0
                 for i, batch in enumerate(loader):
-                    #print(f"Evaluating batch {i + 1}/{len(batches)}")
                     outputs[batch_counter:batch_counter + len(batch)] = self.net(batch_data=batch)
                     batch_counter += len(batch)
             else:
-                # Run Share GNN
+                # Run Share GNN (per-graph forward; the batch loader is not used here)
                 for j, data_pos in enumerate(graph_ids):
                     outputs[j] = self.net(self.graph_data[data_pos], pos=data_pos)
         return labels, outputs
@@ -1359,18 +1353,17 @@ class ModelConfiguration:
     def train_node_task(self, epoch, values, train_batches, random_variation_bool, timer):
         for batch_counter, batch in enumerate(train_batches, 0):
             timer.measure("forward")
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             timer.measure("forward_step")
             if random_variation_bool:
                 mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
                 std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
-                if self.para.run_config.config.get('precision', 'double') == 'float':
-                    random_variation = torch.normal(mean=mean, std=std, size=self.graph_data[0].x.size(),
-                                                    dtype=torch.float)
-                else:
-                    random_variation = torch.normal(mean=mean, std=std, size=self.graph_data[0].x.size(),
-                                                    dtype=torch.double)
-                outputs = self.net(self.graph_data[0].x + random_variation, 0)
+                x = self.graph_data[0].x
+                # match the input's dtype/device instead of re-reading the precision
+                # config (whose default was inconsistent with the model's default)
+                random_variation = torch.normal(mean=mean, std=std, size=x.size(),
+                                                dtype=x.dtype, device=x.device)
+                outputs = self.net(x + random_variation, 0)
             else:
                 outputs = self.net(self.graph_data[0].x, 0)
                 timer.measure("forward_step")

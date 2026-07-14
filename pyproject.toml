@@ -46,3 +46,9 @@ include = ["simplegnn*"]
 
 [tool.setuptools.package-data]
 "simplegnn.datasets" = ["*.yml", "splits/**/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: exercises a full FrameworkMain pipeline end-to-end (slower, needs network for dataset download)",
+]

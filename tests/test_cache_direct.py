@@ -1,112 +1,61 @@
-#!/usr/bin/env python3
+"""Weight-distribution caching in the ShareGNN invariant layers.
+
+Building an invariant layer computes a weight distribution (which shared weight
+each node pair indexes into) and caches it to disk under <data>/caches/<hash>.pt.
+Rebuilding the same model must hit that cache and produce an identical
+distribution -- a stale or mis-keyed cache would silently hand the layer the
+wrong weight indices.
+
+The original version of this file timed two builds and printed a speedup;
+timing is too flaky to assert on in CI, so we assert on the cache artifact and
+on the equality of the recomputed distributions instead.
 """
-Direct test of InvariantBasedMessagePassingLayer caching.
-"""
+
+from __future__ import annotations
+
 import sys
-import time
 from pathlib import Path
+
+import pytest
 import torch
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-from datasets.graph_dataset import GraphDataset
-from models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
-from models.ShareGNN.utils import Layer, LayerHead
-from framework.utils.parameters import Parameters
+CACHE_DIR = ROOT / "data" / "TUDatasets" / "caches"
 
-def create_minimal_layer_config():
-    """Create a minimal layer configuration for testing."""
-    layer_dict = {
-        'layer_type': 'invariant_based_convolution',
-        'activation': 'torch.nn.Tanh()',
-        'bias': False,
-        'heads': [
-            {
-                'num': 1,
-                'bias': False,
-                'labels': {
-                    'head': {'label_type': 'primary'},
-                    'tail': {'label_type': 'primary'},
-                    'bias': {'label_type': 'primary'},
-                },
-                'properties': {
-                    'name': 'distances',
-                    'values': [0, 1, 2, 3]
-                }
-            }
-        ]
-    }
-    return Layer(layer_dict, layer_id=0)
 
-def test_caching():
-    """Test that caching works correctly."""
-    print("=" * 80)
-    print("Loading MUTAG dataset...")
-    print("=" * 80)
-
-    # Load dataset
-    dataset_path = Path('data/TUDatasets/MUTAG')
-    graph_data = GraphDataset(
-        root=str(dataset_path.parent),
-        name='MUTAG',
-        source='TUDatasets'
+def _invariant_layers(net):
+    from simplegnn.models.ShareGNN.layers.inv_based_message_passing import (
+        InvariantBasedMessagePassingLayer,
     )
 
-    print(f"Dataset loaded: {len(graph_data)} graphs\n")
+    return [m for m in net.net_layers if isinstance(m, InvariantBasedMessagePassingLayer)]
 
-    # Create minimal parameters object
-    class MinimalParams:
-        def __init__(self):
-            self.path = str(dataset_path.parent)
-            self.run_config = type('obj', (object,), {'config': {}})()
 
-    parameters = MinimalParams()
-    layer_config = create_minimal_layer_config()
+@pytest.mark.integration
+def test_invariant_layer_weight_distribution_is_cached_and_stable(share_gnn_setup):
+    from simplegnn.models.model import GraphModel
 
-    print("=" * 80)
-    print("FIRST RUN: Cache Miss Expected")
-    print("=" * 80)
+    graph_data, para = share_gnn_setup
 
-    start_time = time.time()
-    layer1 = InvariantBasedMessagePassingLayer(parameters, layer_config, graph_data)
-    first_run_time = time.time() - start_time
+    first = GraphModel(graph_data=graph_data, para=para, seed=42, device="cpu")
+    assert list(CACHE_DIR.glob("*.pt")), (
+        "building the model should have written a weight-distribution cache"
+    )
 
-    print(f"\nFirst run completed in {first_run_time:.2f} seconds")
-    print(f"Number of weights: {sum(layer1.weight_num)}")
+    # Rebuilding must reuse the cache and reproduce the same weight distribution.
+    second = GraphModel(graph_data=graph_data, para=para, seed=42, device="cpu")
 
-    print("\n" + "=" * 80)
-    print("SECOND RUN: Cache Hit Expected")
-    print("=" * 80)
+    first_layers = _invariant_layers(first)
+    second_layers = _invariant_layers(second)
+    assert first_layers, "fixture model should contain an invariant message-passing layer"
+    assert len(first_layers) == len(second_layers)
 
-    start_time = time.time()
-    layer2 = InvariantBasedMessagePassingLayer(parameters, layer_config, graph_data)
-    second_run_time = time.time() - start_time
-
-    print(f"\nSecond run completed in {second_run_time:.2f} seconds")
-    print(f"Number of weights: {sum(layer2.weight_num)}")
-
-    print("\n" + "=" * 80)
-    print("CACHE TEST RESULTS")
-    print("=" * 80)
-    print(f"First run time:  {first_run_time:.2f}s")
-    print(f"Second run time: {second_run_time:.2f}s")
-
-    if second_run_time < first_run_time:
-        speedup = first_run_time / second_run_time
-        print(f"✓ Cache speedup: {speedup:.1f}x")
-
-        # Verify correctness
-        if sum(layer1.weight_num) == sum(layer2.weight_num):
-            print("✓ Weight counts match")
-        if torch.equal(layer1.weight_distribution, layer2.weight_distribution):
-            print("✓ Weight distributions match")
-        if torch.equal(layer1.weight_distribution_slices, layer2.weight_distribution_slices):
-            print("✓ Weight distribution slices match")
-
-        print("\n✓ CACHE TEST PASSED")
-    else:
-        print(f"⚠ Warning: Second run not faster")
-
-if __name__ == '__main__':
-    test_caching()
+    for first_layer, second_layer in zip(first_layers, second_layers):
+        assert sum(first_layer.weight_num) == sum(second_layer.weight_num)
+        assert torch.equal(
+            first_layer.weight_distribution, second_layer.weight_distribution
+        )

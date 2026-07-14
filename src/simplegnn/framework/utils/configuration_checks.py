@@ -188,8 +188,8 @@ def check_hyperparameter_configuration_file(hyperparameter_configuration):
 
     if 'precision' not in hyperparameter_configuration:
         print(
-            'To use float or double precision, please specify the key "precision" in the main configuration file. The default value is "double".')
-        hyperparameter_configuration['precision'] = 'double'
+            'To use float or double precision, please specify the key "precision" in the main configuration file. The default value is "float".')
+        hyperparameter_configuration['precision'] = 'float'
 
     if 'mode' not in hyperparameter_configuration:
         print(

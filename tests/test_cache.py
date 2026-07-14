@@ -1,57 +1,49 @@
-#!/usr/bin/env python3
+"""Preprocessing is idempotent and safe to re-run (label/property caching).
+
+FrameworkMain.preprocessing() generates node labels and edge properties and
+writes them under data/TUDatasets/{labels,properties}/. Running it a second
+time must reuse those artifacts rather than regenerate or corrupt them, since
+every experiment re-runs preprocessing before training.
+
+The original version of this file timed two runs and printed a speedup against
+an example config that no longer exists; it asserted nothing. This version runs
+preprocessing twice against the lightweight ShareGNN test fixture and asserts
+the generated artifacts are present and unchanged.
 """
-Test script to verify weight distribution caching works correctly.
-"""
+
+from __future__ import annotations
+
 import sys
-import time
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+import pytest
 
-from framework.core import FrameworkMain
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-def test_caching():
-    """Test that caching speeds up subsequent runs."""
-    config_path = Path('examples/basic_example_share_gnn/main.yml')
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "share_gnn_mutag"
+LABELS_DIR = ROOT / "data" / "TUDatasets" / "labels" / "MUTAG"
 
-    print("=" * 80)
-    print("CACHE TEST: First Run (Cache Miss Expected)")
-    print("=" * 80)
 
-    # First run - should compute and save to cache
-    start_time = time.time()
-    experiment1 = FrameworkMain(config_path)
-    experiment1.preprocessing(num_threads=1)
-    first_run_time = time.time() - start_time
+@pytest.mark.integration
+def test_preprocessing_is_idempotent(mutag_main_config):
+    from simplegnn.framework.core import FrameworkMain
 
-    print(f"\nFirst run completed in {first_run_time:.2f} seconds")
+    main_config_path = mutag_main_config(
+        models=FIXTURES / "models_ShareGNN.yml",
+        hyperparameters=FIXTURES / "parameters.yml",
+    )
 
-    print("\n" + "=" * 80)
-    print("CACHE TEST: Second Run (Cache Hit Expected)")
-    print("=" * 80)
+    FrameworkMain(main_config_path).preprocessing(num_threads=1)
 
-    # Second run - should load from cache
-    start_time = time.time()
-    experiment2 = FrameworkMain(config_path)
-    experiment2.preprocessing(num_threads=1)
-    second_run_time = time.time() - start_time
+    generated = sorted(p.name for p in LABELS_DIR.glob("*.pt"))
+    assert generated, "preprocessing should have generated node label files"
+    fingerprint = {p.name: p.stat().st_size for p in LABELS_DIR.glob("*.pt")}
 
-    print(f"\nSecond run completed in {second_run_time:.2f} seconds")
+    # A second run must reuse the existing artifacts, not regenerate or drop them.
+    FrameworkMain(main_config_path).preprocessing(num_threads=1)
 
-    print("\n" + "=" * 80)
-    print("CACHE TEST RESULTS")
-    print("=" * 80)
-    print(f"First run time:  {first_run_time:.2f}s (compute + cache save)")
-    print(f"Second run time: {second_run_time:.2f}s (cache load)")
-
-    if second_run_time < first_run_time * 0.5:
-        speedup = first_run_time / second_run_time
-        print(f"✓ Cache speedup: {speedup:.1f}x")
-        print("✓ CACHE TEST PASSED")
-    else:
-        print(f"⚠ Warning: Second run not significantly faster")
-        print(f"  Expected <50% of first run, got {(second_run_time/first_run_time)*100:.1f}%")
-
-if __name__ == '__main__':
-    test_caching()
+    assert sorted(p.name for p in LABELS_DIR.glob("*.pt")) == generated
+    assert {p.name: p.stat().st_size for p in LABELS_DIR.glob("*.pt")} == fingerprint

@@ -332,6 +332,23 @@ class GraphDataset(InMemoryDataset):
     def num_classes(self) -> int:
         return self.number_of_output_classes
 
+    def to(self, device) -> 'GraphDataset':
+        """
+        Move the collated graph data (features, labels, attributes) to a device.
+
+        ``self.slices`` and the per-graph ``num_nodes`` bookkeeping stay on the
+        CPU because they are consumed by Python-side slicing and indexing (a
+        0-dim CUDA tensor in a slice expression forces a host sync per access).
+        """
+        if 'x' in self._data and self._data['x'].device == torch.device(device):
+            # already there — keep PyG's per-graph memoization cache intact
+            return self
+        self._data = self._data.to(device)
+        if 'num_nodes' in self._data:
+            self._data['num_nodes'] = self._data['num_nodes'].cpu()
+        # invalidate PyG's per-graph cache so __getitem__ re-separates on the new device
+        self._data_list = None
+        return self
 
     def process(self):
         sizes = None

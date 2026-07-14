@@ -21,15 +21,17 @@ class InvariantBasedLayer(FrameworkLayer, ABC):
         self.graph_data = graph_data
 
         # Weights
+        # NOTE: `weight_distribution` / `bias_distribution` are registered as
+        # non-persistent buffers by the concrete layers (so that net.to(device)
+        # moves them); they must NOT be pre-assigned here, register_buffer
+        # would raise "attribute already exists".
         self.Param_W = None
-        self.weight_distribution = None
-        self.weight_distribution_slices = None
+        self.weight_distribution_slices = None  # stays on CPU (used in Python slicing)
         self.weight_num = [] # number of weights per head
         self.current_W = torch.Tensor() # current weight matrix (for the graph considered in the forward pass)
         # Bias
         self.Param_b = None
-        self.bias_distribution = None
-        self.bias_distribution_slices = None
+        self.bias_distribution_slices = None  # stays on CPU (used in Python slicing)
         self.bias_num = [] # number of biases per head
         self.current_B = torch.Tensor() # current bias matrix (for the graph considered in the forward pass)
 

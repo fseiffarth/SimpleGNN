@@ -1,6 +1,8 @@
 # Next Steps
 
-**Last Updated:** 2026-02-09
+**Last Updated:** 2026-07-14
+
+> **See also:** `08-fable-invariant-layer-optimization.md` — consolidated optimization plan for the invariant-based layers (GPU parameter-registration bug fix, sparse COO forward, init vectorization + coarse caching, batching mechanism). It supersedes items 4, 6, 7, 9, 13, 19 and 24 below.
 
 Prioritized action items for SimpleGNN, ordered by impact and effort. Each item references the relevant spec file for full details.
 
@@ -54,11 +56,11 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 ## Phase 2: ShareGNN Quick Wins (high impact, low effort)
 
 ### 4. Cache config lookups in ShareGNN forward pass
-- **File:** `src/models/ShareGNN/layers/inv_based_message_passing.py:304-308`
+- **File:** `src/simplegnn/models/ShareGNN/layers/inv_based_message_passing.py:419-420`
 - **Issue:** Dict lookups on constant config values inside forward()
 - **Effort:** 5 min
 - **Spec:** `01-sharegnn-optimizations.md` Section 4
-- **Status:** 🔴 NOT IMPLEMENTED
+- **Status:** ✅ IMPLEMENTED — `use_degree_matrix`/`use_in_degrees` cached in `__init__`
 
 ---
 
@@ -74,19 +76,16 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 - **Status:** 🔴 NOT IMPLEMENTED - **NEW SPEC**
 
 ### 6. Pre-allocate weight distributions instead of quadratic torch.cat
-- **File:** `src/models/ShareGNN/layers/inv_based_message_passing.py:117-141`
+- **File:** `src/simplegnn/models/ShareGNN/layers/inv_based_message_passing.py:384-389`
 - **Issue:** Nested Python loops with repeated `torch.cat` cause O(n^2) allocation
-- **Effort:** 1-2 hours
 - **Spec:** `01-sharegnn-optimizations.md` Section 3
-- **Status:** 🔴 NOT IMPLEMENTED
-- **Note:** Can be combined with item #5 (parallel loading) for maximum initialization speedup
+- **Status:** ✅ IMPLEMENTED — chunk lists with a single `torch.cat` per graph; the remaining Python loop itself is addressed by spec 08 Phase 3a
 
 ### 7. Pre-allocate bias distributions
-- **File:** `src/models/ShareGNN/layers/inv_based_message_passing.py:151-161`
+- **File:** `src/simplegnn/models/ShareGNN/layers/inv_based_message_passing.py:390-397`
 - **Issue:** Same quadratic pattern for bias; O(graphs x features) with repeated concat
-- **Effort:** 1 hour (same pattern as step 6)
 - **Spec:** `01-sharegnn-optimizations.md` Section 3
-- **Status:** 🔴 NOT IMPLEMENTED
+- **Status:** ✅ IMPLEMENTED — same chunk-list pattern; remaining loop addressed by spec 08 Phase 3b
 
 ### 8. Pre-allocate pooling layer distributions
 - **File:** `src/models/ShareGNN/layers/inv_based_pooling.py:54-68`
@@ -100,11 +99,11 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 ## Phase 4: ShareGNN Forward Pass Performance (high impact, moderate effort)
 
 ### 9. Eliminate per-forward dense matrix allocation
-- **File:** `src/models/ShareGNN/layers/inv_based_message_passing.py:237, 254`
+- **File:** `src/simplegnn/models/ShareGNN/layers/inv_based_message_passing.py:632, 649` (set_weights/set_bias; old line refs stale)
 - **Issue:** `torch.zeros((heads, N, N))` allocated every forward call; should pre-allocate and zero in-place, or use sparse tensors
 - **Effort:** 2-4 hours
-- **Spec:** `01-sharegnn-optimizations.md` Section 2
-- **Status:** 🔴 NOT IMPLEMENTED
+- **Spec:** `08-fable-invariant-layer-optimization.md` Phase 2 (sparse COO forward)
+- **Status:** 🔴 NOT IMPLEMENTED — superseded by spec 08
 
 ### 10. Same fix for pooling layer dense allocation
 - **File:** `src/models/ShareGNN/layers/inv_based_pooling.py:130`
@@ -186,10 +185,10 @@ Prioritized action items for SimpleGNN, ordered by impact and effort. Each item 
 ## Phase 8: Architecture Improvements (high impact, high effort)
 
 ### 19. Add ShareGNN batch processing support
-- **Files:** `src/framework/model_configuration.py:798-807`, ShareGNN layer forward methods
+- **Files:** `src/simplegnn/framework/model_configuration.py:1280-1282` (train), `:1355-1356` (eval), ShareGNN layer forward methods
 - **Issue:** Per-graph Python loop; 10-50x slower than batched execution
 - **Effort:** 1-2 days
-- **Spec:** `01-sharegnn-optimizations.md` Section 1
+- **Spec:** `08-fable-invariant-layer-optimization.md` Phase 4d — block-diagonal sparse mechanism (weight_distribution node indices are graph-local, offsets re-added per batch)
 - **Status:** 🔴 NOT IMPLEMENTED - **HIGHEST RUNTIME IMPACT ITEM**
 
 ### 20. Fix tensor shape convention consistency

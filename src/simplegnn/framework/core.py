@@ -1125,7 +1125,7 @@ def preprocess_graph_data(experiment_configuration: dict):
                                 input_features=experiment_configuration.get('input_features', None),
                                 output_features=experiment_configuration.get('output_features', None),
                                 graph_format=experiment_configuration.get('format', 'RuleGNNDataset'),
-                                precision=experiment_configuration.get('precision', 'double'),
+                                precision=experiment_configuration.get('precision', 'float'),
                                 experiment_config=experiment_configuration)
     # move the dataset to the device
     graph_data.to(experiment_configuration.get('device', 'cpu'))
