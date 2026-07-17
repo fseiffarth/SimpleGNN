@@ -29,7 +29,7 @@ rule_occurrence_threshold: 2
 # lr*lambda per epoch); to zero ~1e-3 weights over ~1 epoch, lambda ~ 0.01.
 # Sweep around {0.002, 0.01, 0.05}; lambda>=1 is far too aggressive. NOT grid-
 # searchable (read directly, like rule_occurrence_threshold) -> edit per run.
-l1_regularization: { convolution: 0.001, aggregation: 0.001 }
+l1_regularization: { convolution: 0.01, aggregation: 0.01 }
 
 # mean_aggregation: fan-in-scaled normal with a nonzero mean-aggregation prior.
 # gain=1.0, mean_ratio=-0.5 reproduces the old 'lower_upper' init exactly
@@ -38,10 +38,10 @@ l1_regularization: { convolution: 0.001, aggregation: 0.001 }
 # positional_encoding: init of the invariant-based encoder embedding tables
 # (supports uniform/normal/constant/lower_upper; falls back to normal(0, 0.1)
 # if the entry is removed).
-weight_initialization: { convolution: { type: 'mean_aggregation', gain: 2.0, mean_ratio: 0.5 },
-                         convolution_bias: { type: 'mean_aggregation', gain: 2.0, mean_ratio: 0.5 },
-                         aggregation: { type: 'mean_aggregation', gain: 2.0, mean_ratio: 0.5 },
-                         aggregation_bias: { type: 'mean_aggregation', gain: 2.0, mean_ratio: 0.5 },
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
                          positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
 
 batch_size:
@@ -49,7 +49,7 @@ batch_size:
 learning_rate:
   - 0.001
 epochs:
-  - 300
+  - 500
 
 early_stopping:
   enabled: False

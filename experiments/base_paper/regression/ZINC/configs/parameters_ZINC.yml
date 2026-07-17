@@ -1,4 +1,6 @@
-# Hyperparameters for ZINC (migrated from old monolithic main config).
+# Hyperparameters for ZINC test v2 (network_ZINC_test_v2.yml): identical to
+# parameters_ZINC_test.yml plus the positional_encoding init for the
+# invariant-based encoder layer (specs/15).
 device: cpu
 share_gnn_forward: { batched: True }
 mode: experiments
@@ -27,16 +29,20 @@ rule_occurrence_threshold: 2
 # lr*lambda per epoch); to zero ~1e-3 weights over ~1 epoch, lambda ~ 0.01.
 # Sweep around {0.002, 0.01, 0.05}; lambda>=1 is far too aggressive. NOT grid-
 # searchable (read directly, like rule_occurrence_threshold) -> edit per run.
-l1_regularization: { convolution: 0.001, aggregation: 0.001 }
+l1_regularization: { convolution: 0.01, aggregation: 0.01 }
 
 # mean_aggregation: fan-in-scaled normal with a nonzero mean-aggregation prior.
 # gain=1.0, mean_ratio=-0.5 reproduces the old 'lower_upper' init exactly
 # (conv: std=0.0032, mean=-0.0016 ; aggr: std=0.0053, mean=-0.0027).
 # Sweep `gain` to scale (gain=2 -> 2x std), `mean_ratio` for the aggregation prior.
+# positional_encoding: init of the invariant-based encoder embedding tables
+# (supports uniform/normal/constant/lower_upper; falls back to normal(0, 0.1)
+# if the entry is removed).
 weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
                          convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
                          aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
-                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 } }
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
 
 batch_size:
   - 128
@@ -55,5 +61,9 @@ scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.0001
 
 training_data_sampling: { type: 'default' }
 
-input_features: { name: node_labels, transformation: 'one_hot' }
+# The first layer is an invariant_based_positional_encoding with
+# concatenate_input: false, so the model's input node features are DISCARDED —
+# each node's feature vector comes from the learned per-invariant embedding, not
+# the one-hot atom type. Feed a constant instead (value discarded downstream).
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
 best_model: True

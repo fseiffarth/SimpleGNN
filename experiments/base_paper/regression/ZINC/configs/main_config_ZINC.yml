@@ -1,4 +1,6 @@
-# ZINC graph-regression experiment (migrated to the three-tier schema).
+# ZINC graph-regression experiment: invariant-based positional encoding as node
+# encoder (replacing the input MLP) and a pre-norm residual block on the
+# convolution (specs/15). Promoted from the test_v2 configuration.
 datasets:
   - {
       name: "ZINC",
