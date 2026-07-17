@@ -173,6 +173,42 @@ def wl_fast2(edge_src, edge_dst, num_nodes, depth, init_labels=None):
     return wl_core(edge_src, edge_dst, num_nodes, colors, rounds)
 ```
 
+## Implementation status (2026-07-17)
+
+Items 1–5 of the recommended order are implemented; all former xfail tests in
+`tests/test_invariant_correctness.py` are now positive tests.
+
+- Bugs 1–6 fixed: cycle/clique/subgraph count dicts are canonicalized via
+  `_canonical_count_string` (sorted items); the small-dataset progress-print
+  crash is gone (per-graph loop replaced); betweenness binning deduplicates
+  percentile edges (`np.unique` + `right=True` digitize); the
+  `LabeledDegreeNodeLabeling` class uses per-graph hash dicts with sorted
+  neighbor labels; filenames now match `get_label_string` (cycles append
+  `_max` when the bound is omitted — the loader-side string also keeps the
+  `min` prefix now — cliques drop `_None`, `wl_labeled` omits explicit primary
+  base labels on the loader side); `write_distance_edge_properties` rejects
+  negative/non-integer edge labels with a `ValueError`.
+- WL labels use vectorized color refinement (`_wl_color_refinement` in
+  `node_labeling_functions.py`) fed by flat edge arrays built directly from
+  the nx graphs — no `disjoint_union_all`, no string hashing. Verified exact
+  partition match vs the old nx path (depths 1/2/3/5, labeled + unlabeled);
+  measured 13.6x on 2000 molecular-scale graphs. `with_edge_labels=True`
+  still uses the nx fallback (`_weisfeiler_lehman_node_labeling_nx`).
+- `write_distance_properties` uses scipy `csgraph.shortest_path` + vectorized
+  bucketing; `write_distance_edge_properties` uses one BFS per source with a
+  shortest-path-DAG label-count DP (`_edge_label_distance_keys`) instead of
+  `all_pairs_all_shortest_paths` + `deepcopy`. Byte-identical keys, pair sets,
+  and slices verified against the old implementations (with and without
+  cutoff).
+- Cycle/clique/in-circle per-graph loops go through `_adaptive_parallel_map`:
+  a few graphs are probed serially and joblib only kicks in when the projected
+  remaining serial time exceeds ~10 s (a fixed graph-count threshold made
+  cheap workloads slower — worker spawn + graph pickling dominate there).
+  Parallel and serial paths verified bit-identical.
+- Item 6 (clique all-vs-maximal, subgraph induced-vs-monomorphism, wl depth
+  semantics) is deliberately untouched: these change labels and are modeling
+  decisions.
+
 ## Recommended order of work
 
 1. Fix the invariance bug (1) — one-line canonicalization, affects results.

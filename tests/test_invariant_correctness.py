@@ -156,9 +156,6 @@ def test_save_labeled_degree_labels_no_cross_graph_contamination(tmp_path):
     assert same_partition(labels_pair, labels_alone)
 
 
-@pytest.mark.xfail(reason="LabeledDegreeNodeLabeling class keeps one node_to_hash dict "
-                          "across graphs, so labels of earlier graphs are overwritten by "
-                          "later graphs with the same node ids", strict=True)
 def test_labeled_degree_class_no_cross_graph_contamination():
     g1 = attach_primary_labels(nx.path_graph(3), [1, 1, 1])
     g2 = attach_primary_labels(nx.star_graph(2), [2, 2, 2])
@@ -189,16 +186,10 @@ def test_cycle_labels_are_isomorphism_invariant(tmp_path):
         assert labels[0][v] == labels[1][perm[v]]
 
 
-@pytest.mark.xfail(raises=ZeroDivisionError, strict=True,
-                   reason="progress print does modulo by len(graphs)//10, which is 0 "
-                          "for datasets with fewer than 10 graphs")
 def test_save_cycle_labels_works_for_small_datasets(tmp_path):
     save_cycle_labels(stub([nx.cycle_graph(5)] * 5), max_cycle_length=6, label_path=tmp_path)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="get_label_string says 'simple_cycles_max' when max_cycle_length "
-                          "is omitted, but save_cycle_labels writes '..._None'")
 def test_cycle_filename_without_max_matches_get_label_string(tmp_path):
     file = save_cycle_labels(stub([nx.cycle_graph(5)] * 10), max_cycle_length=None,
                              label_path=tmp_path)
@@ -206,11 +197,6 @@ def test_cycle_filename_without_max_matches_get_label_string(tmp_path):
     assert file.name == f"stub_labels_{expected}.pt"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="per-node cycle-count dicts are stringified in cycle DISCOVERY "
-                          "order, so str({3:1, 4:1}) != str({4:1, 3:1}) and structurally "
-                          "identical nodes get different labels depending on edge numbering; "
-                          "fix: canonicalize, e.g. str(sorted(d.items()))")
 def test_cycle_labels_do_not_depend_on_edge_numbering(tmp_path):
     # both graphs: node 0 is the hub of one triangle and one square
     ga = nx.Graph()
@@ -241,9 +227,6 @@ def test_clique_labels_separate_triangle_from_isolated(tmp_path):
     assert labels[3] != labels[0]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="same discovery-order dependence as cycle labels: the per-node "
-                          "maximal-clique size-count dict is stringified in enumeration order")
 def test_clique_labels_do_not_depend_on_node_numbering(tmp_path):
     import itertools
     base = [(0, 1), (1, 2), (2, 0), (0, 3)]      # triangle + pendant edge at hub 0
@@ -271,11 +254,6 @@ def test_subgraph_labels_mark_pattern_nodes(tmp_path):
 
 
 # ------------------------------------------------------------------ betweenness
-@pytest.mark.xfail(strict=True,
-                   reason="percentile binning does not deduplicate bin edges: on skewed "
-                          "distributions (star: 80% of nodes have centrality 0, so every "
-                          "percentile edge is 0) all nodes collapse into one bin and the "
-                          "center is not separated from the leaves")
 def test_betweenness_labels_order_star_center_above_leaves():
     g = nx.star_graph(4)
     labels = BetweennessCentralityNodeLabeling(stub([g]), num_bins=2).generate()
@@ -290,10 +268,6 @@ def test_betweenness_labels_constant_on_vertex_transitive_graph():
 
 
 # ------------------------------------------------------------------- wl_labeled
-@pytest.mark.xfail(strict=True,
-                   reason="get_label_string includes 'primary_base_labels' when base_labels "
-                          "primary is given explicitly, but save_wl_labeled_labels skips it, "
-                          "so the loader looks for a file that was never written")
 def test_wl_labeled_primary_base_filename_matches_get_label_string():
     label_dict = {"label_type": "wl_labeled", "depth": 3,
                   "base_labels": {"label_type": "primary"}}
@@ -362,12 +336,11 @@ def test_edge_label_distance_aggregates_all_shortest_paths(tmp_path):
     assert len(pairs[(2, 2, (4,))]) == 4                # both diagonals, both directions
 
 
-@pytest.mark.xfail(raises=IndexError, strict=True,
-                   reason="label_occurrences is indexed by the raw edge label value, so "
-                          "negative edge labels crash (and huge labels allocate huge keys); "
-                          "the isinstance() type check above it is dead code and never fires")
 def test_edge_label_distance_rejects_or_handles_negative_labels(tmp_path):
+    # negative labels cannot be encoded in the positional label-count tuple,
+    # so they are rejected with a clear error instead of an IndexError
     g = edge_labeled([(0, 1, -1)], 2)
     graph_data = types.SimpleNamespace(name="neg", nx_graphs=[g],
                                        slices={"x": torch.tensor([0, 2])})
-    write_distance_edge_properties(graph_data, out_path=tmp_path)
+    with pytest.raises(ValueError, match="non-negative"):
+        write_distance_edge_properties(graph_data, out_path=tmp_path)

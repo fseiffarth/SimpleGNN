@@ -68,6 +68,111 @@ from simplegnn.utils.utils import get_k_lowest_nonzero_indices, valid_pruning_co
 from simplegnn.utils.timer import TimeClass
 
 
+# Aliases grouped exactly as in ModelConfiguration.set_loss_function, mapped to a
+# short human-readable label for the per-epoch console line.
+_LOSS_DISPLAY_NAMES = {
+    'CrossEntropyLoss': 'CrossEntropy',
+    'MeanSquaredError': 'MSE', 'MSELoss': 'MSE', 'mse': 'MSE', 'MSE': 'MSE',
+    'RootedMeanSquaredError': 'RMSE', 'RMSELoss': 'RMSE', 'rmse': 'RMSE', 'RMSE': 'RMSE',
+    'L1Loss': 'MAE', 'l1': 'MAE', 'L1': 'MAE', 'mean_absolute_error': 'MAE',
+    'mae': 'MAE', 'MAE': 'MAE', 'MeanAbsoluteError': 'MAE',
+    'SmoothL1Loss': 'SmoothL1', 'smooth_l1': 'SmoothL1', 'SmoothL1': 'SmoothL1',
+    'Huber': 'SmoothL1', 'HuberLoss': 'SmoothL1', 'huber': 'SmoothL1',
+    'BCELoss': 'BCE', 'bce': 'BCE', 'BCE': 'BCE',
+    'BCEWithLogitsLoss': 'BCE', 'bce_with_logits': 'BCE', 'BCEWithLogits': 'BCE',
+    'NLLLoss': 'NLL', 'nll': 'NLL', 'NLL': 'NLL',
+}
+
+
+def loss_display_name(loss) -> str:
+    """
+    Short display label for a configured loss string.
+
+    Maps every loss alias accepted by :meth:`ModelConfiguration.set_loss_function`
+    to a compact label (``MAE``, ``MSE``, ``RMSE``, ``SmoothL1``, ``CrossEntropy``,
+    ``BCE``, ``NLL``). Unknown values are returned unchanged so the console line
+    still names whatever was configured.
+
+    Parameters
+    ----------
+    loss : str
+        The configured loss string (``para.run_config.loss``).
+
+    Returns
+    -------
+    str
+        Display label for the loss.
+    """
+    return _LOSS_DISPLAY_NAMES.get(str(loss), str(loss))
+
+
+def pooled_abs_error_stats(abs_err) -> Tuple[float, float]:
+    """
+    Mean and population standard deviation of a tensor of absolute errors.
+
+    Computed over the pooled elements (not as an average of per-batch statistics),
+    and returned as plain Python floats so they are written to the CSV as numbers
+    rather than ``tensor(...)`` reprs.
+
+    Parameters
+    ----------
+    abs_err : torch.Tensor
+        Absolute errors ``|label - output|`` (any shape; flattened internally).
+
+    Returns
+    -------
+    Tuple[float, float]
+        ``(mae, std)``. ``std`` is ``0.0`` for a single element (population std,
+        ``unbiased=False``), never ``NaN``. Empty input yields ``(0.0, 0.0)``.
+    """
+    abs_err = abs_err.detach().flatten()
+    n = abs_err.numel()
+    if n == 0:
+        return 0.0, 0.0
+    mae = abs_err.mean().item()
+    if n == 1:
+        return mae, 0.0
+    return mae, abs_err.std(unbiased=False).item()
+
+
+def inverse_transform_targets(values, invert_cfg, stats):
+    """
+    Map normalized regression targets/outputs back to the original scale.
+
+    Applies the inverse of the output normalization configured via
+    ``invert_outputs``. Call once per tensor so that labels and outputs receive the
+    *same* transform (a past bug applied ``minmax_zero`` to labels only, inflating
+    the MAE).
+
+    Parameters
+    ----------
+    values : torch.Tensor
+        Normalized targets or model outputs.
+    invert_cfg : dict or None
+        The ``invert_outputs`` configuration. Only ``dict`` values with a
+        ``normalization`` of ``standard`` / ``minmax`` / ``minmax_zero`` transform;
+        anything else returns ``values`` unchanged.
+    stats : dict
+        Statistics of the original (un-normalized) targets with keys ``mean``,
+        ``std``, ``min``, ``max``.
+
+    Returns
+    -------
+    torch.Tensor
+        Values on the original scale.
+    """
+    if not isinstance(invert_cfg, dict):
+        return values
+    normalization = invert_cfg.get('normalization', 'standard')
+    if normalization == 'standard':
+        return values * (stats['std'] + 1e-8) + stats['mean']
+    if normalization == 'minmax':
+        return values * (stats['max'] - stats['min'] + 1e-8) + stats['min']
+    if normalization == 'minmax_zero':
+        return (0.5 * values + 0.5) * (stats['max'] - stats['min'] + 1e-8) + stats['min']
+    return values
+
+
 class EvaluationValues:
     """
     Container for evaluation metrics during training and testing.
@@ -105,6 +210,12 @@ class EvaluationValues:
         self.mae = 0.0
         self.mae_std = 0.0
         self.current_elements = 0
+        # Running accumulators for the pooled training MAE/std (summed over all
+        # batches of the epoch, so mae/mae_std are the true pooled statistics
+        # rather than an average of per-batch means/stds).
+        self.sum_abs_err = 0.0
+        self.sumsq_abs_err = 0.0
+        self.n_abs_err = 0
 
 
 
@@ -265,6 +376,13 @@ class ModelConfiguration:
         self.class_weights = None
         # cached full-graph forward output for node-level tasks (see evaluate_node_task)
         self._node_eval_outputs = None
+        # cached statistics of the un-normalized targets (only used when
+        # invert_outputs is configured); computed once via _get_original_y_stats
+        self._original_y_stats = None
+        # last computed validation/test metrics, carried forward to the CSV on
+        # epochs where validation is skipped (validation_frequency > 1)
+        self._last_validation_values = None
+        self._last_test_values = None
         self._csv_buffer = []
         self._csv_flush_interval = self.para.run_config.config.get('csv_flush_interval', 10)
         # get gpu or cpu: (cpu is recommended at the moment)
@@ -821,6 +939,47 @@ class ModelConfiguration:
                 layer.Param_W.data = layer.Param_W.data * layer.mask
 
 
+    def _get_original_y_stats(self) -> dict:
+        """
+        Statistics (mean/std/min/max) of the un-normalized targets, cached.
+
+        Used to invert output normalization when ``invert_outputs`` is configured.
+        Computed once from ``self.graph_data.data['original_y']`` and reused for
+        every batch and every validation/test evaluation, instead of reducing the
+        full target tensor on each call.
+        """
+        if self._original_y_stats is None:
+            original_y = self.graph_data.data['original_y']
+            self._original_y_stats = {
+                'mean': original_y.mean(),
+                'std': original_y.std(),
+                'min': original_y.min(),
+                'max': original_y.max(),
+            }
+        return self._original_y_stats
+
+    def _apply_inverse_transforms(self, flatten_labels, flatten_outputs):
+        """
+        Undo output feature/normalization transforms on labels and outputs.
+
+        Single implementation shared by the training, validation and test
+        evaluation branches. Applies ``output_features_inverse`` (via
+        :meth:`GraphData.transform_data`) and then ``invert_outputs`` (via
+        :func:`inverse_transform_targets`) to *both* tensors, so the regression
+        metrics are always computed on the original scale.
+        """
+        config = self.para.run_config.config
+        output_features_inverse = config.get('output_features_inverse', None)
+        if output_features_inverse is not None:
+            flatten_labels = GraphData.transform_data(flatten_labels, output_features_inverse)
+            flatten_outputs = GraphData.transform_data(flatten_outputs, output_features_inverse)
+        invert_outputs = config.get('invert_outputs', None)
+        if invert_outputs is not None:
+            stats = self._get_original_y_stats()
+            flatten_labels = inverse_transform_targets(flatten_labels, invert_outputs, stats)
+            flatten_outputs = inverse_transform_targets(flatten_outputs, invert_outputs, stats)
+        return flatten_labels, flatten_outputs
+
     def evaluate_results(self, epoch: int,
                          train_values: EvaluationValues,
                          validation_values: EvaluationValues,
@@ -926,28 +1085,24 @@ class ModelConfiguration:
             batch_acc = 0
             # if num classes is one calculate the mae and mae_std or if the task is regression
             if self.para.run_config.task in ('graph_regression', 'node_regression'):
-                # flatten the labels and outputs
-                flatten_labels = labels.detach().clone().flatten()
-                flatten_outputs = outputs.detach().clone().flatten()
-                if self.para.run_config.config.get('output_features_inverse', None) is not None:
-                    flatten_labels = GraphData.transform_data(flatten_labels, self.para.run_config.config['output_features_inverse'])
-                    flatten_outputs = GraphData.transform_data(flatten_outputs, self.para.run_config.config['output_features_inverse'])
-                if self.para.run_config.config.get('invert_outputs', None) is not None:
-                    if isinstance(self.para.run_config.config['invert_outputs'], dict):
-                        if self.para.run_config.config['invert_outputs'].get('normalization', 'standard') == 'standard':
-                            flatten_labels = flatten_labels*(self.graph_data.data['original_y'].std() + 1e-8) + self.graph_data.data['original_y'].mean()
-                            flatten_outputs = flatten_outputs*(self.graph_data.data['original_y'].std() + 1e-8) + self.graph_data.data['original_y'].mean()
-                        elif self.para.run_config.config['invert_outputs'].get('normalization', 'standard') == 'minmax':
-                            flatten_labels = flatten_labels * (self.graph_data.data['original_y'].max() - self.graph_data.data['original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                            flatten_outputs = flatten_outputs * (self.graph_data.data['original_y'].max() - self.graph_data.data['original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                        elif self.para.run_config.config['invert_outputs'].get('normalization', 'standard') == 'minmax_zero':
-                            flatten_labels = (0.5 * flatten_labels + 0.5) * (self.graph_data.data['original_y'].max() - self.graph_data.data['original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-
-
-                batch_mae = torch.mean(torch.abs(flatten_labels - flatten_outputs))
-                batch_mae_std = torch.std(torch.abs(flatten_labels - flatten_outputs))
-                train_values.mae = (train_values.mae * train_values.current_elements + batch_mae * batch_length) / (train_values.current_elements + batch_length)
-                train_values.mae_std = (train_values.mae_std * train_values.current_elements + batch_mae_std * batch_length) / (train_values.current_elements + batch_length)
+                # flatten the labels and outputs, undo any output normalization
+                flatten_labels = labels.detach().flatten()
+                flatten_outputs = outputs.detach().flatten()
+                flatten_labels, flatten_outputs = self._apply_inverse_transforms(flatten_labels, flatten_outputs)
+                # Accumulate pooled absolute-error statistics over the epoch so
+                # mae/mae_std are the true pooled mean/std (not an average of
+                # per-batch means/stds), stored as floats.
+                abs_err = torch.abs(flatten_labels - flatten_outputs)
+                train_values.sum_abs_err += abs_err.sum().item()
+                train_values.sumsq_abs_err += (abs_err ** 2).sum().item()
+                train_values.n_abs_err += abs_err.numel()
+                n = train_values.n_abs_err
+                train_values.mae = train_values.sum_abs_err / n if n else 0.0
+                if n > 1:
+                    variance = max(0.0, train_values.sumsq_abs_err / n - train_values.mae ** 2)
+                    train_values.mae_std = float(np.sqrt(variance))
+                else:
+                    train_values.mae_std = 0.0
             else:
                 prediction = torch.argmax(outputs, dim=1)
                 batch_acc = 100 * torch.sum(prediction == labels).item() / len(labels)
@@ -961,21 +1116,18 @@ class ModelConfiguration:
                         train_values.accuracy_roc_auc = (train_values.accuracy_roc_auc * train_values.current_elements + batch_roc_auc * batch_length) / (train_values.current_elements + batch_length)
             train_values.current_elements += batch_length
             if self.para.print_results:
+                # train_values.loss is the running sum over batches so far; show it
+                # as a running mean and label it with the configured loss.
+                loss_label = loss_display_name(self.para.run_config.loss)
+                running_loss = train_values.loss / (batch_idx + 1)
                 if self.graph_data.num_classes == 1 or self.para.run_config.task in ('graph_regression', 'node_regression'):
-                    print(
-                        "\tepoch: {}/{}, batch: {}/{}, loss: {}, acc: {} %, mae: {}, mae_std: {}".format(epoch + 1,
-                                                                                                         self.para.n_epochs,
-                                                                                                         batch_idx + 1,
-                                                                                                         num_batches,
-                                                                                                         train_values.loss,
-                                                                                                         batch_acc,
-                                                                                                         train_values.mae,
-                                                                                                         train_values.mae_std))
+                    print("\tepoch: {}/{}, batch: {}/{}, {} loss: {:.4f}, MAE: {:.4f} ± {:.4f}".format(
+                        epoch + 1, self.para.n_epochs, batch_idx + 1, num_batches,
+                        loss_label, running_loss, train_values.mae, train_values.mae_std))
                 else:
-                    print("\tepoch: {}/{}, batch: {}/{}, loss: {}, acc: {} % ".format(epoch + 1, self.para.n_epochs,
-                                                                                      batch_idx + 1,
-                                                                                      num_batches,
-                                                                                      train_values.loss, batch_acc))
+                    print("\tepoch: {}/{}, batch: {}/{}, {} loss: {:.4f}, acc: {:.2f} %".format(
+                        epoch + 1, self.para.n_epochs, batch_idx + 1, num_batches,
+                        loss_label, running_loss, batch_acc))
             self.para.count += 1
 
             if self.para.save_prediction_values:
@@ -1012,38 +1164,11 @@ class ModelConfiguration:
                 validation_loss = self.criterion(outputs, labels).item()
                 validation_values.loss = validation_loss
                 if self.para.run_config.task in ('graph_regression', 'node_regression'):
-                    flatten_labels = labels.detach().clone().flatten()
-                    flatten_outputs = outputs.detach().clone().flatten()
-                    if self.para.run_config.config.get('output_features_inverse', None) is not None:
-                        flatten_labels = GraphData.transform_data(flatten_labels, self.para.run_config.config[
-                            'output_features_inverse'])
-                        flatten_outputs = GraphData.transform_data(flatten_outputs, self.para.run_config.config[
-                            'output_features_inverse'])
-                    if self.para.run_config.config.get('invert_outputs', None) is not None:
-                        if isinstance(self.para.run_config.config['invert_outputs'], dict):
-                            if self.para.run_config.config['invert_outputs'].get('normalization',
-                                                                                 'standard') == 'standard':
-                                flatten_labels = flatten_labels * (self.graph_data.data['original_y'].std() + 1e-8) + \
-                                                 self.graph_data.data['original_y'].mean()
-                                flatten_outputs = flatten_outputs * (self.graph_data.data['original_y'].std() + 1e-8) + \
-                                                  self.graph_data.data['original_y'].mean()
-                            elif self.para.run_config.config['invert_outputs'].get('normalization',
-                                                                                   'standard') == 'minmax':
-                                flatten_labels = flatten_labels * (
-                                            self.graph_data.data['original_y'].max() - self.graph_data.data[
-                                        'original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                                flatten_outputs = flatten_outputs * (
-                                            self.graph_data.data['original_y'].max() - self.graph_data.data[
-                                        'original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                            elif self.para.run_config.config['invert_outputs'].get('normalization',
-                                                                                   'standard') == 'minmax_zero':
-                                flatten_labels = (0.5 * flatten_labels + 0.5) * (
-                                            self.graph_data.data['original_y'].max() - self.graph_data.data[
-                                        'original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                    validation_mae = torch.mean(torch.abs(flatten_labels - flatten_outputs))
-                    validation_values.mae = validation_mae
-                    validation_mae_std = torch.std(torch.abs(flatten_labels - flatten_outputs))
-                    validation_values.mae_std = validation_mae_std
+                    flatten_labels = labels.detach().flatten()
+                    flatten_outputs = outputs.detach().flatten()
+                    flatten_labels, flatten_outputs = self._apply_inverse_transforms(flatten_labels, flatten_outputs)
+                    validation_values.mae, validation_values.mae_std = pooled_abs_error_stats(
+                        torch.abs(flatten_labels - flatten_outputs))
                 else:
                     prediction = torch.argmax(outputs, dim=1)
                     if len(labels.shape) > 1:
@@ -1139,38 +1264,11 @@ class ModelConfiguration:
                 test_loss = self.criterion(outputs, labels).item()
                 test_values.loss = test_loss
                 if self.para.run_config.task in ('graph_regression', 'node_regression'):
-                    flatten_labels = labels.detach().clone().flatten()
-                    flatten_outputs = outputs.detach().clone().flatten()
-                    if self.para.run_config.config.get('output_features_inverse', None) is not None:
-                        flatten_labels = GraphData.transform_data(flatten_labels, self.para.run_config.config[
-                            'output_features_inverse'])
-                        flatten_outputs = GraphData.transform_data(flatten_outputs, self.para.run_config.config[
-                            'output_features_inverse'])
-                    if self.para.run_config.config.get('invert_outputs', None) is not None:
-                        if isinstance(self.para.run_config.config['invert_outputs'], dict):
-                            if self.para.run_config.config['invert_outputs'].get('normalization',
-                                                                                 'standard') == 'standard':
-                                flatten_labels = flatten_labels * (self.graph_data.data['original_y'].std() + 1e-8) + \
-                                                 self.graph_data.data['original_y'].mean()
-                                flatten_outputs = flatten_outputs * (self.graph_data.data['original_y'].std() + 1e-8) + \
-                                                  self.graph_data.data['original_y'].mean()
-                            elif self.para.run_config.config['invert_outputs'].get('normalization',
-                                                                                   'standard') == 'minmax':
-                                flatten_labels = flatten_labels * (
-                                            self.graph_data.data['original_y'].max() - self.graph_data.data[
-                                        'original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                                flatten_outputs = flatten_outputs * (
-                                            self.graph_data.data['original_y'].max() - self.graph_data.data[
-                                        'original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                            elif self.para.run_config.config['invert_outputs'].get('normalization',
-                                                                                   'standard') == 'minmax_zero':
-                                flatten_labels = (0.5 * flatten_labels + 0.5) * (
-                                            self.graph_data.data['original_y'].max() - self.graph_data.data[
-                                        'original_y'].min() + 1e-8) + self.graph_data.data['original_y'].min()
-                    test_mae = torch.mean(torch.abs(flatten_labels - flatten_outputs))
-                    test_values.mae = test_mae
-                    test_mae_std = torch.std(torch.abs(flatten_labels - flatten_outputs))
-                    test_values.mae_std = test_mae_std
+                    flatten_labels = labels.detach().flatten()
+                    flatten_outputs = outputs.detach().flatten()
+                    flatten_labels, flatten_outputs = self._apply_inverse_transforms(flatten_labels, flatten_outputs)
+                    test_values.mae, test_values.mae_std = pooled_abs_error_stats(
+                        torch.abs(flatten_labels - flatten_outputs))
                 else:
                     prediction = torch.argmax(outputs, dim=1)
                     if len(labels.shape) > 1:

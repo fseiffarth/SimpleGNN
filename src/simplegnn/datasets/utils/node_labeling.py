@@ -6,6 +6,7 @@ from typing import List, Optional, Union, Tuple
 
 import networkx as nx
 import torch
+from joblib import Parallel, delayed
 from networkx.algorithms.isomorphism import GraphMatcher
 from numpy import sort
 from torch_geometric.io import fs
@@ -281,7 +282,9 @@ def get_label_string(label_dict: dict) -> str:
             l_string = f"{l_string}_{max_labels}"
     elif label_type == "wl_labeled":
         l_string = 'wl_labeled'
-        if 'base_labels' in label_dict:
+        # primary base labels are the default and are omitted from the filename
+        # (matching save_wl_labeled_labels)
+        if 'base_labels' in label_dict and label_dict['base_labels'].get('label_type') != 'primary':
             l_string = f"{l_string}_{get_label_string(label_dict['base_labels'])}_base_labels"
         iterations = label_dict.get('depth', 3)
         l_string = f"{l_string}_{iterations}"
@@ -290,7 +293,7 @@ def get_label_string(label_dict: dict) -> str:
             l_string = f"{l_string}_{max_labels}"
     elif label_type == "wl_labeled_edges":
         l_string = 'wl_labeled_edges'
-        if 'base_labels' in label_dict:
+        if 'base_labels' in label_dict and label_dict['base_labels'].get('label_type') != 'primary':
             l_string = f"{l_string}_{get_label_string(label_dict['base_labels'])}_base_labels"
         iterations = label_dict.get('depth', 3)
         l_string = f"{l_string}_{iterations}"
@@ -311,7 +314,7 @@ def get_label_string(label_dict: dict) -> str:
             max_cycle_length = label_dict['max_cycle_length']
             l_string = f"{l_string}_{max_cycle_length}"
         else:
-            l_string = "simple_cycles_max"
+            l_string = f"{l_string}_max"
         max_labels = label_dict.get('max_labels', None)
         if max_labels is not None:
             l_string = f"{l_string}_{max_labels}"
@@ -324,7 +327,7 @@ def get_label_string(label_dict: dict) -> str:
             max_cycle_length = label_dict['max_cycle_length']
             l_string = f"{l_string}_{max_cycle_length}"
         else:
-            l_string = "induced_cycles_max"
+            l_string = f"{l_string}_max"
         max_labels = label_dict.get('max_labels', None)
         if max_labels is not None:
             l_string = f"{l_string}_{max_labels}"
@@ -694,23 +697,23 @@ class LabeledDegreeNodeLabeling(NodeLabelingBase):
     def generate(self) -> Optional[Union[List[List[int]], torch.Tensor]]:
         if self.graph_data.nx_graphs is None:
             self.graph_data.create_nx_graphs(directed=False)
-        # iterate over the graphs and get the degree of each node
+        # iterate over the graphs and hash each node by its own label plus the
+        # sorted multiset of neighbor labels (one hash dict per graph)
         node_labels = []
         unique_neighbor_labels = set()
-        node_to_hash = dict()
+        node_to_hash = []
         for graph_id, graph in enumerate(self.graph_data.nx_graphs):
-            for i, node in enumerate(graph.nodes(data=True)):
+            node_to_hash.append(dict())
+            for node in graph.nodes(data=True):
                 neighbors = list(graph.neighbors(node[0]))
-                node_identifier = [node[1]['primary_node_labels']]
-                node_identifier += [graph.nodes[neighbor]['primary_node_labels'] for neighbor in neighbors]
-                # convert to tuple and add to set
-                node_identifier = tuple(node_identifier)
+                neighbor_identifier = sorted(str(graph.nodes[neighbor]['primary_node_labels']) for neighbor in neighbors)
+                node_identifier = (str(node[1]['primary_node_labels']), tuple(neighbor_identifier))
                 unique_neighbor_labels.add(node_identifier)
-                node_to_hash[node[0]] = node_identifier
+                node_to_hash[graph_id][node[0]] = node_identifier
         # convert the unique neighbor labels to a dict
-        unique_neighbor_label_dict = {label: i for i, label in enumerate(unique_neighbor_labels)}
-        for graph in self.graph_data.nx_graphs:
-            node_labels.append([unique_neighbor_label_dict[node_to_hash[node]] for node in graph.nodes()])
+        unique_neighbor_label_dict = {label: i for i, label in enumerate(sorted(unique_neighbor_labels))}
+        for graph_id, graph in enumerate(self.graph_data.nx_graphs):
+            node_labels.append([unique_neighbor_label_dict[node_to_hash[graph_id][node]] for node in graph.nodes()])
         return node_labels
 
 class WeisfeilerLehmanNodeLabeling(NodeLabelingBase):
@@ -859,12 +862,16 @@ class BetweennessCentralityNodeLabeling(NodeLabelingBase):
         if len(set(bins)) == 1:
             return [[0] * len(gc) for gc in graph_centralities]
 
-        # Step 3: Discretize each graph using the global bins
+        # Step 3: Discretize each graph using the global bins. Skewed
+        # distributions repeat percentile edges (e.g. star graphs where most
+        # centralities are 0), so deduplicate the interior boundaries before
+        # digitizing — otherwise all nodes collapse into a single bin.
+        boundaries = np.unique(bins[1:-1])
         node_labels = []
         for cent_list in graph_centralities:
-            # digitize returns 1-indexed bins, subtract 1 for 0-indexing
-            # Example: bins=[0, 0.2, 0.5, 1.0] with num_bins=3 gives labels [0, 1, 2]
-            labels = np.digitize(cent_list, bins[1:-1], right=False)
+            # right=True keeps values equal to a (possibly repeated) boundary
+            # below it, so e.g. the zero-centrality mass stays in bin 0
+            labels = np.digitize(cent_list, boundaries, right=True)
             node_labels.append(labels.tolist())
 
         return node_labels
@@ -965,6 +972,79 @@ class ClosedWalkNodeLabeling(NodeLabelingBase):
         unique_profiles = sorted({profile for profiles in graph_profiles for profile in profiles})
         profile_to_label = {profile: i for i, profile in enumerate(unique_profiles)}
         return [[profile_to_label[profile] for profile in profiles] for profiles in graph_profiles]
+
+
+def _canonical_count_string(count_dict: dict) -> str:
+    """
+    Canonical string form of a per-node count dict.
+
+    The dicts are built in discovery order of the cycles/cliques/patterns, so
+    plain str() is not isomorphism-invariant (str({3: 1, 4: 1}) differs from
+    str({4: 1, 3: 1})); sorting the items first makes the label independent of
+    node/edge numbering.
+    """
+    return str(sorted(count_dict.items()))
+
+
+def _adaptive_parallel_map(func, graphs: List[nx.Graph], *args, probe: int = 5, min_parallel_seconds: float = 10.0) -> list:
+    """
+    Map func over the graphs, parallelizing with joblib only when it pays off.
+
+    The first `probe` graphs run serially to estimate the per-graph cost; the
+    rest go through joblib only if the projected remaining serial time exceeds
+    min_parallel_seconds (worker spawn and graph pickling dominate otherwise).
+    Results are order-preserving and identical to the serial computation.
+    """
+    results = []
+    start = time.time()
+    for graph in graphs[:probe]:
+        results.append(func(graph, *args))
+    remaining = graphs[probe:]
+    if not remaining:
+        return results
+    projected = (time.time() - start) / len(results) * len(remaining)
+    if projected > min_parallel_seconds:
+        results += Parallel(n_jobs=-1)(delayed(func)(graph, *args) for graph in remaining)
+    else:
+        for graph in remaining:
+            results.append(func(graph, *args))
+    return results
+
+
+def _count_cycles(graph: nx.Graph, cycle_type: str, min_cycle_length: Optional[int], max_cycle_length: Optional[int]) -> dict:
+    """Per-node dict {cycle_length: count} over all simple/chordless cycles."""
+    counts = {}
+    if cycle_type == 'simple':
+        cycles = nx.simple_cycles(graph, max_cycle_length)
+    else:
+        cycles = nx.chordless_cycles(graph, max_cycle_length)
+    for cycle in cycles:
+        if min_cycle_length is not None and len(cycle) < min_cycle_length:
+            continue
+        for node in cycle:
+            node_counts = counts.setdefault(node, {})
+            node_counts[len(cycle)] = node_counts.get(len(cycle), 0) + 1
+    return counts
+
+
+def _count_cliques(graph: nx.Graph, max_clique: Optional[int]) -> dict:
+    """Per-node dict {clique_size: count} over the maximal cliques."""
+    counts = {}
+    for clique in nx.find_cliques(graph):
+        if max_clique is not None and len(clique) > max_clique:
+            continue
+        for node in clique:
+            node_counts = counts.setdefault(node, {})
+            node_counts[len(clique)] = node_counts.get(len(clique), 0) + 1
+    return counts
+
+
+def _nodes_in_cycles(graph: nx.Graph, length_bound: int) -> set:
+    """Set of nodes lying on at least one chordless cycle of bounded length."""
+    in_cycle = set()
+    for cycle in nx.chordless_cycles(graph, length_bound):
+        in_cycle.update(cycle)
+    return in_cycle
 
 
 def save_labels_to_file(file:Path, dataset_name:str, label_name:str, graph_node_labels:Optional[Union[List[List[int]], torch.Tensor]], max_labels:None):
@@ -1075,8 +1155,9 @@ def save_labeled_degree_labels(graph_data:GraphDataset, label_path=None, max_lab
                 # convert to tuple and add to set
                 unique_neighbor_labels.add(node_identifier)
                 node_to_hash[graph_id][node[0]] = node_identifier
-        # convert the unique neighbor labels to a dict
-        unique_neighbor_label_dict = {label: i for i, label in enumerate(unique_neighbor_labels)}
+        # convert the unique neighbor labels to a dict (sorted for run-to-run
+        # deterministic ids; set iteration order depends on string hashing)
+        unique_neighbor_label_dict = {label: i for i, label in enumerate(sorted(unique_neighbor_labels))}
         for graph_id, graph in enumerate(graph_data.nx_graphs):
             node_labels.append([unique_neighbor_label_dict[node_to_hash[graph_id][node]] for node in graph.nodes()])
         save_labels_to_file(file, graph_data.name, l, node_labels, max_labels)
@@ -1243,7 +1324,8 @@ def save_cycle_labels(graph_data:GraphDataset, min_cycle_length=None, max_cycle_
         l = 'induced_cycles'
     if min_cycle_length is not None:
         l = f'{l}_{min_cycle_length}'
-    l = f'{l}_{max_cycle_length}'
+    # 'max' mirrors get_label_string so the loader finds the file
+    l = f'{l}_max' if max_cycle_length is None else f'{l}_{max_cycle_length}'
     if max_labels is not None:
         l = f"{l}_{max_labels}"
     if label_path is None:
@@ -1255,39 +1337,12 @@ def save_cycle_labels(graph_data:GraphDataset, min_cycle_length=None, max_cycle_
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        cycle_dict = []
-        for i, graph in enumerate(graph_data.nx_graphs):
-            if i % (len(graph_data.nx_graphs) // 10) == 0:
-                print(f"Graph {graph_data.name} {i + 1}/{len(graph_data.nx_graphs)} Labels: {l}")
-            cycle_dict.append({})
-            if cycle_type == 'simple':
-                cycles = nx.simple_cycles(graph, max_cycle_length)
-                if min_cycle_length is not None:
-                    cycles = [cycle for cycle in cycles if len(cycle) >= min_cycle_length]
-            elif cycle_type == 'induced':
-                cycles = nx.chordless_cycles(graph, max_cycle_length)
-                if min_cycle_length is not None:
-                    cycles = [cycle for cycle in cycles if len(cycle) >= min_cycle_length]
-            for cycle in cycles:
-                for node in cycle:
-                    if node in cycle_dict[-1]:
-                        if len(cycle) in cycle_dict[-1][node]:
-                            cycle_dict[-1][node][len(cycle)] += 1
-                        else:
-                            cycle_dict[-1][node][len(cycle)] = 1
-                    else:
-                        cycle_dict[-1][node] = {}
-                        cycle_dict[-1][node][len(cycle)] = 1
+        # cycle enumeration is embarrassingly parallel per graph
+        cycle_dict = _adaptive_parallel_map(_count_cycles, graph_data.nx_graphs,
+                                            cycle_type, min_cycle_length, max_cycle_length)
 
-        # get all unique dicts of cycles
-        dict_list = []
-        for g in cycle_dict:
-            for node_id, c_dict in g.items():
-                dict_list.append(c_dict)
-
-        dict_list = list({str(i) for i in dict_list})
-        # sort the dict_list
-        dict_list = sorted(dict_list)
+        # get all unique count dicts (canonicalized, invariant under edge numbering)
+        dict_list = sorted({_canonical_count_string(c_dict) for g in cycle_dict for c_dict in g.values()})
         label_dict = {key: value for key, value in zip(dict_list, range(len(dict_list)))}
 
         # set the node labels
@@ -1296,7 +1351,7 @@ def save_cycle_labels(graph_data:GraphDataset, min_cycle_length=None, max_cycle_
             labels.append([])
             for node in graph.nodes():
                 if node in cycle_dict[graph_id]:
-                    cycle_d = str(cycle_dict[graph_id][node])
+                    cycle_d = _canonical_count_string(cycle_dict[graph_id][node])
                     labels[-1].append(label_dict[cycle_d])
                 else:
                     labels[-1].append(len(label_dict))
@@ -1326,14 +1381,7 @@ def save_in_circle_labels(graph_data:GraphDataset, length_bound=6, max_labels=No
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        node_in_cycle = []
-        for graph in graph_data.nx_graphs:
-            node_in_cycle.append({})
-            cycles = nx.chordless_cycles(graph, length_bound)
-            for cycle in cycles:
-                for node in cycle:
-                    node_in_cycle[-1][node] = 1
-
+        node_in_cycle = _adaptive_parallel_map(_nodes_in_cycles, graph_data.nx_graphs, length_bound)
 
         # set the node labels, if node is in a cycle label 1, else 0
         labels = []
@@ -1389,15 +1437,8 @@ def save_subgraph_labels(graph_data:GraphDataset, subgraphs=List[nx.Graph], name
                             subgraph_dict[-1][node] = {}
                             subgraph_dict[-1][node][i] = 1
 
-        # get all unique dicts of cycles
-        dict_list = []
-        for g in subgraph_dict:
-            for node_id, c_dict in g.items():
-                dict_list.append(c_dict)
-
-        dict_list = list({str(i) for i in dict_list})
-        # sort the dict_list
-        dict_list = sorted(dict_list)
+        # get all unique count dicts (canonicalized, invariant under node numbering)
+        dict_list = sorted({_canonical_count_string(c_dict) for g in subgraph_dict for c_dict in g.values()})
         label_dict = {key: value for key, value in zip(dict_list, range(len(dict_list)))}
 
         # set the node labels
@@ -1406,7 +1447,7 @@ def save_subgraph_labels(graph_data:GraphDataset, subgraphs=List[nx.Graph], name
             labels.append([])
             for node in graph.nodes():
                 if node in subgraph_dict[graph_id]:
-                    cycle_d = str(subgraph_dict[graph_id][node])
+                    cycle_d = _canonical_count_string(subgraph_dict[graph_id][node])
                     labels[-1].append(label_dict[cycle_d])
                 else:
                     labels[-1].append(len(label_dict))
@@ -1424,7 +1465,8 @@ def save_subgraph_labels(graph_data:GraphDataset, subgraphs=List[nx.Graph], name
 
 
 def save_clique_labels(graph_data:GraphDataset, max_clique=6, max_labels=None, label_path=None, save_times=None)->str:
-    l = f'cliques_{max_clique}'
+    # no size bound: plain 'cliques', matching get_label_string
+    l = 'cliques' if max_clique is None else f'cliques_{max_clique}'
     if max_labels is not None:
         l = f"{l}_{max_labels}"
     if label_path is None:
@@ -1436,32 +1478,11 @@ def save_clique_labels(graph_data:GraphDataset, max_clique=6, max_labels=None, l
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        clique_dict = []
-        for i,graph in enumerate(graph_data.nx_graphs):
-            print(f"Graph {graph_data.name} {i + 1}/{len(graph_data.nx_graphs)} Labels: {l}")
-            clique_dict.append({})
-            cliques = list(nx.find_cliques(graph))
-            for clique in cliques:
-                if len(clique) <= max_clique:
-                    for node in clique:
-                        if node in clique_dict[-1]:
-                            if len(clique) in clique_dict[-1][node]:
-                                clique_dict[-1][node][len(clique)] += 1
-                            else:
-                                clique_dict[-1][node][len(clique)] = 1
-                        else:
-                            clique_dict[-1][node] = {}
-                            clique_dict[-1][node][len(clique)] = 1
+        # clique enumeration is embarrassingly parallel per graph
+        clique_dict = _adaptive_parallel_map(_count_cliques, graph_data.nx_graphs, max_clique)
 
-        # get all unique dicts of cycles
-        dict_list = []
-        for g in clique_dict:
-            for node_id, c_dict in g.items():
-                dict_list.append(c_dict)
-
-        dict_list = list({str(i) for i in dict_list})
-        # sort the dict_list
-        dict_list = sorted(dict_list)
+        # get all unique count dicts (canonicalized, invariant under node numbering)
+        dict_list = sorted({_canonical_count_string(c_dict) for g in clique_dict for c_dict in g.values()})
         label_dict = {key: value for key, value in zip(dict_list, range(len(dict_list)))}
 
         # set the node labels
@@ -1470,7 +1491,7 @@ def save_clique_labels(graph_data:GraphDataset, max_clique=6, max_labels=None, l
             labels.append([])
             for node in graph.nodes():
                 if node in clique_dict[graph_id]:
-                    cycle_d = str(clique_dict[graph_id][node])
+                    cycle_d = _canonical_count_string(clique_dict[graph_id][node])
                     labels[-1].append(label_dict[cycle_d])
                 else:
                     labels[-1].append(len(label_dict))

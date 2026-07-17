@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 import networkx as nx
+import numpy as np
 
 def standard_node_labeling(graphs: List[nx.Graph]):
     """
@@ -61,7 +62,116 @@ def degree_node_labeling(graphs: List[nx.Graph]):
     db_unique_node_labels = dict(sorted(db_unique_node_labels.items()))
     return node_labels, unique_node_labels, db_unique_node_labels
 
+def _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds):
+    """
+    Exact vectorized WL color refinement on flat disjoint-union edge arrays.
+
+    edge_src/edge_dst must contain both directions of every undirected edge.
+    Returns the color partition after `rounds` refinement rounds (or earlier if
+    the partition stabilizes). Produces the same partition as
+    nx.weisfeiler_lehman_subgraph_hashes with iterations=rounds (nx >= 3.5
+    semantics), but without building a union graph or hashing strings.
+    """
+    N = int(num_nodes)
+    colors = np.unique(np.asarray(colors, dtype=np.int64), return_inverse=True)[1]
+    if N == 0 or rounds <= 0:
+        return colors
+    src = np.asarray(edge_src, dtype=np.int64)
+    dst = np.asarray(edge_dst, dtype=np.int64)
+    deg = np.bincount(dst, minlength=N)
+    order = np.argsort(dst, kind="stable")
+    dst_s, src_s = dst[order], src[order]
+    start = np.concatenate([[0], np.cumsum(deg)[:-1]])
+    node_order = np.argsort(deg, kind="stable")
+    deg_sorted = deg[node_order]
+    dmax = int(deg.max()) if deg.size else 0
+    C = int(colors.max()) + 1
+    for _ in range(rounds):
+        # per-node sorted neighbor colors via one sort of the packed key
+        key = dst_s * np.int64(C) + colors[src_s]
+        key.sort()
+        neigh_sorted = key - dst_s * np.int64(C)
+        # iterated pairwise folding in a strictly growing id namespace
+        acc = colors.astype(np.int64, copy=True)
+        A = C
+        for k in range(dmax):
+            i0 = np.searchsorted(deg_sorted, k + 1)
+            sel = node_order[i0:]
+            if sel.size == 0:
+                break
+            code = acc[sel] * np.int64(C) + neigh_sorted[start[sel] + k]
+            uq, inv = np.unique(code, return_inverse=True)
+            acc[sel] = A + inv
+            A += uq.size
+        uq, colors = np.unique(acc, return_inverse=True)
+        if uq.size == C:          # partition stable -> stays stable
+            break
+        C = uq.size
+    return colors
+
+
+def _wl_labels_to_output(colors, graphs):
+    """Compact colors to first-appearance ids and split them per graph."""
+    label_dict = {}
+    string_labels = [label_dict.setdefault(int(c), len(label_dict)) for c in colors]
+    graph_node_labels = []
+    unique_node_labels = []
+    db_unique_node_labels = {}
+    counter = 0
+    for graph in graphs:
+        node_number = len(graph.nodes)
+        graph_node_labels.append(string_labels[counter:counter + node_number])
+        unique_node_labels.append({})
+        for node_label in graph_node_labels[-1]:
+            unique_node_labels[-1][node_label] = unique_node_labels[-1].get(node_label, 0) + 1
+            db_unique_node_labels[node_label] = db_unique_node_labels.get(node_label, 0) + 1
+        counter += node_number
+    return graph_node_labels, unique_node_labels, db_unique_node_labels
+
+
 def weisfeiler_lehman_node_labeling(graphs: List[nx.Graph], depth: int = 3, labeled: bool = False, base_labels: Optional[dict] = None, with_edge_labels: bool = False):
+    if with_edge_labels:
+        # edge-labeled WL is not covered by the vectorized refinement
+        return _weisfeiler_lehman_node_labeling_nx(graphs, depth=depth, labeled=labeled, base_labels=base_labels, with_edge_labels=with_edge_labels)
+
+    # build disjoint-union numbered edge arrays straight from the nx graphs
+    num_nodes = sum(len(g.nodes) for g in graphs)
+    edge_src, edge_dst = [], []
+    offset = 0
+    for graph in graphs:
+        index = {node: i + offset for i, node in enumerate(graph.nodes())}
+        for u, v in graph.edges():
+            ui, vi = index[u], index[v]
+            edge_src.append(ui)
+            edge_dst.append(vi)
+            edge_src.append(vi)
+            edge_dst.append(ui)
+        offset += len(graph.nodes)
+
+    if labeled:
+        if base_labels is not None:
+            colors = base_labels['labels'].node_labels.cpu().numpy().astype(np.int64)
+        else:
+            value_to_id = {}
+            colors = np.empty(num_nodes, dtype=np.int64)
+            i = 0
+            for graph in graphs:
+                for _, data in graph.nodes(data=True):
+                    value = data['primary_node_labels']
+                    if isinstance(value, list):
+                        value = tuple(value)
+                    colors[i] = value_to_id.setdefault(value, len(value_to_id))
+                    i += 1
+        rounds = depth + 1                       # mirrors iterations=depth+1 of the nx variant
+    else:
+        colors = np.zeros(num_nodes, dtype=np.int64)   # nx >= 3.5 trivial init
+        rounds = depth
+
+    final_colors = _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds)
+    return _wl_labels_to_output(final_colors, graphs)
+
+
+def _weisfeiler_lehman_node_labeling_nx(graphs: List[nx.Graph], depth: int = 3, labeled: bool = False, base_labels: Optional[dict] = None, with_edge_labels: bool = False):
     unique_node_labels = []
     db_unique_node_labels = {}
     union_graph = nx.disjoint_union_all(graphs)

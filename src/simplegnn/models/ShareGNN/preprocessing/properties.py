@@ -5,13 +5,28 @@ import time
 from pathlib import Path
 
 import networkx as nx
+import numpy as np
 import torch
 import yaml
-import copy
+from scipy.sparse.csgraph import shortest_path
 
 from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.node_labeling import load_labels
 from simplegnn.utils.utils import convert_to_list
+
+
+def _finalize_property_dicts(pair_chunks: dict, counts: dict):
+    """
+    Convert per-graph pair chunks and per-graph counts into the stored format:
+    key -> (num_pairs, 2) long tensor and key -> cumulative-count tensor of
+    length num_graphs + 1.
+    """
+    valid_properties = set(pair_chunks.keys())
+    final_dict = {key: torch.from_numpy(np.concatenate(chunks).astype(np.int64))
+                  for key, chunks in pair_chunks.items()}
+    slices_dict = {key: torch.from_numpy(np.concatenate(([0], np.cumsum(graph_counts))).astype(np.int64))
+                   for key, graph_counts in counts.items()}
+    return valid_properties, final_dict, slices_dict
 
 
 def write_distance_properties(graph_data:GraphDataset, cutoff=None, out_path: Path = Path(), save_times=None) -> None:
@@ -25,33 +40,30 @@ def write_distance_properties(graph_data:GraphDataset, cutoff=None, out_path: Pa
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        distances = {}
-        slices_dict = {}
+        num_graphs = len(graph_data.nx_graphs)
+        pair_chunks = {}   # distance -> list of (num_pairs, 2) arrays, one per graph
+        counts = {}        # distance -> per-graph pair counts
         for graph_id, graph in enumerate(graph_data.nx_graphs):
             if graph_id % 100 == 0:
-                print(f"Processing graph {graph_id} of {len(graph_data.nx_graphs)}")
-            for key in slices_dict:
-                slices_dict[key].append(slices_dict[key][-1])
-            d = dict(nx.all_pairs_shortest_path_length(graph, cutoff=cutoff))
-            # use d to make a dictionary of pairs for each distance
-            for node_1, other_nodes in d.items():
-                for node_2, distance in other_nodes.items():
-                    if distance in distances:
-                        distances[distance].append([node_1+graph_data.slices['x'][graph_id].item(), node_2+graph_data.slices['x'][graph_id].item()])
-                        if distance in slices_dict:
-                            slices_dict[distance][-1] += 1
-                    else:
-                        distances[distance] = [[node_1+graph_data.slices['x'][graph_id].item(), node_2+graph_data.slices['x'][graph_id].item()]]
-                        slices_dict[distance] = [0] * (graph_id + 2)
-                        slices_dict[distance][-1] = 1
+                print(f"Processing graph {graph_id} of {num_graphs}")
+            if graph.number_of_nodes() == 0:
+                continue
+            offset = int(graph_data.slices['x'][graph_id])
+            adjacency = nx.to_scipy_sparse_array(graph, format='csr')
+            dist = shortest_path(adjacency, directed=False, unweighted=True)
+            reachable = np.isfinite(dist)
+            if cutoff is not None:
+                reachable &= dist <= cutoff
+            src, dst = np.nonzero(reachable)
+            dist_values = dist[src, dst].astype(np.int64)
+            for distance in np.unique(dist_values):
+                sel = dist_values == distance
+                pairs = np.stack([src[sel] + offset, dst[sel] + offset], axis=1)
+                key = int(distance)
+                pair_chunks.setdefault(key, []).append(pairs)
+                counts.setdefault(key, np.zeros(num_graphs, dtype=np.int64))[graph_id] = len(pairs)
 
-
-        valid_properties = set(distances.keys())
-        final_dict = {}
-        for key in valid_properties:
-            final_dict[key] = torch.tensor(distances[key], dtype=torch.long)
-        for key in slices_dict:
-            slices_dict[key] = torch.tensor(slices_dict[key], dtype=torch.long)
+        valid_properties, final_dict, slices_dict = _finalize_property_dicts(pair_chunks, counts)
 
         # save list of dictionaries to a pickle file
         pickle_data = pickle.dumps((valid_properties, final_dict, slices_dict))
@@ -149,6 +161,64 @@ def write_distance_circle_properties(graph_data:GraphDataset, label_path, db_nam
 
 
 
+def _edge_label_distance_keys(graph: nx.Graph, cutoff=None):
+    """
+    For every ordered node pair (s, t), compute
+    (distance, #shortest paths, per-label edge occurrence counts summed over
+    all shortest s-t paths) via one BFS per source with a DP over the
+    shortest-path DAG — no path enumeration.
+
+    Yields (s, t, key) with key = (distance, number_of_paths, label_tuple)
+    where label_tuple is positional by label value, trimmed of trailing zeros
+    (the same key format the path-enumerating implementation produced).
+    """
+    nodes = list(graph.nodes())
+    n = len(nodes)
+    index = {node: i for i, node in enumerate(nodes)}
+    neighbors = [[] for _ in range(n)]
+    max_label = 0
+    for u, v, data in graph.edges(data=True):
+        label = data['primary_edge_labels']
+        if int(label) != label:
+            raise ValueError("Edge label is not an integer.")
+        label = int(label)
+        if label < 0:
+            raise ValueError("Edge labels must be non-negative integers.")
+        max_label = max(max_label, label)
+        neighbors[index[u]].append((index[v], label))
+        neighbors[index[v]].append((index[u], label))
+    width = max_label + 1
+
+    for s in range(n):
+        dist = np.full(n, -1, dtype=np.int64)
+        sigma = np.zeros(n, dtype=np.int64)              # number of shortest paths s -> v
+        label_counts = np.zeros((n, width), dtype=np.int64)  # summed label occurrences over those paths
+        dist[s] = 0
+        sigma[s] = 1
+        queue = [s]
+        head = 0
+        while head < len(queue):
+            u = queue[head]
+            head += 1
+            if cutoff is not None and dist[u] >= cutoff:
+                continue
+            for v, label in neighbors[u]:
+                if dist[v] == -1:
+                    dist[v] = dist[u] + 1
+                    queue.append(v)
+                if dist[v] == dist[u] + 1:
+                    sigma[v] += sigma[u]
+                    label_counts[v] += label_counts[u]
+                    label_counts[v, label] += sigma[u]
+        for t in range(n):
+            if t == s or dist[t] == -1:
+                continue
+            occurrences = label_counts[t]
+            last = np.nonzero(occurrences)[0][-1]
+            key = (int(dist[t]), int(sigma[t]), tuple(int(x) for x in occurrences[:last + 1]))
+            yield nodes[s], nodes[t], key
+
+
 def write_distance_edge_properties(graph_data:GraphDataset, out_path:Path = Path(), cutoff=None, save_times=None) -> None:
     l = 'edge_label_distances'
     if cutoff is not None:
@@ -160,69 +230,21 @@ def write_distance_edge_properties(graph_data:GraphDataset, out_path:Path = Path
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        property_keys = {}
-        slices_dict = {}
+        num_graphs = len(graph_data.nx_graphs)
+        pair_chunks = {}   # key -> list of (num_pairs, 2) arrays
+        counts = {}        # key -> per-graph pair counts
         for graph_id, graph in enumerate(graph_data.nx_graphs):
             if graph_id % 100 == 0:
-                print(f"Processing graph {graph_id} of {len(graph_data.nx_graphs)}")
-            for key in slices_dict:
-                slices_dict[key].append(slices_dict[key][-1])
-            graph_map = {}
-            d = dict(nx.all_pairs_all_shortest_paths(graph))
-            # replace the end nodes with the label of the edge between them
-            # copy d
-            d_edges = copy.deepcopy(d)
-            for key, value in d.items():
-                for key2, value2 in value.items():
-                    for path_id, shortest_path in enumerate(value2):
-                        edge_label_sequence = []
-                        if len(shortest_path) == 1 or (cutoff is not None and len(shortest_path) > cutoff + 1):
-                            d_edges[key].pop(key2, None)
-                        else:
-                            for i in range(0, len(shortest_path) - 1):
-                                edge_start = shortest_path[i]
-                                edge_end = shortest_path[i + 1]
-                                # get the label of the edge
-                                edge_label = graph[edge_start][edge_end]['primary_edge_labels']
-                                edge_label_sequence.append(edge_label)
-                                try:
-                                    isinstance(edge_label, int)
-                                except:
-                                    raise ValueError("Edge label is not an integer.")
+                print(f"Processing graph {graph_id} of {num_graphs}")
+            offset = int(graph_data.slices['x'][graph_id])
+            graph_pairs = {}
+            for start_node, end_node, key in _edge_label_distance_keys(graph, cutoff=cutoff):
+                graph_pairs.setdefault(key, []).append([start_node + offset, end_node + offset])
+            for key, pairs in graph_pairs.items():
+                pair_chunks.setdefault(key, []).append(np.asarray(pairs, dtype=np.int64))
+                counts.setdefault(key, np.zeros(num_graphs, dtype=np.int64))[graph_id] = len(pairs)
 
-                            d_edges[key][key2][path_id] = edge_label_sequence
-            for start_node in graph.nodes:
-                for end_node in graph.nodes:
-                    if start_node in d_edges and end_node in d_edges[start_node]:
-                        paths = d[start_node][end_node]
-                        paths_labels = d_edges[start_node][end_node]
-                        distance = len(paths[0]) - 1
-                        number_of_paths = len(paths)
-                        label_occurrences = []
-                        for path in paths_labels:
-                            for label in path:
-                                label = int(label)
-                                while len(label_occurrences) <= label:
-                                    label_occurrences.append(0)
-                                label_occurrences[label] += 1
-                        label_tuple = (distance, number_of_paths, tuple(label_occurrences))
-                        if label_tuple in property_keys:
-                            property_keys[label_tuple].append([start_node + graph_data.slices['x'][graph_id].item(),
-                                                        end_node + graph_data.slices['x'][graph_id].item()])
-                            if label_tuple in slices_dict:
-                                slices_dict[label_tuple][-1] += 1
-                        else:
-                            property_keys[label_tuple] = [[start_node + graph_data.slices['x'][graph_id].item(),
-                                                    end_node + graph_data.slices['x'][graph_id].item()]]
-                            slices_dict[label_tuple] = [0] * (graph_id + 2)
-                            slices_dict[label_tuple][-1] = 1
-
-        valid_properties = set(property_keys.keys())
-        final_dict = {}
-        for key in valid_properties:
-            final_dict[key] = torch.tensor(property_keys[key], dtype=torch.long)
-        for key in slices_dict:
-            slices_dict[key] = torch.tensor(slices_dict[key], dtype=torch.long)
+        valid_properties, final_dict, slices_dict = _finalize_property_dicts(pair_chunks, counts)
 
         # save list of dictionaries to a pickle file
         pickle_data = pickle.dumps((valid_properties, final_dict, slices_dict))
