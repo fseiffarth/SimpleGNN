@@ -152,6 +152,48 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             torch.nn.init.constant_(weights, 0.01)
         return weights
 
+    def export_weight_keys(self) -> dict:
+        """
+        Name every Param_W slot with dataset-independent keys (spec 18 B1).
+
+        Layout (see __init__): the slot of (head config h, label slot k,
+        replica n) is weight_base_h + n * n_labels_h + k, where k is the
+        torch.unique inverse of the head's node labels. The unique VALUES are
+        reconstructed from the stored inverse buffer, so the export is exact
+        regardless of torch.unique's internal ordering. The bias Param_b is
+        (num_heads, in_features) — config-shaped, transferred positionally.
+        """
+        from simplegnn.framework.utils.transfer import label_ids_to_hashes
+
+        heads = []
+        for head_id, head in enumerate(self.layer.layer_heads):
+            description = self.node_label_descriptions[head_id]
+            node_labels_obj = self.graph_data.node_labels[description]
+            inverse = getattr(self, f'_agg_idx_{head_id}').detach().cpu().long()
+            labels = node_labels_obj.node_labels.detach().cpu().long()
+            n_labels = int(self.n_node_labels[head_id])
+            values = torch.full((n_labels,), -1, dtype=torch.int64)
+            values[inverse] = labels
+            weight_base = int(np.sum([self.n_node_labels[i] * self.n_heads_per_label[i]
+                                      for i in range(head_id)], dtype=int))
+            heads.append({
+                'head_id': head_id,
+                'label': description,
+                'has_hashes': node_labels_obj.label_hashes is not None,
+                'canonical': bool(node_labels_obj.has_canonical_hashes),
+                'weight_base': weight_base,
+                'n_labels': n_labels,
+                'num_replicas': int(self.n_heads_per_label[head_id]),
+                'label_hash': label_ids_to_hashes(values, node_labels_obj),
+                'counts': torch.bincount(inverse, minlength=n_labels),
+            })
+        return {
+            'layer_type': 'invariant_based_aggregation',
+            'param_w_size': int(self.Param_W.numel()),
+            'param_b_size': int(self.Param_b.numel()) if self.bias else 0,
+            'heads': heads,
+        }
+
     def _weight_index_matrix(self, node_gather) -> torch.Tensor:
         """
         (N_sel, num_heads) Param_W indices for the selected nodes.

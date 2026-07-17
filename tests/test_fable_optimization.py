@@ -140,10 +140,22 @@ def test_fine_cache_persists_invalid_flag(share_gnn_setup, tmp_path):
 
     cache_file = tmp_path / "flag_true.pt"
     layer._save_cached_indices(cache_file, head, 1, indices, counts, True)
-    loaded_indices, loaded_counts, flag = layer._load_cached_indices(cache_file, head, 1)
+    loaded_indices, loaded_counts, flag, uniques, max_label = layer._load_cached_indices(cache_file, head, 1)
     assert torch.equal(loaded_indices, indices)
     assert torch.equal(loaded_counts, counts)
     assert flag is True
+    # uniques/max_label were not passed to _save_cached_indices -> old-style
+    # cache content, reported as absent (spec 18 B1 backward compatibility)
+    assert uniques is None and max_label is None
+
+    # a save WITH the slot->key material round-trips it
+    keyed_file = tmp_path / "keyed.pt"
+    unique_values = torch.tensor([3, 7, 11], dtype=torch.int64)
+    layer._save_cached_indices(keyed_file, head, 1, indices, counts, True,
+                               uniques=unique_values, max_label=5)
+    _, _, _, loaded_uniques, loaded_max_label = layer._load_cached_indices(keyed_file, head, 1)
+    assert torch.equal(loaded_uniques, unique_values)
+    assert loaded_max_label == 5
 
     # old cache format (no flag) -> must raise so callers treat it as a miss
     legacy_file = tmp_path / "legacy.pt"

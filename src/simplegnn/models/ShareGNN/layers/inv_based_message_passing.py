@@ -281,6 +281,20 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # datasets) and any config edit orphans them, while the fine-grained
         # (indices, counts) cache below already keeps the expensive
         # torch.unique results, making the rebuild cheap.
+        # Slot->key material for hash-keyed transfer (spec 18 B1): collecting
+        # the torch.unique values costs ~num_weights int64 per (head, property
+        # value), so it is only done eagerly when an export is plausible
+        # (best-model saving or a transfer block). export_weight_keys() can
+        # always rebuild the material lazily via _ensure_slot_keys().
+        run_cfg = self.para.run_config.config
+        self._collect_slot_keys = bool(
+            run_cfg.get('save_transfer_keys', False)
+            or run_cfg.get('save_best_model', False)
+            or run_cfg.get('best_model', False)
+            or run_cfg.get('transfer', None))
+        self._slot_key_uniques = {}   # (head_id, str(property_key)) -> {'uniques', 'counts', 'max_label'}
+        self._slot_keys = None        # built on demand by _ensure_slot_keys()
+
         cache_config = self.para.run_config.config.get('cache') or {}
         if cache_config.get('layer_distributions', False):
             layer_cache_path = self._get_layer_cache_path()
@@ -381,7 +395,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 cached_path = self.get_cache_path(head, property_key)
 
                 try:
-                    indices, counts, do_invalid_indices_exist = self._load_cached_indices(cached_path, head, property_key)
+                    indices, counts, do_invalid_indices_exist, uniques, unique_max_label = self._load_cached_indices(cached_path, head, property_key)
                     indices_cache_hits += 1
 
                 except Exception as e:
@@ -389,48 +403,26 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     if not isinstance(e, FileNotFoundError):
                         print(f"⊗ Cache miss: head source label {self.source_label_descriptions[head_id]}, target label {self.target_label_descriptions[head_id]} with property {self.property_descriptions[head_id]} key {property_key} - computing indices and counts ({str(e)})")
 
-                    # OPTIMIZATION: Build labeled_subdict directly without clone
-                    # (5-10% speedup). Only needed on a miss — on a hit this
-                    # would be a wasted multi-million-row gather per key.
-                    labeled_subdict = torch.stack([
-                        source_labels[property_subdict[:, 0]],
-                        target_labels[property_subdict[:, 1]]
-                    ], dim=1)
-
-                    # OPTIMIZATION: Handle invalid indices with masking (2-5% speedup)
-                    invalid_mask = (labeled_subdict[:, 0] == -1) | (labeled_subdict[:, 1] == -1)
-                    do_invalid_indices_exist = invalid_mask.any().item()
-
-                    if do_invalid_indices_exist:
-                        valid_mask = ~invalid_mask
-                        max_first = labeled_subdict[valid_mask, 0].max().item() + 1 if valid_mask.any() else 0
-                        max_second = labeled_subdict[valid_mask, 1].max().item() + 1 if valid_mask.any() else 0
-                        labeled_subdict[invalid_mask, 0] = max_first
-                        labeled_subdict[invalid_mask, 1] = max_second
-                    else:
-                        max_first = labeled_subdict[:, 0].max().item() + 1
-                        max_second = labeled_subdict[:, 1].max().item() + 1
-
-                    # OPTIMIZATION: Encode 2D rows as 1D scalars (10-50x speedup on torch.unique)
-                    # For bounded integer labels, encode (a, b) as a*K + b where K > max(b)
-                    # This converts 2D unique (slow, O(n²) row comparisons) to 1D unique (fast, O(n log n))
-                    max_label = max(max_first, max_second) + 1
-                    encoded_labels = labeled_subdict[:, 0] * max_label + labeled_subdict[:, 1]
+                    encoded_labels, unique_max_label, do_invalid_indices_exist = \
+                        self._encode_pair_labels(source_labels, target_labels, property_subdict)
 
                     # Fast 1D unique instead of slow 2D unique. sorted=True is
                     # required: the invalid bucket was encoded as the largest
                     # value, so only in sorted order is counts[-1] guaranteed
                     # to be the invalid bucket.
-                    _, indices, counts = torch.unique(encoded_labels, return_inverse=True, return_counts=True, sorted=True)
+                    uniques, indices, counts = torch.unique(encoded_labels, return_inverse=True, return_counts=True, sorted=True)
                     if do_invalid_indices_exist:
                         counts[-1] = 0
 
-                    self._save_cached_indices(cached_path, head, property_key, indices, counts, do_invalid_indices_exist)
+                    self._save_cached_indices(cached_path, head, property_key, indices, counts,
+                                              do_invalid_indices_exist,
+                                              uniques=uniques, max_label=unique_max_label)
 
                 # Threshold filtering (now do_invalid_indices_exist is always defined)
                 num_weights = len(counts)
                 if do_invalid_indices_exist:
                     num_weights -= 1
+                valid_values = None
                 if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
                     # get a bool tensor from indices where the entry is true if the indices entry is in the unique_rows
                     if upper_threshold is not None:
@@ -443,6 +435,17 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     mapping[valid_values] = torch.arange(valid_values.numel(), device=indices.device, dtype=torch.int64)
                     indices = mapping[indices]
                     num_weights = valid_values.numel()
+                # retain the surviving unique encoded values for slot->key
+                # export (spec 18 B1); an old-format cache hit has uniques=None
+                # and is handled lazily by _ensure_slot_keys
+                if self._collect_slot_keys and uniques is not None:
+                    kept_uniques = uniques if valid_values is None else uniques[valid_values]
+                    kept_counts = counts if valid_values is None else counts[valid_values]
+                    self._slot_key_uniques[(head_id, str(property_key))] = {
+                        'uniques': kept_uniques.to(torch.int64).clone(),
+                        'counts': kept_counts.clone(),
+                        'max_label': int(unique_max_label),
+                    }
                 for n in range(self.n_heads_per_label[head_id]):
                     head_weight_num.append(num_weights)
 
@@ -504,6 +507,45 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # per-graph node offsets for single-graph/bias assembly
         self._x_slice_list = [int(v) for v in x_slices]
         self.register_buffer('_x_slices', x_slices.clone(), persistent=False)
+
+    @staticmethod
+    def _encode_pair_labels(source_labels, target_labels, property_subdict):
+        """
+        Encode the (source label, target label) pair of every property row as
+        one int64 scalar. Returns (encoded_labels, max_label, do_invalid_indices_exist).
+
+        Shared by the cache-miss path of _build_distributions and the lazy
+        slot->key reconstruction (_ensure_slot_keys); the encoding must stay
+        bit-identical between the two, so it lives in one place.
+        """
+        # OPTIMIZATION: Build labeled_subdict directly without clone
+        # (5-10% speedup). Only needed on a miss — on a hit this
+        # would be a wasted multi-million-row gather per key.
+        labeled_subdict = torch.stack([
+            source_labels[property_subdict[:, 0]],
+            target_labels[property_subdict[:, 1]]
+        ], dim=1)
+
+        # OPTIMIZATION: Handle invalid indices with masking (2-5% speedup)
+        invalid_mask = (labeled_subdict[:, 0] == -1) | (labeled_subdict[:, 1] == -1)
+        do_invalid_indices_exist = invalid_mask.any().item()
+
+        if do_invalid_indices_exist:
+            valid_mask = ~invalid_mask
+            max_first = labeled_subdict[valid_mask, 0].max().item() + 1 if valid_mask.any() else 0
+            max_second = labeled_subdict[valid_mask, 1].max().item() + 1 if valid_mask.any() else 0
+            labeled_subdict[invalid_mask, 0] = max_first
+            labeled_subdict[invalid_mask, 1] = max_second
+        else:
+            max_first = labeled_subdict[:, 0].max().item() + 1
+            max_second = labeled_subdict[:, 1].max().item() + 1
+
+        # OPTIMIZATION: Encode 2D rows as 1D scalars (10-50x speedup on torch.unique)
+        # For bounded integer labels, encode (a, b) as a*K + b where K > max(b)
+        # This converts 2D unique (slow, O(n²) row comparisons) to 1D unique (fast, O(n log n))
+        max_label = max(max_first, max_second) + 1
+        encoded_labels = labeled_subdict[:, 0] * max_label + labeled_subdict[:, 1]
+        return encoded_labels, int(max_label), do_invalid_indices_exist
 
     def _check_memory_budget(self, graph_data: GraphDataset) -> None:
         """
@@ -960,7 +1002,13 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         Load cached indices, counts and the invalid-pair flag from disk.
 
         Returns:
-            (indices, counts, do_invalid_indices_exist)
+            (indices, counts, do_invalid_indices_exist, uniques, max_label)
+
+            `uniques` (sorted unique encoded label pairs, pre-threshold) and
+            `max_label` (the pair-encoding base) are needed for slot->key
+            export (spec 18 B1); caches written before that store neither and
+            yield (None, None) — old cache files stay fully usable for
+            training and self-heal on the next slot->key reconstruction.
 
         Raises:
             FileNotFoundError: If cache file doesn't exist
@@ -995,15 +1043,24 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             if not isinstance(indices, torch.Tensor) or not isinstance(counts, torch.Tensor):
                 raise ValueError("Invalid cache format: indices/counts must be tensors")
 
-            return indices, counts, do_invalid_indices_exist
+            uniques = cached_data.get('uniques', None)
+            max_label = cached_data.get('max_label', None)
+            if not isinstance(uniques, torch.Tensor) or max_label is None:
+                uniques, max_label = None, None
+
+            return indices, counts, do_invalid_indices_exist, uniques, max_label
 
         except Exception as e:
             # If any error, treat as cache miss
             raise Exception(f"Failed to load cache: {e}")
 
-    def _save_cached_indices(self, cached_path: Path, head, property_key, indices: torch.Tensor, counts: torch.Tensor, do_invalid_indices_exist: bool = False) -> None:
+    def _save_cached_indices(self, cached_path: Path, head, property_key, indices: torch.Tensor, counts: torch.Tensor, do_invalid_indices_exist: bool = False, uniques: Optional[torch.Tensor] = None, max_label: Optional[int] = None) -> None:
         """
         Save computed indices, counts and the invalid-pair flag to disk cache.
+
+        `uniques`/`max_label` (the sorted pre-threshold unique encoded pairs
+        and the encoding base) are stored when given so the slot->key export
+        (spec 18 B1) never has to re-gather the label pairs on a cache hit.
 
         Saves both the tensor data (.pt) and human-readable metadata (.json).
         Non-fatal: logs warning if save fails but doesn't raise exception.
@@ -1025,6 +1082,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     'cache_key': self._indices_cache_key_dict(head, property_key),
                 }
             }
+            if uniques is not None and max_label is not None:
+                cache_data['uniques'] = uniques
+                cache_data['max_label'] = int(max_label)
+                cache_data['metadata']['max_label'] = int(max_label)
 
             # Save tensor data (atomically: paths are shared across joblib workers)
             self._atomic_torch_save(cache_data, cached_path)
@@ -1040,6 +1101,190 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         except Exception as e:
             print(f"⚠ Warning: Failed to save cache to {cached_path}: {e}")
             # Non-fatal: continue without caching
+
+    def _recompute_slot_key(self, head, head_id: int, property_key) -> dict:
+        """
+        Rebuild the surviving unique encoded label pairs for one
+        (head, property value) — the lazy fallback of _ensure_slot_keys when
+        _build_distributions did not retain them (old cache format, layer
+        distribution cache hit, or _collect_slot_keys off during init).
+
+        Returns {'uniques', 'counts', 'max_label'} with `uniques` restricted
+        to the post-threshold weight slots, in parameter-index order.
+        """
+        cached_path = self.get_cache_path(head, property_key)
+        indices = counts = uniques = max_label = None
+        do_invalid_indices_exist = False
+        try:
+            indices, counts, do_invalid_indices_exist, uniques, max_label = \
+                self._load_cached_indices(cached_path, head, property_key)
+        except Exception:
+            pass
+
+        if uniques is None:
+            source_labels = self.graph_data.node_labels[self.source_label_descriptions[head_id]].node_labels.cpu()
+            target_labels = self.graph_data.node_labels[self.target_label_descriptions[head_id]].node_labels.cpu()
+            property_subdict = self.graph_data.properties[self.property_descriptions[head_id]].properties[property_key]
+            encoded_labels, max_label, do_invalid_indices_exist = \
+                self._encode_pair_labels(source_labels, target_labels, property_subdict)
+            if indices is None:
+                uniques, indices, counts = torch.unique(encoded_labels, return_inverse=True,
+                                                        return_counts=True, sorted=True)
+                if do_invalid_indices_exist:
+                    counts[-1] = 0
+            else:
+                # old-format cache: the inverse indices are in hand, so the
+                # unique values follow from one scatter (no re-sort needed)
+                uniques = torch.empty(counts.numel(), dtype=encoded_labels.dtype)
+                uniques[indices] = encoded_labels
+            # self-heal the cache so the reconstruction is one-time per file
+            self._save_cached_indices(cached_path, head, property_key, indices, counts,
+                                      do_invalid_indices_exist,
+                                      uniques=uniques, max_label=max_label)
+
+        threshold = self.para.run_config.config.get('rule_occurrence_threshold', 1)
+        upper_threshold = self.para.run_config.config.get('rule_occurrence_upper_threshold', None)
+        if threshold > 1 or do_invalid_indices_exist or upper_threshold is not None:
+            if upper_threshold is not None:
+                valid_values = torch.where(torch.logical_and(counts >= threshold, counts <= upper_threshold))[0]
+            else:
+                valid_values = torch.where(counts >= threshold)[0]
+            uniques = uniques[valid_values]
+            counts = counts[valid_values]
+        return {'uniques': uniques.to(torch.int64), 'counts': counts, 'max_label': int(max_label)}
+
+    def _ensure_slot_keys(self) -> list:
+        """
+        Materialize self._slot_keys: per head config, one entry per property
+        value with the surviving unique encoded label pairs plus the layout
+        constants needed to name every Param_W slot (spec 18 B1).
+
+        Uses the material retained by _build_distributions when available and
+        reconstructs the rest from the indices cache / the graph data. The
+        replica-0 parameter offsets are derived from weight_offset /
+        weight_offset_description, so this works on the layer-distribution
+        cache path as well.
+        """
+        if self._slot_keys is not None:
+            return self._slot_keys
+        retained = getattr(self, '_slot_key_uniques', {})
+        slot_keys = []
+        entry_idx = 1  # weight_offset_description[0] is the None placeholder
+        for head_id, head in enumerate(self.layer.layer_heads):
+            prop = self.graph_data.properties[self.property_descriptions[head_id]]
+            valid_property_values = prop.valid_values[(self.layer_id, head_id)]
+            num_replicas = self.n_heads_per_label[head_id]
+            head_entries = []
+            for property_key in valid_property_values:
+                description = self.weight_offset_description[entry_idx]
+                if (description['head:'] != head_id
+                        or str(description['property']) != str(property_key)):
+                    raise ValueError(
+                        f"Layer {self.layer_id}: weight_offset_description entry {entry_idx} "
+                        f"({description}) does not match head {head_id} property {property_key} "
+                        f"— slot->key export aborted")
+                num_weights = int(description['weights'])
+                base_offset = int(self.weight_offset[entry_idx - 1])
+                info = retained.get((head_id, str(property_key)))
+                if info is None:
+                    info = self._recompute_slot_key(head, head_id, property_key)
+                if info['uniques'].numel() != num_weights:
+                    raise ValueError(
+                        f"Layer {self.layer_id} head {head_id} property {property_key}: "
+                        f"reconstructed {info['uniques'].numel()} slot keys but the layer has "
+                        f"{num_weights} weights — the label/property files changed since the "
+                        f"layer was built")
+                head_entries.append({
+                    'property_key': property_key,
+                    'uniques': info['uniques'],
+                    'counts': info['counts'],
+                    'max_label': int(info['max_label']),
+                    'num_weights': num_weights,
+                    'base_offset': base_offset,
+                })
+                entry_idx += num_replicas
+            slot_keys.append(head_entries)
+        self._slot_keys = slot_keys
+        return slot_keys
+
+    def export_weight_keys(self) -> dict:
+        """
+        Name every learnable parameter slot with dataset-independent keys
+        (spec 18 B1): per head config and property value the canonical
+        (src_hash, tgt_hash) of each weight slot, plus hash-keyed bias slots.
+
+        Replicas n > 0 reuse the replica-0 key rows shifted by
+        n * num_weights, so only the replica-0 arrays are exported. Labels
+        without canonical hashes are exported with 'canonical': False (and
+        'has_hashes': False when the label file predates v2 hashes).
+        """
+        from simplegnn.framework.utils.transfer import label_ids_to_hashes
+
+        slot_keys = self._ensure_slot_keys()
+        heads = []
+        for head_id in range(len(self.layer.layer_heads)):
+            source_nl = self.graph_data.node_labels[self.source_label_descriptions[head_id]]
+            target_nl = self.graph_data.node_labels[self.target_label_descriptions[head_id]]
+            keys = []
+            for entry in slot_keys[head_id]:
+                uniques = entry['uniques']
+                src_ids = torch.div(uniques, entry['max_label'], rounding_mode='floor')
+                tgt_ids = uniques - src_ids * entry['max_label']
+                keys.append({
+                    'property_key': str(entry['property_key']),
+                    'param_offset': int(entry['base_offset']),
+                    'num_weights': int(entry['num_weights']),
+                    'src_hash': label_ids_to_hashes(src_ids, source_nl),
+                    'tgt_hash': label_ids_to_hashes(tgt_ids, target_nl),
+                    'counts': entry['counts'].detach().cpu().clone(),
+                })
+            heads.append({
+                'head_id': head_id,
+                'source_label': self.source_label_descriptions[head_id],
+                'target_label': self.target_label_descriptions[head_id],
+                'property': self.property_descriptions[head_id],
+                'num_replicas': int(self.n_heads_per_label[head_id]),
+                'has_hashes': source_nl.label_hashes is not None and target_nl.label_hashes is not None,
+                'canonical': bool(source_nl.has_canonical_hashes and target_nl.has_canonical_hashes),
+                'keys': keys,
+            })
+
+        bias_entries = []
+        if self.bias:
+            for head_id in range(len(self.layer.layer_heads)):
+                if not self.bias_list[head_id]:
+                    continue
+                bias_description = self.bias_label_descriptions[head_id]
+                bias_nl = self.graph_data.node_labels[bias_description]
+                slot = self._bias_slot[bias_description]
+                inverse = getattr(self, f'_bias_idx_{slot}').detach().cpu().long()
+                labels = bias_nl.node_labels.detach().cpu().long()
+                n_bias = int(self.n_bias_labels[head_id])
+                # reconstruct the unique VALUES from the stored inverse: every
+                # slot is written by at least one node, so this is exact and
+                # independent of torch.unique's internal ordering
+                values = torch.full((n_bias,), -1, dtype=torch.int64)
+                values[inverse] = labels
+                head_base = self._cfg_meta[head_id]['head_base']
+                bias_entries.append({
+                    'head_id': head_id,
+                    'bias_label': bias_description,
+                    'has_hashes': bias_nl.label_hashes is not None,
+                    'canonical': bool(bias_nl.has_canonical_hashes),
+                    'bias_base': int(self._b_off[head_base, 0]),
+                    'n_bias': n_bias,
+                    'in_features': int(self.in_features),
+                    'num_replicas': int(self.n_heads_per_label[head_id]),
+                    'bias_hash': label_ids_to_hashes(values, bias_nl),
+                })
+
+        return {
+            'layer_type': 'invariant_based_convolution',
+            'param_w_size': int(self.Param_W.numel()),
+            'param_b_size': int(self.Param_b.numel()) if self.bias else 0,
+            'heads': heads,
+            'bias': bias_entries,
+        }
 
     def init_weights(self, num_weights:np.float64, init_type:Optional[str]=None) -> nn.Parameter:
         """

@@ -516,6 +516,51 @@ class GraphModel(torch.nn.Module):
         else:
             raise ValueError(f'Layer type {layer.layer_type} not recognized in GraphModel')
 
+    def export_transfer_keys(self):
+        """
+        Export dataset-independent weight keys for every invariant layer
+        (spec 18 B2) — the content of the ``<model>.keys.pt`` checkpoint
+        sidecar consumed by :func:`framework.utils.transfer.apply_transfer`.
+
+        Returns
+        -------
+        dict
+            ``{'schema': 1, 'layers': {state_dict_prefix: keys}, 'summary':
+            {state_dict_prefix: [str, ...]}}`` where ``keys`` is each
+            invariant layer's ``export_weight_keys()`` output. Layers without
+            an ``export_weight_keys`` method (standard layers) contribute
+            nothing — they transfer by state-dict name and shape.
+        """
+        layers = {}
+        summary = {}
+        for i, layer in enumerate(self.net_layers):
+            export = getattr(layer, 'export_weight_keys', None)
+            if export is None:
+                continue
+            prefix = f'net_layers.{i}'
+            keys = export()
+            layers[prefix] = keys
+            lines = []
+            for head in keys.get('heads', []):
+                if 'source_label' in head:
+                    slots = sum(k['num_weights'] for k in head['keys'])
+                    lines.append(
+                        f"head {head['head_id']}: {head['source_label']} -> {head['target_label']} "
+                        f"@ {head['property']} ({len(head['keys'])} property values, "
+                        f"{slots} slots x {head['num_replicas']} replicas, "
+                        f"canonical={head['canonical']})")
+                else:
+                    lines.append(
+                        f"head {head['head_id']}: {head['label']} "
+                        f"({head['n_labels']} labels, canonical={head['canonical']})")
+            for bias_head in keys.get('bias', []):
+                lines.append(
+                    f"bias head {bias_head['head_id']}: {bias_head['bias_label']} "
+                    f"({bias_head['n_bias']} labels, canonical={bias_head['canonical']})")
+            summary[prefix] = [f"{keys['layer_type']} "
+                               f"({keys['param_w_size']} weights, {keys['param_b_size']} biases)"] + lines
+        return {'schema': 1, 'layers': layers, 'summary': summary}
+
     def return_info(self):
         """
         Return model class type information.

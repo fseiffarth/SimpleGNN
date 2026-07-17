@@ -120,6 +120,45 @@ class InvariantBasedPositionalEncodingLayer(InvariantBasedLayer):
             torch.nn.init.normal_(weights, mean=0.0, std=0.1)
         return weights
 
+    def export_weight_keys(self) -> dict:
+        """
+        Name every Param_W slot with dataset-independent keys (spec 18 B1).
+
+        Layout (see __init__): the slot of (head h, label slot i, entry k) is
+        offset_h + i * num_h + k, where i is the torch.unique inverse of the
+        head's node labels. The unique VALUES are reconstructed from the
+        stored inverse buffer, so the export is exact regardless of
+        torch.unique's internal ordering.
+        """
+        from simplegnn.framework.utils.transfer import label_ids_to_hashes
+
+        heads = []
+        for head_id, num in enumerate(self.n_heads_per_label):
+            description = self.node_label_descriptions[head_id]
+            node_labels_obj = self.graph_data.node_labels[description]
+            inverse = getattr(self, f'_pe_idx_{head_id}').detach().cpu().long()
+            labels = node_labels_obj.node_labels.detach().cpu().long()
+            n_labels = int(self.n_node_labels[head_id])
+            values = torch.full((n_labels,), -1, dtype=torch.int64)
+            values[inverse] = labels
+            heads.append({
+                'head_id': head_id,
+                'label': description,
+                'has_hashes': node_labels_obj.label_hashes is not None,
+                'canonical': bool(node_labels_obj.has_canonical_hashes),
+                'offset': int(getattr(self, f'_pe_off_{head_id}')[0]),
+                'n_labels': n_labels,
+                'num_entries': int(num),
+                'label_hash': label_ids_to_hashes(values, node_labels_obj),
+                'counts': torch.bincount(inverse, minlength=n_labels),
+            })
+        return {
+            'layer_type': 'invariant_based_positional_encoding',
+            'param_w_size': int(self.Param_W.numel()),
+            'param_b_size': 0,
+            'heads': heads,
+        }
+
     def _gather_embeddings(self, node_gather) -> torch.Tensor:
         """
         (N_sel, pe_dim) embedding block for the selected nodes.

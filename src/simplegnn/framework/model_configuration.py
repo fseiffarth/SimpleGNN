@@ -385,6 +385,12 @@ class ModelConfiguration:
         self._last_test_values = None
         self._csv_buffer = []
         self._csv_flush_interval = self.para.run_config.config.get('csv_flush_interval', 10)
+        # hash-keyed transfer (spec 18 B2/B3): cached sidecar payload (the
+        # weight keys are weight-independent, so they are exported once per
+        # configuration; False = checked and nothing to save) and the report
+        # of an applied `transfer:` block
+        self._transfer_keys_payload = None
+        self.transfer_report = None
         # get gpu or cpu: (cpu is recommended at the moment)
         if self.para.run_config.config.get('device', None) is not None:
             self.device = torch.device(self.para.run_config.config['device'] if torch.cuda.is_available() else "cpu")
@@ -675,10 +681,16 @@ class ModelConfiguration:
         """
         print(f'Initializing network with seed {self.seed}')
         if pretrained_network is not None:
+            # in-memory path (same-dataset only): use the given network verbatim
             print('Using pretrained network')
             self.net = pretrained_network
         else:
             self.net = GraphModel(graph_data=self.graph_data, para=self.para, seed=self.seed, device=self.device)
+            # hash-keyed cross-dataset transfer (spec 18 B3): build the target
+            # net normally, then remap a source checkpoint into it
+            transfer_config = self.para.run_config.config.get('transfer', None)
+            if transfer_config:
+                self.transfer_report = self._apply_transfer_from_config(transfer_config)
 
         # set the network to device
         self.net.to(self.device)
@@ -688,6 +700,82 @@ class ModelConfiguration:
         # new weights: drop any cached node-task evaluation outputs
         self._node_eval_outputs = None
         print(f'Network initialized with seed {self.seed}')
+
+    def _apply_transfer_from_config(self, transfer_config: dict):
+        """
+        Resolve the source checkpoint + ``.keys.pt`` sidecar named by a
+        ``transfer:`` block, remap the checkpoint into the freshly built
+        ``self.net`` via :func:`apply_transfer`, apply the freeze strategy,
+        and persist the per-layer report (spec 18 B3).
+        """
+        from simplegnn.framework.utils.transfer import (
+            apply_transfer, apply_transfer_strategy, load_transfer_sidecar,
+            resolve_source_checkpoint, sidecar_path_for)
+
+        source = transfer_config.get('source') or {}
+        if 'results_path' not in source or 'dataset' not in source:
+            raise ValueError(
+                "transfer.source needs 'results_path' and 'dataset' keys "
+                "(the results directory and db name of the pretraining run)")
+        checkpoint_path = resolve_source_checkpoint(
+            Path(source['results_path']), source['dataset'], source.get('select', 'best'))
+        print(f"Transfer: loading source checkpoint {checkpoint_path}")
+        source_state_dict = torch.load(str(checkpoint_path), map_location='cpu', weights_only=True)
+        source_keys = load_transfer_sidecar(sidecar_path_for(checkpoint_path))
+
+        report = apply_transfer(self.net, source_state_dict, source_keys, transfer_config)
+        report.source_checkpoint = str(checkpoint_path)
+        apply_transfer_strategy(self.net, transfer_config, report)
+        print(report.format())
+
+        # append the report to the run's results
+        report_dir = self.results_path.joinpath(f'{self.para.db}/TransferReports')
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir.joinpath(
+            f'transfer_report_{self.para.config_id}_run_{self.run_id}_val_step_{self.k_val}.json')
+        with open(report_path, 'w') as f:
+            json.dump(report.to_dict(), f, indent=2)
+        return report
+
+    def _save_transfer_sidecar(self, final_path: Path) -> None:
+        """
+        Save the portable ``<model>.keys.pt`` sidecar next to a best-model
+        checkpoint (spec 18 B2).
+
+        Guarded by ``save_transfer_keys`` in the hyperparameter config:
+        ``False`` disables the sidecar, ``True`` forces it whenever invariant
+        layers exist, and the default (unset) saves it when invariant layers
+        with hash vocabularies are present. The keys are weight-independent,
+        so they are exported once and re-saved per checkpoint.
+        """
+        flag = self.para.run_config.config.get('save_transfer_keys', None)
+        if flag is False:
+            return
+        if self._transfer_keys_payload is None:
+            export = getattr(self.net, 'export_transfer_keys', None)
+            if export is None:
+                self._transfer_keys_payload = False
+                return
+            try:
+                payload = export()
+            except Exception as e:
+                print(f"⚠ Warning: could not export transfer keys ({e}); "
+                      f"no .keys.pt sidecar will be saved")
+                self._transfer_keys_payload = False
+                return
+            has_layers = bool(payload['layers'])
+            has_hashes = any(head.get('has_hashes', False)
+                             for keys in payload['layers'].values()
+                             for head in keys.get('heads', []))
+            if not has_layers or (flag is None and not has_hashes):
+                # nothing to key, or default-off because no label file carries
+                # hashes (v1 labels); an explicit True still saves what exists
+                self._transfer_keys_payload = payload if (flag and has_layers) else False
+            else:
+                self._transfer_keys_payload = payload
+        if self._transfer_keys_payload:
+            from simplegnn.framework.utils.transfer import sidecar_path_for
+            torch.save(self._transfer_keys_payload, str(sidecar_path_for(final_path)))
 
 
 
@@ -835,7 +923,15 @@ class ModelConfiguration:
         # keep run_config in sync so logging/metadata report the value actually used
         self.para.run_config.weight_decay = kwargs.get('weight_decay', 0.0)
 
-        self.optimizer = opt(self.net.parameters(), **kwargs)
+        # only trainable parameters go into the optimizer: a transfer block's
+        # freeze/linear_probe strategy sets requires_grad=False on transferred
+        # layers (see framework.utils.transfer.apply_transfer_strategy)
+        trainable = [p for p in self.net.parameters() if p.requires_grad]
+        if not trainable:
+            raise ValueError(
+                "All model parameters are frozen — check the transfer.freeze globs / "
+                "transfer.strategy configuration (linear_probe needs a trainable head).")
+        self.optimizer = opt(trainable, **kwargs)
 
     def set_scheduler(self):
         """
@@ -1216,6 +1312,7 @@ class ModelConfiguration:
                         if 'best_model' in self.para.run_config.config and self.para.run_config.config['best_model']:
                             final_path = self.results_path.joinpath(f'{self.para.db}/Models/model_{self.para.config_id}_run_{self.run_id}_val_step_{self.k_val}.pt')
                             torch.save(self.net.state_dict(),final_path)
+                            self._save_transfer_sidecar(final_path)
 
 
                 else:
@@ -1246,6 +1343,7 @@ class ModelConfiguration:
                         if self.para.run_config.config.get('best_model', False) or self.para.run_config.config.get('save_best_model', False):
                             final_path = self.results_path.joinpath(f'{self.para.db}/Models/model_{self.para.config_id}_run_{self.run_id}_val_step_{self.k_val}.pt')
                             torch.save(self.net.state_dict(), final_path)
+                            self._save_transfer_sidecar(final_path)
 
             if self.para.save_prediction_values:
                 # print outputs and labels to a csv file
