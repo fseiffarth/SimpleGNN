@@ -49,7 +49,8 @@ def stub(graphs, name="stub"):
 
 
 def load_label_column(file):
-    _, _, node_labels = torch.load(file, weights_only=False)
+    payload = torch.load(file, weights_only=False)
+    node_labels = payload["node_labels"] if isinstance(payload, dict) else payload[2]
     return node_labels[:, 0].tolist()
 
 

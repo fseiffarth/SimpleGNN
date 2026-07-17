@@ -3,6 +3,8 @@ from typing import List, Optional
 import networkx as nx
 import numpy as np
 
+from simplegnn.datasets.utils.label_hashing import HASH_SCHEMA_VERSION, RESERVED_INVALID, stable_hash
+
 def standard_node_labeling(graphs: List[nx.Graph]):
     """
     Standard node labeling method. It gets the primary_node_labels from the graphs in graphs
@@ -62,7 +64,7 @@ def degree_node_labeling(graphs: List[nx.Graph]):
     db_unique_node_labels = dict(sorted(db_unique_node_labels.items()))
     return node_labels, unique_node_labels, db_unique_node_labels
 
-def _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds):
+def _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds, return_rounds=False):
     """
     Exact vectorized WL color refinement on flat disjoint-union edge arrays.
 
@@ -71,11 +73,16 @@ def _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds):
     the partition stabilizes). Produces the same partition as
     nx.weisfeiler_lehman_subgraph_hashes with iterations=rounds (nx >= 3.5
     semantics), but without building a union graph or hashing strings.
+
+    With return_rounds=True the list of per-round color arrays is returned
+    instead (initial compacted colors first, then the colors after each
+    refinement round; shorter than rounds+1 if the partition stabilized early).
     """
     N = int(num_nodes)
     colors = np.unique(np.asarray(colors, dtype=np.int64), return_inverse=True)[1]
+    round_colors = [colors]
     if N == 0 or rounds <= 0:
-        return colors
+        return round_colors if return_rounds else colors
     src = np.asarray(edge_src, dtype=np.int64)
     dst = np.asarray(edge_dst, dtype=np.int64)
     deg = np.bincount(dst, minlength=N)
@@ -104,14 +111,55 @@ def _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds):
             acc[sel] = A + inv
             A += uq.size
         uq, colors = np.unique(acc, return_inverse=True)
+        round_colors.append(colors)
         if uq.size == C:          # partition stable -> stays stable
             break
         C = uq.size
-    return colors
+    return round_colors if return_rounds else colors
 
 
-def _wl_labels_to_output(colors, graphs):
-    """Compact colors to first-appearance ids and split them per graph."""
+def _canonical_wl_hashes(edge_src, edge_dst, round_colors, seed_hashes, rounds):
+    """
+    Canonical per-color-class hashes for the vectorized WL refinement.
+
+    round_colors is the list produced by _wl_color_refinement(return_rounds=True),
+    seed_hashes maps each initial compacted color id to its canonical seed hash.
+    Returns an int64 array mapping each final color id to its canonical hash.
+    The hash chain is iterated for exactly `rounds` rounds even when the
+    partition stabilized early, so datasets that stabilize at different rounds
+    still produce identical hashes for identical structural neighborhoods.
+    """
+    N = round_colors[0].shape[0]
+    canon = np.asarray(seed_hashes, dtype=np.int64)
+    if N == 0 or rounds <= 0:
+        return canon
+    src = np.asarray(edge_src, dtype=np.int64)
+    dst = np.asarray(edge_dst, dtype=np.int64)
+    deg = np.bincount(dst, minlength=N)
+    order = np.argsort(dst, kind="stable")
+    src_s = src[order]
+    start = np.concatenate([[0], np.cumsum(deg)[:-1]])
+    last = len(round_colors) - 1
+    for r in range(1, rounds + 1):
+        prev_colors = round_colors[min(r - 1, last)]
+        cur_colors = round_colors[min(r, last)]
+        node_hash_prev = canon[prev_colors]
+        uq, first_index = np.unique(cur_colors, return_index=True)
+        canon = np.empty(uq.shape[0], dtype=np.int64)
+        for c, v in zip(uq, first_index):
+            neighbors = src_s[start[v]:start[v] + deg[v]]
+            multiset = tuple(sorted(int(h) for h in node_hash_prev[neighbors]))
+            canon[c] = stable_hash(int(node_hash_prev[v]), multiset)
+    return canon
+
+
+def _wl_labels_to_output(colors, graphs, class_hashes=None):
+    """Compact colors to first-appearance ids and split them per graph.
+
+    When class_hashes (final color id -> canonical hash) is given, a fourth
+    element mapping each output label id to its canonical hash signature is
+    returned as well.
+    """
     label_dict = {}
     string_labels = [label_dict.setdefault(int(c), len(label_dict)) for c in colors]
     graph_node_labels = []
@@ -126,13 +174,16 @@ def _wl_labels_to_output(colors, graphs):
             unique_node_labels[-1][node_label] = unique_node_labels[-1].get(node_label, 0) + 1
             db_unique_node_labels[node_label] = db_unique_node_labels.get(node_label, 0) + 1
         counter += node_number
-    return graph_node_labels, unique_node_labels, db_unique_node_labels
+    if class_hashes is None:
+        return graph_node_labels, unique_node_labels, db_unique_node_labels
+    label_signatures = {label_id: int(class_hashes[color]) for color, label_id in label_dict.items()}
+    return graph_node_labels, unique_node_labels, db_unique_node_labels, label_signatures
 
 
-def weisfeiler_lehman_node_labeling(graphs: List[nx.Graph], depth: int = 3, labeled: bool = False, base_labels: Optional[dict] = None, with_edge_labels: bool = False):
+def weisfeiler_lehman_node_labeling(graphs: List[nx.Graph], depth: int = 3, labeled: bool = False, base_labels: Optional[dict] = None, with_edge_labels: bool = False, return_hashes: bool = False):
     if with_edge_labels:
         # edge-labeled WL is not covered by the vectorized refinement
-        return _weisfeiler_lehman_node_labeling_nx(graphs, depth=depth, labeled=labeled, base_labels=base_labels, with_edge_labels=with_edge_labels)
+        return _weisfeiler_lehman_node_labeling_nx(graphs, depth=depth, labeled=labeled, base_labels=base_labels, with_edge_labels=with_edge_labels, return_hashes=return_hashes)
 
     # build disjoint-union numbered edge arrays straight from the nx graphs
     num_nodes = sum(len(g.nodes) for g in graphs)
@@ -148,6 +199,7 @@ def weisfeiler_lehman_node_labeling(graphs: List[nx.Graph], depth: int = 3, labe
             edge_dst.append(ui)
         offset += len(graph.nodes)
 
+    value_to_id = None
     if labeled:
         if base_labels is not None:
             colors = base_labels['labels'].node_labels.cpu().numpy().astype(np.int64)
@@ -167,11 +219,41 @@ def weisfeiler_lehman_node_labeling(graphs: List[nx.Graph], depth: int = 3, labe
         colors = np.zeros(num_nodes, dtype=np.int64)   # nx >= 3.5 trivial init
         rounds = depth
 
-    final_colors = _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds)
-    return _wl_labels_to_output(final_colors, graphs)
+    if not return_hashes:
+        final_colors = _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds)
+        return _wl_labels_to_output(final_colors, graphs)
+
+    seed_hashes = _wl_seed_hashes(colors, depth, labeled, base_labels, value_to_id)
+    round_colors = _wl_color_refinement(edge_src, edge_dst, num_nodes, colors, rounds, return_rounds=True)
+    final_colors = round_colors[-1]
+    if seed_hashes is None:
+        return _wl_labels_to_output(final_colors, graphs) + (None,)
+    class_hashes = _canonical_wl_hashes(edge_src, edge_dst, round_colors, seed_hashes, rounds)
+    return _wl_labels_to_output(final_colors, graphs, class_hashes=class_hashes)
 
 
-def _weisfeiler_lehman_node_labeling_nx(graphs: List[nx.Graph], depth: int = 3, labeled: bool = False, base_labels: Optional[dict] = None, with_edge_labels: bool = False):
+def _wl_seed_hashes(colors, depth, labeled, base_labels, value_to_id):
+    """Canonical seed hash per initial compacted color id, or None if unavailable."""
+    unique_values = np.unique(np.asarray(colors, dtype=np.int64))
+    if not labeled:
+        init = stable_hash(HASH_SCHEMA_VERSION, 'wl', (depth,), 'init')
+        return np.full(unique_values.shape[0], init, dtype=np.int64)
+    if base_labels is not None:
+        base_hashes = base_labels['labels'].label_hashes
+        if base_hashes is None:
+            return None
+        seeds = np.empty(unique_values.shape[0], dtype=np.int64)
+        for i, value in enumerate(unique_values):
+            seeds[i] = RESERVED_INVALID if value < 0 else int(base_hashes[value])
+        return seeds
+    id_to_value = {label_id: value for value, label_id in value_to_id.items()}
+    seeds = np.empty(unique_values.shape[0], dtype=np.int64)
+    for i, value in enumerate(unique_values):
+        seeds[i] = stable_hash(HASH_SCHEMA_VERSION, 'primary', (), id_to_value[int(value)])
+    return seeds
+
+
+def _weisfeiler_lehman_node_labeling_nx(graphs: List[nx.Graph], depth: int = 3, labeled: bool = False, base_labels: Optional[dict] = None, with_edge_labels: bool = False, return_hashes: bool = False):
     unique_node_labels = []
     db_unique_node_labels = {}
     union_graph = nx.disjoint_union_all(graphs)
@@ -198,6 +280,9 @@ def _weisfeiler_lehman_node_labeling_nx(graphs: List[nx.Graph], depth: int = 3, 
     else:
         hashes = nx.weisfeiler_lehman_subgraph_hashes(union_graph, iterations=depth)
     largest_int = 0
+    # canonical identity of a node: its final-iteration blake2b digest (captured
+    # before the per-dataset hash_dict compaction below discards it)
+    final_digests = [hashes[node][-1] for node in hashes]
 
     # iterate over the keys of the hashes dictionary
     for node in hashes:
@@ -242,4 +327,7 @@ def _weisfeiler_lehman_node_labeling_nx(graphs: List[nx.Graph], depth: int = 3, 
             else:
                 db_unique_node_labels[node_label] += 1
         counter += node_number
-    return graph_node_labels, unique_node_labels, db_unique_node_labels
+    if not return_hashes:
+        return graph_node_labels, unique_node_labels, db_unique_node_labels
+    label_signatures = {label_id: final_digests[i] for i, label_id in enumerate(string_labels)}
+    return graph_node_labels, unique_node_labels, db_unique_node_labels, label_signatures

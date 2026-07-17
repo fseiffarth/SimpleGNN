@@ -128,10 +128,12 @@ def test_save_closed_walk_labels_writes_expected_file(tmp_path):
 
     assert file.name == "stub_labels_closed_walks_4.pt"
     assert file.exists()
-    dataset_name, label_name, node_labels = torch.load(file, weights_only=False)
-    assert dataset_name == "stub"
-    assert label_name == "closed_walks_4"
-    assert node_labels.shape == (4, 2)
+    payload = torch.load(file, weights_only=True)
+    assert payload["dataset_name"] == "stub"
+    assert payload["label_name"] == "closed_walks_4"
+    assert payload["node_labels"].shape == (4, 2)
+    assert payload["label_hashes"].dtype == torch.int64
+    assert payload["hash_meta"]["canonical"] is True
 
 
 def test_relabel_node_labels_handles_cap_and_invalids():

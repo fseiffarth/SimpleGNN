@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Union, Tuple
 
 import networkx as nx
+import numpy as np
 import torch
 from joblib import Parallel, delayed
 from networkx.algorithms.isomorphism import GraphMatcher
@@ -13,6 +14,8 @@ from torch_geometric.io import fs
 
 from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.NodeLabels import NodeLabels
+from simplegnn.datasets.utils.label_hashing import HASH_SCHEMA_VERSION, RESERVED_CAPPED, RESERVED_INVALID, \
+    hash_vocabulary, stable_hash
 from simplegnn.datasets.utils.node_labeling_functions import weisfeiler_lehman_node_labeling
 
 
@@ -35,10 +38,14 @@ def load_labels(path='') -> NodeLabels:
 
     Notes
     -----
-    The file must have been saved using torch.save() with the format:
-    (dataset_name, label_name, node_labels)
+    Two on-disk formats are supported:
 
-    where node_labels is a torch.Tensor of shape (N, 2):
+    - Legacy v1: a 3-tuple (dataset_name, label_name, node_labels).
+    - v2: a dict with keys 'dataset_name', 'label_name', 'node_labels' and
+      optionally 'label_hashes' (frequency-sorted id -> int64 canonical hash)
+      and 'hash_meta'.
+
+    In both formats node_labels is a torch.Tensor of shape (N, 2):
     - Column 0: Original label indices
     - Column 1: Frequency-sorted label indices (-1 for invalid/padding)
 
@@ -47,7 +54,11 @@ def load_labels(path='') -> NodeLabels:
     save_labels_to_file : Saves labels in the expected format
     NodeLabels : Container class for node labels
     """
-    dataset_name, label_name, node_labels = torch.load(path, weights_only=True)
+    payload = torch.load(path, weights_only=True)
+    if isinstance(payload, dict):
+        return NodeLabels(payload['dataset_name'], payload['label_name'], payload['node_labels'],
+                          label_hashes=payload.get('label_hashes'), hash_meta=payload.get('hash_meta'))
+    dataset_name, label_name, node_labels = payload
     return NodeLabels(dataset_name, label_name, node_labels)
 
 def combine_node_labels(labels: List[NodeLabels]):
@@ -138,7 +149,27 @@ def combine_node_labels(labels: List[NodeLabels]):
     frequency_sorted_labels = new_labels.new(sorted_indices).argsort()[new_labels]
     new_labels[invalid_indices] = -1
     frequency_sorted_labels[invalid_indices] = -1
-    return NodeLabels(graph_name, combined_label_name, torch.stack([new_labels, frequency_sorted_labels], dim=1))
+    label_hashes = None
+    hash_meta = None
+    if all(l.label_hashes is not None for l in labels):
+        hashes_a = labels[0].label_hashes
+        hashes_b = labels[1].label_hashes
+        has_artificial = len(invalid_indices) > 0
+        combined_hashes = torch.empty(len(unique_labels), dtype=torch.int64)
+        for row, (id_a, id_b) in enumerate(unique_labels.tolist()):
+            if has_artificial and row == artificial_label:
+                combined_hashes[row] = RESERVED_INVALID
+            else:
+                combined_hashes[row] = stable_hash(HASH_SCHEMA_VERSION, 'combined', (),
+                                                   (int(hashes_a[id_a]), int(hashes_b[id_b])))
+        label_hashes = combined_hashes[sorted_indices]
+        hash_meta = {'schema': HASH_SCHEMA_VERSION,
+                     'canonical': all(l.has_canonical_hashes for l in labels),
+                     'kind': 'combined',
+                     'params': (),
+                     'capped': any(bool((l.hash_meta or {}).get('capped', False)) for l in labels)}
+    return NodeLabels(graph_name, combined_label_name, torch.stack([new_labels, frequency_sorted_labels], dim=1),
+                      label_hashes=label_hashes, hash_meta=hash_meta)
 
 def get_label_string(label_dict: dict) -> str:
     """
@@ -374,6 +405,10 @@ def get_label_string(label_dict: dict) -> str:
 
 
 # Todo replace the save functions by classes (the base class should be the following NodeLabelingBase)
+# NOTE: this class hierarchy is a parallel, partially dead path (its
+# save_labels_to_file ends in NotImplementedError and the ShareGNN preprocessing
+# dispatcher never calls it). Canonical label hashes (specs 17/18) are threaded
+# through the module-level save_* functions below only.
 class NodeLabelingBase(abc.ABC):
     """
     Abstract base class for node labeling strategies.
@@ -971,6 +1006,7 @@ class ClosedWalkNodeLabeling(NodeLabelingBase):
         # Step 2: compress the profiles to consecutive integer ids over the dataset
         unique_profiles = sorted({profile for profiles in graph_profiles for profile in profiles})
         profile_to_label = {profile: i for i, profile in enumerate(unique_profiles)}
+        self.profile_to_label = profile_to_label
         return [[profile_to_label[profile] for profile in profiles] for profiles in graph_profiles]
 
 
@@ -984,6 +1020,11 @@ def _canonical_count_string(count_dict: dict) -> str:
     node/edge numbering.
     """
     return str(sorted(count_dict.items()))
+
+
+def _subgraph_edge_signature(subgraph: nx.Graph) -> tuple:
+    """Sorted-edge-list identity of a pattern graph, stable across config renumbering."""
+    return tuple(sorted(tuple(sorted((str(u), str(v)))) for u, v in subgraph.edges()))
 
 
 def _adaptive_parallel_map(func, graphs: List[nx.Graph], *args, probe: int = 5, min_parallel_seconds: float = 10.0) -> list:
@@ -1047,14 +1088,20 @@ def _nodes_in_cycles(graph: nx.Graph, length_bound: int) -> set:
     return in_cycle
 
 
-def save_labels_to_file(file:Path, dataset_name:str, label_name:str, graph_node_labels:Optional[Union[List[List[int]], torch.Tensor]], max_labels:None):
+def save_labels_to_file(file:Path, dataset_name:str, label_name:str, graph_node_labels:Optional[Union[List[List[int]], torch.Tensor]], max_labels:None, label_hashes=None, hash_meta:Optional[dict]=None):
     """
-    Save the node labels to a file
+    Save the node labels to a file (format v2 dict, weights_only-loadable)
     :param file: Path to the file
     :param dataset_name: Name of the dataset
     :param label_name: Name of the labels
     :param graph_node_labels: List of lists with the node labels for each graph or torch.Tensor with the node labels
     :param max_labels: Maximum number of labels to use
+    :param label_hashes: optional original-label-id -> int64 canonical hash array; it is
+        reordered with the same frequency-sorting permutation relabel_node_labels applies,
+        ids merged by max_labels capping collapse to RESERVED_CAPPED, invalid -1 labels
+        map to RESERVED_INVALID
+    :param hash_meta: optional dict with at least 'canonical', 'kind' and 'params';
+        'schema' and 'capped' are filled in here
     """
     if isinstance(graph_node_labels, torch.Tensor):
         pass
@@ -1063,12 +1110,46 @@ def save_labels_to_file(file:Path, dataset_name:str, label_name:str, graph_node_
         graph_node_labels = torch.tensor([label for graph_labels in graph_node_labels for label in graph_labels])
     else:
         raise ValueError("graph_node_labels must be either a torch.Tensor or a list of lists")
-    # save the node labels to a file as torch tensor with the original labels as first column and the new labels as second column
-    fs.torch_save(
-        (dataset_name, label_name, relabel_node_labels(graph_node_labels, max_labels)), str(file)
-    )
+    # save the node labels as torch tensor with the original labels as first column and the new labels as second column
+    relabeled, sorted_indices = relabel_node_labels(graph_node_labels, max_labels, return_sorted_indices=True)
+    payload = {'dataset_name': dataset_name, 'label_name': label_name, 'node_labels': relabeled}
+    if label_hashes is not None:
+        hashes = np.asarray(label_hashes, dtype=np.int64)
+        flat = graph_node_labels.flatten()
+        invalid_id = int(flat.max()) + 1 if bool((flat < 0).any()) else None
+        order = sorted_indices.cpu().numpy()
+        hashes_by_sorted = np.empty(order.shape[0], dtype=np.int64)
+        for new_id, original_id in enumerate(order):
+            if invalid_id is not None and original_id == invalid_id:
+                hashes_by_sorted[new_id] = RESERVED_INVALID
+            elif original_id < hashes.shape[0]:
+                hashes_by_sorted[new_id] = hashes[original_id]
+            else:
+                raise ValueError(
+                    f"label_hashes for {label_name} covers {hashes.shape[0]} label ids but id {original_id} was observed")
+        capped = False
+        if max_labels is not None and hashes_by_sorted.shape[0] > max_labels:
+            merged = hashes_by_sorted[max_labels - 1:]
+            hashes_by_sorted = hashes_by_sorted[:max_labels].copy()
+            if merged.shape[0] > 1:
+                hashes_by_sorted[-1] = RESERVED_CAPPED
+                capped = True
+        meta = dict(hash_meta or {})
+        meta['schema'] = HASH_SCHEMA_VERSION
+        meta['capped'] = capped or bool(meta.get('capped', False))
+        meta.setdefault('canonical', False)
+        meta.setdefault('kind', label_name)
+        meta.setdefault('params', ())
+        payload['label_hashes'] = torch.from_numpy(hashes_by_sorted)
+        payload['hash_meta'] = meta
+    elif hash_meta is not None:
+        meta = dict(hash_meta)
+        meta['schema'] = HASH_SCHEMA_VERSION
+        meta.setdefault('capped', False)
+        payload['hash_meta'] = meta
+    fs.torch_save(payload, str(file))
 
-def save_primary_labels(graph_data:GraphDataset, label_path=None, max_labels=None, save_times=None) -> str:
+def save_primary_labels(graph_data:GraphDataset, label_path=None, max_labels=None, save_times=None, canonical=False) -> str:
     l = f'primary'
     if max_labels is not None:
         l = f'{l}_{max_labels}'
@@ -1080,7 +1161,15 @@ def save_primary_labels(graph_data:GraphDataset, label_path=None, max_labels=Non
     if not file.exists():
         print(f"Saving {l} labels for {graph_data.name} to {file}")
         start_time = time.time()
-        save_labels_to_file(file,graph_data.name, l, graph_data.node_labels['primary'], max_labels)
+        raw_labels = graph_data.node_labels['primary']
+        if isinstance(raw_labels, torch.Tensor):
+            raw_values = raw_labels.flatten().tolist()
+        else:
+            raw_values = [label for graph_labels in raw_labels for label in graph_labels]
+        signatures = {int(value): int(value) for value in set(raw_values) if int(value) >= 0}
+        label_hashes = hash_vocabulary(signatures, 'primary', ())
+        hash_meta = {'canonical': bool(canonical), 'kind': 'primary', 'params': ()}
+        save_labels_to_file(file,graph_data.name, l, raw_labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1113,7 +1202,10 @@ def save_degree_labels(graph_data:GraphDataset, label_path=None, max_labels=None
             node_labels.append([0 for _ in range(len(graph.nodes()))])
             for node in graph.nodes():
                 node_labels[-1][node] = graph.degree(node)
-        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels=max_labels)
+        signatures = {degree: degree for graph_labels in node_labels for degree in graph_labels}
+        label_hashes = hash_vocabulary(signatures, 'degree', ())
+        hash_meta = {'canonical': True, 'kind': 'degree', 'params': ()}
+        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels=max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         #write_node_labels(file, node_labels)
         if save_times is not None:
             try:
@@ -1125,7 +1217,7 @@ def save_degree_labels(graph_data:GraphDataset, label_path=None, max_labels=None
         print(f"File {file} already exists. Skipping.")
     return file
 
-def save_labeled_degree_labels(graph_data:GraphDataset, label_path=None, max_labels=None, save_times=None)->str:
+def save_labeled_degree_labels(graph_data:GraphDataset, label_path=None, max_labels=None, save_times=None, canonical=False)->str:
     # save the node labels to a file
     l = 'wl_labeled_0'
     if max_labels is not None:
@@ -1160,7 +1252,10 @@ def save_labeled_degree_labels(graph_data:GraphDataset, label_path=None, max_lab
         unique_neighbor_label_dict = {label: i for i, label in enumerate(sorted(unique_neighbor_labels))}
         for graph_id, graph in enumerate(graph_data.nx_graphs):
             node_labels.append([unique_neighbor_label_dict[node_to_hash[graph_id][node]] for node in graph.nodes()])
-        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels)
+        signatures = {label_id: identifier for identifier, label_id in unique_neighbor_label_dict.items()}
+        label_hashes = hash_vocabulary(signatures, 'wl_labeled_0', ())
+        hash_meta = {'canonical': bool(canonical), 'kind': 'wl_labeled_0', 'params': ()}
+        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1184,7 +1279,9 @@ def save_trivial_labels(graph_data:GraphDataset, label_path=None, save_times=Non
         start_time = time.time()
         # label 0 for all nodes
         trivial_labels = torch.zeros(len(graph_data.data.x), dtype=torch.long)
-        save_labels_to_file(file, graph_data.name, l, trivial_labels, max_labels=None)
+        label_hashes = hash_vocabulary({0: 0}, 'trivial', ())
+        hash_meta = {'canonical': True, 'kind': 'trivial', 'params': ()}
+        save_labels_to_file(file, graph_data.name, l, trivial_labels, max_labels=None, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1218,7 +1315,9 @@ def save_index_labels(graph_data:GraphDataset, max_labels=None, label_path=None,
                 # define index -1 and -2 for the first and last entry
                 node_labels[-1][0] = -1  # first entry
                 node_labels[-1][-1] = -2
-        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels)
+        # index labels are positional, never canonical across datasets -> no hashes
+        hash_meta = {'canonical': False, 'kind': 'index_text' if index_text else 'index', 'params': ()}
+        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1245,8 +1344,13 @@ def save_wl_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=N
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        graph_node_labels, unique_node_labels, db_unique_node_labels = weisfeiler_lehman_node_labeling(graph_data.nx_graphs, depth=depth, labeled=False)
-        save_labels_to_file(file, graph_data.name, l, graph_node_labels, max_labels)
+        graph_node_labels, unique_node_labels, db_unique_node_labels, label_signatures = weisfeiler_lehman_node_labeling(graph_data.nx_graphs, depth=depth, labeled=False, return_hashes=True)
+        label_hashes = None
+        hash_meta = None
+        if label_signatures is not None:
+            label_hashes = hash_vocabulary(label_signatures, 'wl', (depth,))
+            hash_meta = {'canonical': True, 'kind': 'wl', 'params': (depth,)}
+        save_labels_to_file(file, graph_data.name, l, graph_node_labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1257,7 +1361,7 @@ def save_wl_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=N
         print(f"File {file} already exists. Skipping.")
     return file
 
-def save_wl_labeled_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=None, base_labels:Optional[dict]=None, save_times=None)->str:
+def save_wl_labeled_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=None, base_labels:Optional[dict]=None, save_times=None, canonical=False)->str:
     # save the node labels to a file
     l = 'wl_labeled'
     if base_labels is not None and base_labels['layer_dict']['label_type'] != 'primary':
@@ -1274,8 +1378,17 @@ def save_wl_labeled_labels(graph_data:GraphDataset, depth, max_labels=None, labe
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        node_labels, unique_node_labels, db_unique_node_labels = weisfeiler_lehman_node_labeling(graph_data.nx_graphs, depth=depth, labeled=True, base_labels=base_labels)
-        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels)
+        node_labels, unique_node_labels, db_unique_node_labels, label_signatures = weisfeiler_lehman_node_labeling(graph_data.nx_graphs, depth=depth, labeled=True, base_labels=base_labels, return_hashes=True)
+        label_hashes = None
+        hash_meta = None
+        if label_signatures is not None:
+            if base_labels is not None:
+                hash_canonical = bool(base_labels['labels'].has_canonical_hashes)
+            else:
+                hash_canonical = bool(canonical)
+            label_hashes = hash_vocabulary(label_signatures, 'wl_labeled', (depth,))
+            hash_meta = {'canonical': hash_canonical, 'kind': 'wl_labeled', 'params': (depth,)}
+        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1287,7 +1400,7 @@ def save_wl_labeled_labels(graph_data:GraphDataset, depth, max_labels=None, labe
     return file
 
 
-def save_wl_labeled_edges_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=None, base_labels:Optional[dict]=None, save_times=None)->str:
+def save_wl_labeled_edges_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=None, base_labels:Optional[dict]=None, save_times=None, canonical=False)->str:
     # save the node labels to a file
     l = 'wl_labeled_edges'
     if base_labels is not None and base_labels['layer_dict']['label_type'] != 'primary':
@@ -1304,8 +1417,16 @@ def save_wl_labeled_edges_labels(graph_data:GraphDataset, depth, max_labels=None
         if graph_data.nx_graphs is None:
             graph_data.create_nx_graphs(directed=False)
         start_time = time.time()
-        node_labels, unique_node_labels, db_unique_node_labels = weisfeiler_lehman_node_labeling(graph_data.nx_graphs, depth=depth, labeled=True, base_labels=base_labels, with_edge_labels=True)
-        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels)
+        node_labels, unique_node_labels, db_unique_node_labels, label_signatures = weisfeiler_lehman_node_labeling(graph_data.nx_graphs, depth=depth, labeled=True, base_labels=base_labels, with_edge_labels=True, return_hashes=True)
+        label_hashes = None
+        hash_meta = None
+        if label_signatures is not None:
+            # the nx digests seed from raw primary node/edge labels; with explicit base
+            # labels the seeds are dataset-relative compacted ids -> never canonical
+            hash_canonical = bool(canonical) and base_labels is None
+            label_hashes = hash_vocabulary(label_signatures, 'wl_edges', (depth,))
+            hash_meta = {'canonical': hash_canonical, 'kind': 'wl_edges', 'params': (depth,)}
+        save_labels_to_file(file, graph_data.name, l, node_labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1356,7 +1477,13 @@ def save_cycle_labels(graph_data:GraphDataset, min_cycle_length=None, max_cycle_
                 else:
                     labels[-1].append(len(label_dict))
 
-        save_labels_to_file(file, graph_data.name, l, labels, max_labels)
+        hash_kind = f'{cycle_type}_cycles'
+        hash_params = (min_cycle_length, max_cycle_length)
+        signatures = {label_id: canon_string for canon_string, label_id in label_dict.items()}
+        signatures[len(label_dict)] = 'none'
+        label_hashes = hash_vocabulary(signatures, hash_kind, hash_params)
+        hash_meta = {'canonical': True, 'kind': hash_kind, 'params': hash_params}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1393,7 +1520,9 @@ def save_in_circle_labels(graph_data:GraphDataset, length_bound=6, max_labels=No
                 else:
                     labels[-1].append(0)
 
-        save_labels_to_file(file, graph_data.name, l, labels, max_labels=None)
+        label_hashes = hash_vocabulary({0: 0, 1: 1}, 'in_cycle', (length_bound,))
+        hash_meta = {'canonical': True, 'kind': 'in_cycle', 'params': (length_bound,)}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels=None, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1452,7 +1581,13 @@ def save_subgraph_labels(graph_data:GraphDataset, subgraphs=List[nx.Graph], name
                 else:
                     labels[-1].append(len(label_dict))
 
-        save_labels_to_file(file, graph_data.name, l, labels, max_labels=max_labels)
+        # identify the pattern list by its edge structure, not the config-assigned id
+        hash_params = (tuple(_subgraph_edge_signature(subgraph) for subgraph in subgraphs),)
+        signatures = {label_id: canon_string for canon_string, label_id in label_dict.items()}
+        signatures[len(label_dict)] = 'none'
+        label_hashes = hash_vocabulary(signatures, 'subgraph', hash_params)
+        hash_meta = {'canonical': True, 'kind': 'subgraph', 'params': hash_params}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels=max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1496,7 +1631,11 @@ def save_clique_labels(graph_data:GraphDataset, max_clique=6, max_labels=None, l
                 else:
                     labels[-1].append(len(label_dict))
 
-        save_labels_to_file(file, graph_data.name, l, labels, max_labels)
+        signatures = {label_id: canon_string for canon_string, label_id in label_dict.items()}
+        signatures[len(label_dict)] = 'none'
+        label_hashes = hash_vocabulary(signatures, 'cliques', (max_clique,))
+        hash_meta = {'canonical': True, 'kind': 'cliques', 'params': (max_clique,)}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1552,7 +1691,12 @@ def save_betweenness_centrality_labels(graph_data: GraphDataset, label_path: Opt
         labeling = BetweennessCentralityNodeLabeling(
             graph_data, label_path, max_labels, num_bins, save_times
         )
-        save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
+        labels = labeling.generate()
+        # bin edges are dataset percentiles -> hashes are dataset-relative, never canonical
+        signatures = {bin_id: bin_id for graph_labels in labels for bin_id in graph_labels}
+        label_hashes = hash_vocabulary(signatures, 'betweenness', (labeling.num_bins,))
+        hash_meta = {'canonical': False, 'kind': 'betweenness', 'params': (labeling.num_bins,)}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1616,7 +1760,12 @@ def save_closed_walk_labels(graph_data: GraphDataset, min_walk_length: Optional[
             graph_data, min_walk_length=min_walk_length, max_walk_length=max_walk_length,
             max_labels=max_labels, label_path=label_path, save_times=save_times
         )
-        save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
+        labels = labeling.generate()
+        hash_params = (labeling.min_walk_length, labeling.max_walk_length)
+        signatures = {label_id: profile for profile, label_id in labeling.profile_to_label.items()}
+        label_hashes = hash_vocabulary(signatures, 'closed_walks', hash_params)
+        hash_meta = {'canonical': True, 'kind': 'closed_walks', 'params': hash_params}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
@@ -1628,12 +1777,15 @@ def save_closed_walk_labels(graph_data: GraphDataset, min_walk_length: Optional[
     return file
 
 
-def relabel_node_labels(node_labels: torch.Tensor, max_number_labels:Optional[int]) -> torch.Tensor:
+def relabel_node_labels(node_labels: torch.Tensor, max_number_labels:Optional[int], return_sorted_indices:bool=False):
     '''
     Relabel the original labels by mapping them to 0, 1, 2, ... where 0 is the most frequent label of the original labels
     param node_labels: torch.Tensor with the original node labels
     param max_number_labels: Optional[int]
+    param return_sorted_indices: if True, additionally return the frequency-sorted-id -> original-id
+        permutation (sorted_indices[new_id] = original_id, before max_number_labels capping)
     return: n x 2 torch.Tensor with the original labels as first column and the new labels as second column
+        (and sorted_indices if return_sorted_indices is True)
     '''
     # get frequency of each value in the new labels, first flatten the tensor
     node_labels = node_labels.flatten()
@@ -1652,6 +1804,9 @@ def relabel_node_labels(node_labels: torch.Tensor, max_number_labels:Optional[in
     # set max_id to -1
     frequency_sorted_labels = torch.where(frequency_sorted_labels == max_id, -1, frequency_sorted_labels)
     node_labels = torch.where(node_labels == max_id, -1, node_labels)
-    return torch.stack([node_labels, frequency_sorted_labels], dim=1)
+    relabeled = torch.stack([node_labels, frequency_sorted_labels], dim=1)
+    if return_sorted_indices:
+        return relabeled, sorted_indices
+    return relabeled
 
 

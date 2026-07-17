@@ -14,6 +14,14 @@ from simplegnn.models.ShareGNN.preprocessing.properties import write_distance_pr
 def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: GraphDataset, generation_times_labels_path=None) -> Path:
     file_path = None
     layer = json.loads(layer_strings)
+    # primary label codings are dataset-relative by default (e.g. TU atom-type
+    # enumerations); the override marks datasets known to share a coding
+    primary_canonical = bool(layer.get('primary_labels_canonical', False))
+    if not primary_canonical:
+        try:
+            primary_canonical = bool(experiment_configuration.get('primary_labels_canonical', False))
+        except AttributeError:
+            primary_canonical = False
     label_path = experiment_configuration['paths']['labels'].joinpath(f'{graph_data.name}')
     # check if the path exists, otherwise create it
     if not label_path.exists():
@@ -41,7 +49,9 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
             l += f'_{max_labels}'
         file_path = label_path.joinpath(f"{graph_data.name}_labels_{l}.pt")
         save_labels_to_file(file_path, combined_labels.dataset_name, l, combined_labels.node_labels,
-                            max_labels=layer.get('max_labels', None))
+                            max_labels=layer.get('max_labels', None),
+                            label_hashes=combined_labels.label_hashes,
+                            hash_meta=combined_labels.hash_meta)
     else:
         if isinstance(layer['label_type'], list):
             layer['label_type'] = layer['label_type'][0]
@@ -50,7 +60,8 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
             file_path = save_primary_labels(graph_data=graph_data,
                                             label_path=label_path,
                                             max_labels=layer.get('max_labels', None),
-                                            save_times=generation_times_labels_path)
+                                            save_times=generation_times_labels_path,
+                                            canonical=primary_canonical)
         elif layer['label_type'] == 'trivial':
             file_path = save_trivial_labels(graph_data=graph_data,
                                             label_path=label_path,
@@ -102,14 +113,16 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
                 file_path = save_labeled_degree_labels(graph_data=graph_data,
                                                        label_path=label_path,
                                                        max_labels=layer.get('max_labels', None),
-                                                       save_times=generation_times_labels_path)
+                                                       save_times=generation_times_labels_path,
+                                                       canonical=primary_canonical)
             else:
                 file_path = save_wl_labeled_labels(graph_data=graph_data,
                                                    depth=layer.get('depth', 3),
                                                    max_labels=layer['max_labels'],
                                                    label_path=label_path,
                                                    base_labels=base_labels,
-                                                   save_times=generation_times_labels_path)
+                                                   save_times=generation_times_labels_path,
+                                                   canonical=primary_canonical)
         elif layer['label_type'] == 'wl_labeled_edges':
             layer['max_labels'] = layer.get('max_labels', None)
             layer['depth'] = layer.get('depth', 3)
@@ -128,7 +141,8 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
                                                      max_labels=layer['max_labels'],
                                                      label_path=label_path,
                                                      base_labels=base_labels,
-                                                     save_times=generation_times_labels_path)
+                                                     save_times=generation_times_labels_path,
+                                                     canonical=primary_canonical)
         elif layer['label_type'] == 'simple_cycles' or layer['label_type'] == 'induced_cycles':
             cycle_type = 'simple' if layer['label_type'] == 'simple_cycles' else 'induced'
             if 'max_labels' not in layer:
