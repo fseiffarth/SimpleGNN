@@ -1,0 +1,21 @@
+# Finetuning run of the transfer-learning example (spec 18 B5):
+# ShareGNN graph classification on DHFR (TUDataset, auto-downloaded), warm-started
+# from the NCI1 pretraining checkpoint via the transfer: block in
+# finetune_parameters.yml (hash-keyed invariant transfer, head re-initialized).
+# Uses the same models_ShareGNN.yml as the pretraining run so the invariant
+# heads line up head-by-head.
+datasets:
+  - {
+    name: "DHFR",
+    source: "TUDataset",
+    task: "graph_classification",
+    paths: {
+      data: "data/TUDatasets/",
+      labels: "data/TUDatasets/labels/",
+      properties: "data/TUDatasets/properties/",
+      results: "results/transfer_learning/finetune/",
+      models: "examples/transfer_learning/models_ShareGNN.yml",
+      hyperparameters: "examples/transfer_learning/finetune_parameters.yml",
+      splits: "src/simplegnn/datasets/splits/fair/DHFR_splits.json",
+    }
+  }

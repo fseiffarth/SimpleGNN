@@ -1,0 +1,32 @@
+# Hyperparameters of the NCI1 pretraining run (spec 18 B5).
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+loss:
+  - CrossEntropyLoss
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.01
+epochs:
+  - 50
+
+early_stopping:
+  enabled: False
+  patience: 25
+
+training_data_sampling: { type: 'default' }
+
+# constant input features are dataset-independent (same width everywhere), so
+# the linear layers of the pretrained model shape-match on any target dataset
+input_features: { name: constant, value: 1.0 }
+
+# save the best checkpoints (model_*.pt) ...
+save_best_model: True
+# ... and the portable .keys.pt sidecars naming every invariant weight slot by
+# its canonical (src_hash, tgt_hash, property) key — required by the transfer
+save_transfer_keys: True

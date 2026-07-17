@@ -708,20 +708,37 @@ class ModelConfiguration:
         ``self.net`` via :func:`apply_transfer`, apply the freeze strategy,
         and persist the per-layer report (spec 18 B3).
         """
+        from simplegnn.framework.utils.configuration_checks import (
+            check_transfer_runtime_requirements)
         from simplegnn.framework.utils.transfer import (
             apply_transfer, apply_transfer_strategy, load_transfer_sidecar,
-            resolve_source_checkpoint, sidecar_path_for)
+            sidecar_path_for)
 
-        source = transfer_config.get('source') or {}
-        if 'results_path' not in source or 'dataset' not in source:
-            raise ValueError(
-                "transfer.source needs 'results_path' and 'dataset' keys "
-                "(the results directory and db name of the pretraining run)")
-        checkpoint_path = resolve_source_checkpoint(
-            Path(source['results_path']), source['dataset'], source.get('select', 'best'))
+        # spec 18 B4: schema re-validation plus the existence checks that can
+        # only run now (source checkpoint, .keys.pt sidecar, target label
+        # hash vocabularies). Only the label descriptions the invariant
+        # layers consume are checked — graph_data.node_labels also holds the
+        # dataset's in-memory 'primary' labels, which never carry hashes.
+        required_labels = set()
+        for layer in getattr(self.net, 'net_layers', None) or []:
+            if not hasattr(layer, 'export_weight_keys'):
+                continue
+            for attr in ('source_label_descriptions', 'target_label_descriptions',
+                         'node_label_descriptions'):
+                required_labels.update(getattr(layer, attr, None) or [])
+            if getattr(layer, 'bias', False):
+                required_labels.update(getattr(layer, 'bias_label_descriptions', None) or [])
+        checkpoint_path = check_transfer_runtime_requirements(
+            transfer_config, self.graph_data, sorted(required_labels))
         print(f"Transfer: loading source checkpoint {checkpoint_path}")
         source_state_dict = torch.load(str(checkpoint_path), map_location='cpu', weights_only=True)
-        source_keys = load_transfer_sidecar(sidecar_path_for(checkpoint_path))
+        match = (transfer_config.get('invariant_transfer') or {}).get('match', 'hashes')
+        if match == 'none':
+            # invariant layers are re-initialized; only name+shape copies of
+            # the standard layers remain, which need no sidecar
+            source_keys = {'schema': 1, 'layers': {}}
+        else:
+            source_keys = load_transfer_sidecar(sidecar_path_for(checkpoint_path))
 
         report = apply_transfer(self.net, source_state_dict, source_keys, transfer_config)
         report.source_checkpoint = str(checkpoint_path)

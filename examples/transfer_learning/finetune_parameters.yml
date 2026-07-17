@@ -1,0 +1,46 @@
+# Hyperparameters of the DHFR finetuning run (spec 18 B5): identical training
+# setup to the pretraining run plus the transfer: block that warm-starts the
+# freshly built DHFR model from the NCI1 checkpoint.
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+loss:
+  - CrossEntropyLoss
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.01
+epochs:
+  - 50
+
+early_stopping:
+  enabled: False
+  patience: 25
+
+training_data_sampling: { type: 'default' }
+
+# must stay 'constant' for the linear layers to shape-match the NCI1 model
+input_features: { name: constant, value: 1.0 }
+
+save_best_model: True
+save_transfer_keys: True
+
+# hash-keyed transfer from the NCI1 pretraining run (spec 18 B4 schema)
+transfer:
+  source:
+    results_path: results/transfer_learning/pretrain/   # results dir of the pretraining run
+    dataset: NCI1                                       # db name of the source checkpoint
+    select: best                                        # best | {config_id: 0, run_id: 0, validation_id: 0}
+  strategy: finetune                                    # finetune | linear_probe
+  head:
+    reinit: always                                      # the classification head is dataset-specific
+  invariant_transfer:
+    match: hashes                                       # hashes | none
+    on_missing: reinit                                  # unmatched slots keep their fresh init
+    allow_non_canonical: False                          # never match dataset-relative labelings
+    min_overlap_warn: 0.10
+  freeze: []                                            # optional state-dict prefix globs

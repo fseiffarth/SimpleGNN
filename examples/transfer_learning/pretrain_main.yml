@@ -1,0 +1,19 @@
+# Pretraining run of the transfer-learning example (spec 18 B5):
+# ShareGNN graph classification on NCI1 (TUDataset, auto-downloaded).
+# save_best_model + save_transfer_keys in pretrain_parameters.yml produce the
+# checkpoints and .keys.pt sidecars the finetuning run transfers from.
+datasets:
+  - {
+    name: "NCI1",
+    source: "TUDataset",
+    task: "graph_classification",
+    paths: {
+      data: "data/TUDatasets/",
+      labels: "data/TUDatasets/labels/",
+      properties: "data/TUDatasets/properties/",
+      results: "results/transfer_learning/pretrain/",
+      models: "examples/transfer_learning/models_ShareGNN.yml",
+      hyperparameters: "examples/transfer_learning/pretrain_parameters.yml",
+      splits: "src/simplegnn/datasets/splits/fair/NCI1_splits.json",
+    }
+  }

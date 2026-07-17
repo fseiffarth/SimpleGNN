@@ -1,0 +1,79 @@
+# Shared ShareGNN architecture for the NCI1 -> DHFR transfer example (spec 18 B5).
+#
+# TRANSFERABLE LABELS ONLY. Hash-keyed transfer (`invariant_transfer.match: hashes`)
+# can only match weight slots whose label hashes are CANONICAL, i.e. derived from
+# dataset-independent structural signatures. This architecture therefore uses:
+#   - convolution heads:  wl depth 2 (unlabeled Weisfeiler-Lehman) and
+#                         induced_cycles of length 5..6
+#   - properties:         shortest-path distances 1..6 (canonical integer keys)
+#   - aggregation heads:  induced_cycles 5..6 and closed_walks 2..6
+#   - bias labels:        wl depth 0 (node degree)
+# and deliberately AVOIDS the two non-canonical label families:
+#   - primary / wl_labeled: TU datasets enumerate atom types dataset-relatively,
+#     so NCI1's atom id 3 and DHFR's atom id 3 are different atoms. Labels built
+#     on the primary coding (including wl_labeled, which seeds WL with it) are
+#     flagged canonical: False and skipped by the transfer engine unless
+#     invariant_transfer.allow_non_canonical is set. (If two datasets are KNOWN
+#     to share a coding, set primary_labels_canonical: True in their configs.)
+#   - betweenness_centrality: the percentile bins are computed per dataset, so
+#     bin k means different centrality ranges in different datasets.
+# The same file is used by the pretraining (NCI1) and finetuning (DHFR) runs so
+# the exported per-head weight keys line up head-by-head.
+models:
+  - - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: wl, depth: 2 },
+              tail: { label_type: wl, depth: 2 },
+              bias: { label_type: wl, depth: 0 },
+            },
+            properties:
+              { name: distances, values: [ 1, 2, 3, 4, 5, 6 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 6 },
+              tail: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 6 },
+              bias: { label_type: wl, depth: 0 },
+            },
+            properties:
+              { name: distances, values: [ 1, 2, 3, 4, 5, 6 ] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Identity(),
+        bias: True,
+        heads: [
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 6 },
+          },
+          {
+            num: 10,
+            bias: True,
+            labels: { label_type: closed_walks, min_walk_length: 2, max_walk_length: 6 },
+          },
+        ],
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }
