@@ -1,0 +1,19 @@
+# ZINC graph-regression experiment -- attention readout variant
+# (dense 14,000 -> 100 readout replaced by attention over the aggregation heads;
+# the three attention models in the network config are grid-searched).
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_attention/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_attention.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_v2.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

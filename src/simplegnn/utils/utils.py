@@ -1,10 +1,26 @@
 import copy
 import os
 from pathlib import Path
-from typing import List, Any
+from typing import List, Any, Optional
 import networkx as nx
 
 from simplegnn.framework.utils.parameters import Parameters
+
+
+def available_memory_bytes() -> Optional[int]:
+    """
+    Currently available system RAM in bytes (Linux MemAvailable), or None if
+    it cannot be determined. Used by the invariant layers to fail fast with a
+    clear error instead of letting the kernel OOM killer terminate the process.
+    """
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 
 def get_k_lowest_nonzero_indices(tensor, k):

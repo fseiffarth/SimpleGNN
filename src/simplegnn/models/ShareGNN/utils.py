@@ -6,6 +6,25 @@ import torch
 from simplegnn.datasets.utils.node_labeling import get_label_string
 
 
+def range_gather(slices: torch.Tensor, positions: torch.Tensor):
+    """
+    Vectorized multi-range gather: for slice boundaries `slices` and batch
+    `positions`, return (gather_idx, slot_of_row) where gather_idx lists the
+    rows slices[p]..slices[p+1] of every position p in order and slot_of_row
+    maps each row to its index in `positions`.
+    """
+    device = slices.device
+    starts = slices[positions]
+    lens = slices[positions + 1] - starts
+    total = int(lens.sum())
+    slot_of_row = torch.repeat_interleave(
+        torch.arange(positions.shape[0], dtype=torch.int64, device=device), lens)
+    offsets = torch.cumsum(lens, dim=0) - lens
+    gather_idx = torch.arange(total, dtype=torch.int64, device=device) \
+        - offsets[slot_of_row] + starts[slot_of_row]
+    return gather_idx, slot_of_row
+
+
 def is_batched_pos(pos) -> bool:
     """
     True if `pos` addresses multiple graphs at once (batched ShareGNN forward),

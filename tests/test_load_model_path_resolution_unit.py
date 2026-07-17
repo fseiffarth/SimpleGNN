@@ -4,9 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from simplegnn.framework.utils import load_model as load_model_fn
-from simplegnn.framework.utils import load_model_old as load_model_old_fn
-from simplegnn.framework.utils.load_model import _get_validation_folds
+# Import from the submodule, not the package: `simplegnn.framework.utils`
+# exposes a lazy `load_model` alias, but once the load_model *submodule* is
+# imported anywhere it shadows the alias and the package attribute becomes the
+# module object (import-order dependent).
+from simplegnn.framework.utils.load_model import (
+    _get_validation_folds,
+    load_model as load_model_fn,
+    load_model_old as load_model_old_fn,
+)
 
 
 def test_get_validation_folds_priority_rules():

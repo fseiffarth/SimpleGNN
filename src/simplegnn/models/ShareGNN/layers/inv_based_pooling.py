@@ -5,14 +5,13 @@ import matplotlib
 import networkx as nx
 import numpy as np
 import torch
-from pandas.core.array_algos.masked_accumulations import cumsum
 from torch import nn
 
 from simplegnn.datasets.graph_dataset import GraphDataset
-from simplegnn.datasets.utils.graph_drawing import GraphDrawing
+from simplegnn.datasets.utils.graph_drawing import GraphDrawing, resolve_positions
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
-from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, range_gather
 
 
 class InvariantBasedAggregationLayer(InvariantBasedLayer):
@@ -26,13 +25,28 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
     **forward(x: torch.Tensor, pos:int) -> out: torch.Tensor**
         - **x** is the input matrix of shape (N, F) where N is the number of nodes and F is the number of node features.
         - **pos** is the index of the graph in the graph_data
-        - **out** is the output matrix of shape (H, N, F) where H is the number of heads and N is the number of nodes and F is the number of node features.
+        - **out** is the graph embedding. By default (``flatten: True``) the H heads are folded into the
+          feature dimension, giving shape (1, H*F) per graph — out_features = H*F, out_channels = 1.
+          With ``flatten: False`` the head axis is kept, giving shape (H, 1, F) per graph
+          (out_features = F, out_channels = H), which lets a channel_wise or factorized readout
+          exploit the head/feature structure instead of flattening it away.
     """
     def __init__(self, parameters:Parameters, layer: Layer, graph_data: GraphDataset):
         layer.layer_dict['name'] = "Invariant Based Aggregation Layer"
         super(InvariantBasedAggregationLayer, self).__init__(parameters, layer, graph_data)
 
-        self.out_features = self.in_features * self.num_heads
+        self.flatten = layer.layer_dict.get('flatten', True)
+        if self.flatten:
+            self.out_features = self.in_features * self.num_heads
+            # The output is a flat (H*F) vector per graph: all heads are folded
+            # into out_features, so no separate channel dimension remains.
+            self.out_channels = 1
+        else:
+            # Keep the (H, F) structure of the graph embedding so that a
+            # downstream readout can exploit it (channel_wise / factorized
+            # linear) instead of learning a free weight per (head, feature).
+            self.out_features = self.in_features
+            self.out_channels = self.num_heads
 
         self.n_node_labels = [] # number of node labels per head
         self.node_label_descriptions = [] # node label descriptions per head
@@ -47,24 +61,28 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             self.n_heads_per_label.append(head.num)
 
         self.weight_num = np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(len(layer.layer_heads))])
-        weight_distribution = torch.zeros((len(self.graph_data.x), self.num_heads), dtype=torch.int64)
-        # merge the bias distribution of all graphs (creating additionally slicing information)
-        self.weight_distribution_slices = self.graph_data.slices['x']
-
+        # FACTORED storage (see specs/10-invariant-layer-memory-factorization.md):
+        # the old (total_nodes, num_heads) int64 matrix repeated each config's
+        # unique-inverse across its replica columns, shifted by a constant
+        # (6.5 GB on ZINC-full). Keep one int32 inverse per head-config plus a
+        # per-column offset vector; the (N, H) index matrix is rebuilt on the
+        # fly in _weight_index_matrix().
+        col_offset = torch.zeros(self.num_heads, dtype=torch.int64)
+        self._agg_col_ranges = []  # per head-config: (column_base, num_replicas)
         for head_id, head in enumerate(layer.layer_heads):
             node_labels = self.graph_data.node_labels[self.node_label_descriptions[head_id]].node_labels
-            # Set the bias weights
             _, indices, counts = torch.unique(node_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
-            # VECTORIZED: the old per-graph loop only partitioned a contiguous
-            # global assignment — write each head column for all nodes at once
-            column_base = np.sum(self.n_heads_per_label[:head_id], dtype=int)
-            weight_base = np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(head_id)], dtype=int)
+            column_base = int(np.sum(self.n_heads_per_label[:head_id], dtype=int))
+            weight_base = int(np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(head_id)], dtype=int))
+            # Non-persistent buffer: moved by net.to(device), kept out of state_dict
+            self.register_buffer(f'_agg_idx_{head_id}', indices.to(torch.int32), persistent=False)
+            self._agg_col_ranges.append((column_base, head.num))
             for h_num in range(head.num):
-                weight_distribution[:, column_base + h_num] = indices + h_num * self.n_node_labels[head_id] + weight_base
-        # Non-persistent buffer: moved by net.to(device), kept out of state_dict
-        self.register_buffer('weight_distribution', weight_distribution, persistent=False)
+                col_offset[column_base + h_num] = h_num * self.n_node_labels[head_id] + weight_base
+        self.register_buffer('_agg_col_offset', col_offset, persistent=False)
+        self.register_buffer('_agg_x_slices', self.graph_data.slices['x'].clone(), persistent=False)
         # per-graph offsets as plain ints (Python slicing, no device syncs)
-        self._agg_slices = [int(x) for x in self.weight_distribution_slices]
+        self._agg_slices = [int(x) for x in self.graph_data.slices['x']]
 
 
 
@@ -124,9 +142,25 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
             torch.nn.init.constant_(weights, 0.01)
         return weights
 
+    def _weight_index_matrix(self, node_gather) -> torch.Tensor:
+        """
+        (N_sel, num_heads) Param_W indices for the selected nodes.
+
+        node_gather is either a slice (contiguous per-graph node range) or an
+        int64 index tensor (concatenated batch node ranges). Equivalent to
+        slicing the old dense (total_nodes, num_heads) matrix.
+        """
+        first = getattr(self, '_agg_idx_0')[node_gather]
+        idx = torch.empty((first.shape[0], self.num_heads), dtype=torch.int64, device=first.device)
+        for head_id, (column_base, num) in enumerate(self._agg_col_ranges):
+            cfg_idx = first if head_id == 0 else getattr(self, f'_agg_idx_{head_id}')[node_gather]
+            cols = slice(column_base, column_base + num)
+            idx[:, cols] = cfg_idx.long()[:, None] + self._agg_col_offset[cols][None, :]
+        return idx
+
     def set_weights(self, pos):
-        weight_distr = self.weight_distribution[self.weight_distribution_slices[pos]:self.weight_distribution_slices[pos+1]]
-        self.current_W = torch.take(self.Param_W, weight_distr)
+        node_range = slice(self._agg_slices[pos], self._agg_slices[pos + 1])
+        self.current_W = self.Param_W[self._weight_index_matrix(node_range)]
         # divide the weights by the number of nodes in the graph
         #self.current_W = self.current_W / input_size
 
@@ -169,7 +203,12 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         node_representation = torch.matmul(self.current_W.t(), node_representation)
         if self.bias:
             node_representation = node_representation + self.Param_b
-        node_representation = node_representation.flatten().unsqueeze(0)
+        if self.flatten:
+            node_representation = node_representation.flatten().unsqueeze(0)
+        else:
+            # (H, F) -> (H, 1, F): the framework's (C, N, F) convention with a
+            # singleton node dimension, so channel-wise layers can follow
+            node_representation = node_representation.unsqueeze(1)
         node_representation = self.activation(node_representation)
         if self.profile_layers:
             self.forward_step_time += time.time() - begin
@@ -182,176 +221,129 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         ``node_representation`` is the row-wise concatenation of the batch
         graphs' node representations in the order given by ``positions``
         (duplicates allowed). Computes out[b, h, f] = sum_{i in graph b}
-        W[i, h] * x[i, f] via a segment reduction and returns shape
-        (B, H * F) — row b equals the per-graph forward on positions[b].
+        W[i, h] * x[i, f] and returns shape (B, H * F) — row b equals the
+        per-graph forward on positions[b]. With ``flatten: False`` the heads
+        are kept as a separate axis and the shape is (B, H, F).
+
+        Implemented as one padded batched matmul (B, H, N_max) @ (B, N_max, F):
+        padded rows stay zero and contribute nothing to the sum. This avoids
+        materializing the (total_nodes, H, F) contributions tensor of the
+        segment-reduction formulation (~1.3 GB per 512-graph ZINC eval chunk
+        and ~7x slower). The segment reduction is kept as a fallback for
+        batches with very skewed graph sizes, where padding would dominate.
         """
         begin = time.time() if self.profile_layers else None
         device = node_representation.device
+        dtype = node_representation.dtype
         positions = [int(p) for p in positions]
-        counts = torch.as_tensor([self._agg_slices[p + 1] - self._agg_slices[p] for p in positions],
-                                 dtype=torch.int64, device=device)
-        weight_distr = torch.cat([self.weight_distribution[self._agg_slices[p]:self._agg_slices[p + 1]] for p in positions])
-        node_weights = self.Param_W[weight_distr]  # (total_nodes, H)
-        contributions = node_weights.unsqueeze(-1) * node_representation.unsqueeze(1)  # (total_nodes, H, F)
-        graph_idx = torch.repeat_interleave(
-            torch.arange(len(positions), dtype=torch.int64, device=device), counts)
-        out = torch.zeros((len(positions), self.num_heads, node_representation.shape[-1]),
-                          dtype=node_representation.dtype, device=device)
-        out.index_add_(0, graph_idx, contributions)
+        counts_list = [self._agg_slices[p + 1] - self._agg_slices[p] for p in positions]
+        batch_size = len(positions)
+        total_nodes = node_representation.shape[0]
+        n_max = max(counts_list, default=0)
+        num_features = node_representation.shape[-1]
+        counts = torch.as_tensor(counts_list, dtype=torch.int64, device=device)
+        node_gather, _ = range_gather(self._agg_x_slices,
+                                      torch.as_tensor(positions, dtype=torch.int64, device=self._agg_x_slices.device))
+        node_weights = self.Param_W[self._weight_index_matrix(node_gather)]  # (total_nodes, H)
+        if batch_size * n_max <= 4 * total_nodes:
+            graph_idx = torch.repeat_interleave(
+                torch.arange(batch_size, dtype=torch.int64, device=device), counts)
+            offsets = torch.cumsum(counts, dim=0) - counts
+            node_idx = torch.arange(total_nodes, dtype=torch.int64, device=device) - torch.repeat_interleave(offsets, counts)
+            weights_padded = torch.zeros((batch_size, n_max, self.num_heads), dtype=dtype, device=device)
+            features_padded = torch.zeros((batch_size, n_max, num_features), dtype=dtype, device=device)
+            weights_padded[graph_idx, node_idx] = node_weights
+            features_padded[graph_idx, node_idx] = node_representation
+            out = torch.bmm(weights_padded.transpose(1, 2), features_padded)  # (B, H, F)
+        else:
+            # segment reduction: robust when one huge graph would force
+            # excessive padding for the whole batch
+            contributions = node_weights.unsqueeze(-1) * node_representation.unsqueeze(1)  # (total_nodes, H, F)
+            graph_idx = torch.repeat_interleave(
+                torch.arange(batch_size, dtype=torch.int64, device=device), counts)
+            out = torch.zeros((batch_size, self.num_heads, num_features), dtype=dtype, device=device)
+            out.index_add_(0, graph_idx, contributions)
         if self.bias:
             out = out + self.Param_b
-        out = out.flatten(start_dim=1)
+        if self.flatten:
+            out = out.flatten(start_dim=1)
         out = self.activation(out)
         if self.profile_layers:
             self.forward_step_time += time.time() - begin
         return out
 
     def get_weights(self):
-        return [x.item() for x in self.Param_W]
+        return self.Param_W.detach().cpu().numpy()
 
     def get_bias(self):
-        return [x.item() for x in self.Param_b[0]]
+        if self.bias:
+            return self.Param_b.detach().cpu().numpy()
+        return None
 
-    def draw(self, ax, graph_id, graph_drawing: Tuple[GraphDrawing, GraphDrawing], head=0, out_dimension=0, with_graph=True, graph_only=False):
-        # create graph
+    def draw(self, ax, graph_id, graph_drawing: Tuple[GraphDrawing, GraphDrawing], head=0, out_dimension=0, with_graph=True, graph_only=False, pos_path:str=''):
+        """Draw one graph with its per-node pooling weights of the given head.
+
+        out_dimension is kept for backwards compatibility but ignored: the
+        factored weight storage shares one parameter per (node label, head),
+        there is no output-dimension axis anymore.
+        """
         graph = self.graph_data.create_nx_graph(graph_id, directed=False)
-        if with_graph or graph_only:
-            # draw the graph
-            # root node is the one with label 0
-            root_node = None
-            for node in graph.nodes():
-                if self.graph_data.node_labels['primary'].node_labels[graph_id][node] == 0:
-                    root_node = node
-                    break
+        labels = self.graph_data.node_labels['primary']
+        node_offset = int(self._agg_slices[graph_id])
+        node_end = int(self._agg_slices[graph_id + 1])
 
-            # if graph is circular use the circular layout
-            pos = dict()
-            if graph_drawing[0].draw_type == 'circle':
-                # get circular positions around (0,0) starting with the root node at (-400,0)
-                pos[root_node] = (400, 0)
-                angle = 2 * np.pi / (graph.number_of_nodes())
-                # iterate over the neighbors of the root node
-                cur_node = root_node
-                last_node = None
-                counter = 0
-                while len(pos) < graph.number_of_nodes():
-                    neighbors = list(graph.neighbors(cur_node))
-                    for next_node in neighbors:
-                        if next_node != last_node:
-                            counter += 1
-                            pos[next_node] = (400 * np.cos(counter * angle), 400 * np.sin(counter * angle))
-                            last_node = cur_node
-                            cur_node = next_node
-                            break
-            elif graph_drawing[0].draw_type == 'kawai':
-                pos = nx.kamada_kawai_layout(graph)
-            elif graph_drawing[0].draw_type == 'shell':
-                pos = nx.shell_layout(graph)
-            elif graph_drawing[0].draw_type == 'bfs':
-                pos = nx.bfs_layout(graph, 0)
-            else:
-                pos = nx.nx_pydot.graphviz_layout(graph)
-            # keys to ints
-            pos = {int(k): v for k, v in pos.items()}
-            if graph_only:
-                edge_labels = {}
-                for (key1, key2, value) in graph.edges(data=True):
-                    if "label" in value and len(value["label"]) > 1:
-                        edge_labels[(key1, key2)] = int(value["label"][0])
-                    else:
-                        edge_labels[(key1, key2)] = ""
-                nx.draw_networkx_edges(graph, pos, ax=ax, edge_color=graph_drawing[0].edge_color,
-                                       width=graph_drawing[0].edge_width)
-                nx.draw_networkx_edge_labels(graph, pos=pos, edge_labels=edge_labels, ax=ax, font_size=8,
-                                             font_color='black')
-                # get node colors from the node labels using the plasma colormap
-                cmap = graph_drawing[0].colormap
-                norm = matplotlib.colors.Normalize(vmin=0,
-                                                   vmax=self.graph_data.node_labels['primary'].num_unique_node_labels)
-                node_colors = [cmap(norm(self.graph_data.node_labels['primary'].node_labels[graph_id][node])) for node
-                               in graph.nodes()]
-                nx.draw_networkx_nodes(graph, pos=pos, ax=ax, node_color=node_colors,
-                                       node_size=graph_drawing[0].node_size)
-                return
-            nx.draw_networkx_edges(graph, pos, ax=ax, edge_color=graph_drawing[1].edge_color, width=graph_drawing[1].edge_width, alpha=graph_drawing[1].edge_alpha*0.5)
-
-        all_weights = np.array(self.get_weights())
-        bias = self.get_bias()
-        graph = self.graph_data.graphs[graph_id]
-        weight_distribution = self.weight_distribution[graph_id]
-        param_indices = np.array(weight_distribution[:, 3])
-        matrix_indices = np.array(weight_distribution[:, 0:3])
-        graph_weights = all_weights[param_indices]
-
-        weight_min = np.min(graph_weights)
-        weight_max = np.max(graph_weights)
-        weight_max_abs = max(abs(weight_min), abs(weight_max))
-        bias_min = np.min(bias)
-        bias_max = np.max(bias)
-        bias_max_abs = max(abs(bias_min), abs(bias_max))
-
-        # use seismic colormap with maximum and minimum values from the weight matrix
-        cmap = graph_drawing[1].colormap
-        # normalize item number values to colormap
-        normed_weight = (graph_weights + (-weight_min)) / (weight_max - weight_min)
-        weight_colors = cmap(normed_weight)
-        normed_bias = (bias + (-bias_min)) / (bias_max - bias_min)
-        bias_colors = cmap(normed_bias)
-
-        # draw the graph
-        # if graph is circular use the circular layout
-        pos = dict()
+        # the circle layout starts its walk at the node with primary label 0
+        root_node = None
         if graph_drawing[0].draw_type == 'circle':
-            # root node is the one with label 0
-            root_node = None
-            for i, node in enumerate(graph.nodes()):
-                if i == 0:
-                    print(f"First node: {self.graph_data.node_labels['primary'].node_labels[graph_id][node]}")
-                if self.graph_data.node_labels['primary'].node_labels[graph_id][node] == 0:
+            for node in graph.nodes():
+                if labels.node_labels[node_offset + node] == 0:
                     root_node = node
                     break
-            # get circular positions around (0,0) starting with the root node at (-400,0)
-            pos[root_node] = (400, 0)
-            angle = 2 * np.pi / (graph.number_of_nodes())
-            # iterate over the neighbors of the root node
-            cur_node = root_node
-            last_node = None
-            counter = 0
-            while len(pos) < graph.number_of_nodes():
-                neighbors = list(graph.neighbors(cur_node))
-                for next_node in neighbors:
-                    if next_node != last_node:
-                        counter += 1
-                        pos[next_node] = (400 * np.cos(counter * angle), 400 * np.sin(counter * angle))
-                        last_node = cur_node
-                        cur_node = next_node
-                        break
-        elif graph_drawing[0].draw_type == 'kawai':
-            pos = nx.kamada_kawai_layout(graph)
-        elif graph_drawing[0].draw_type == 'shell':
-            pos = nx.shell_layout(graph)
-        elif graph_drawing[0].draw_type == 'bfs':
-            pos = nx.bfs_layout(graph,0)
+        pos = resolve_positions(graph, graph_drawing[0].draw_type, pos_path=pos_path, root_node=root_node)
+
+        if graph_only:
+            edge_labels = {}
+            for (key1, key2, value) in graph.edges(data=True):
+                if "label" in value and len(value["label"]) > 1:
+                    edge_labels[(key1, key2)] = int(value["label"][0])
+                else:
+                    edge_labels[(key1, key2)] = ""
+            nx.draw_networkx_edges(graph, pos, ax=ax, edge_color=graph_drawing[0].edge_color,
+                                   width=graph_drawing[0].edge_width)
+            nx.draw_networkx_edge_labels(graph, pos=pos, edge_labels=edge_labels, ax=ax, font_size=8,
+                                         font_color='black')
+            cmap = graph_drawing[0].colormap
+            norm = matplotlib.colors.Normalize(vmin=0, vmax=labels.num_unique_node_labels)
+            node_colors = [cmap(norm(labels.node_labels[node_offset + node])) for node in graph.nodes()]
+            nx.draw_networkx_nodes(graph, pos=pos, ax=ax, node_color=node_colors,
+                                   node_size=graph_drawing[0].node_size)
+            return
+        if with_graph:
+            nx.draw_networkx_edges(graph, pos, ax=ax, edge_color=graph_drawing[1].edge_color,
+                                   width=graph_drawing[1].edge_width, alpha=graph_drawing[1].edge_alpha*0.5)
+
+        # per-node Param_W index of the drawn head
+        all_weights = self.get_weights()
+        node_range = slice(node_offset, node_end)
+        param_indices = self._weight_index_matrix(node_range)[:, head].cpu().numpy()
+        node_weights = all_weights[param_indices]
+
+        weight_min = float(np.min(node_weights)) if node_weights.size else 0.0
+        weight_max = float(np.max(node_weights)) if node_weights.size else 0.0
+        weight_max_abs = max(abs(weight_min), abs(weight_max))
+        weight_range = weight_max - weight_min
+        if weight_range > 0:
+            normed_weight = (node_weights - weight_min) / weight_range
         else:
-            pos = nx.nx_pydot.graphviz_layout(graph)
-        # keys to ints
-        pos = {int(k): v for k, v in pos.items()}
-        # graph to digraph with
-        digraph = nx.DiGraph()
-        for node in graph.nodes():
-            digraph.add_node(node)
+            normed_weight = np.full_like(node_weights, 0.5)
+        cmap = graph_drawing[1].colormap
+        weight_colors = cmap(normed_weight)
 
-
-
-        node_colors = []
-        node_sizes = []
-        for i, index in enumerate(weight_distribution):
-            c = index[0]
-            o_dimension = index[1]
-            node_idx = index[2]
-            weight = index[3]
-            if c == head and o_dimension == out_dimension:
-                node_colors.append(weight_colors[i])
-                node_sizes.append(graph_drawing[1].node_size * abs(graph_weights[i]) / weight_max_abs)
-
-        nx.draw_networkx_nodes(digraph, pos=pos, ax=ax, node_color=node_colors, node_size=node_sizes)
+        node_list = list(graph.nodes())
+        node_colors = weight_colors[node_list]
+        if weight_max_abs > 0:
+            node_sizes = graph_drawing[1].node_size * np.abs(node_weights[node_list]) / weight_max_abs
+        else:
+            node_sizes = np.full(len(node_list), graph_drawing[1].node_size)
+        nx.draw_networkx_nodes(graph, pos=pos, ax=ax, nodelist=node_list, node_color=node_colors,
+                               node_size=list(node_sizes))

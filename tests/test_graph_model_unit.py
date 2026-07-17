@@ -27,6 +27,9 @@ def build_model_stub(random_variation_bool=False, precision="double"):
     model = GraphModel.__new__(GraphModel)
     model.net_layers = [AddOneLayer(), MulTwoLayer()]
     model.random_variation_bool = random_variation_bool
+    # forward only applies the random variation in training mode; the stub
+    # bypasses nn.Module.__init__, so set the flag explicitly
+    model.training = True
     model.para = type(
         "P",
         (),

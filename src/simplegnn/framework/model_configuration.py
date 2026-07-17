@@ -44,7 +44,9 @@ framework.core.FrameworkMain : Main experiment orchestrator
 models.model.GraphModel : PyTorch model class
 """
 import datetime
+import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Tuple
 
@@ -259,6 +261,8 @@ class ModelConfiguration:
         self.scheduler = None
         self.net = None
         self.class_weights = None
+        # cached full-graph forward output for node-level tasks (see evaluate_node_task)
+        self._node_eval_outputs = None
         self._csv_buffer = []
         self._csv_flush_interval = self.para.run_config.config.get('csv_flush_interval', 10)
         # get gpu or cpu: (cpu is recommended at the moment)
@@ -346,6 +350,8 @@ class ModelConfiguration:
         early_stopping : Early stopping criterion check
         """
 
+        # Report the execution mode (device + batched or per-graph forward)
+        print(f"Execution mode: {self._execution_mode_description()} (device: {self.device})")
         # Initialize the graph neural network
         self.initialize_model(pretrained_network=pretrained_network)
         # start the timer
@@ -396,8 +402,10 @@ class ModelConfiguration:
             self.net.train(True)
             if self.para.run_config.config['task'] in ['graph_regression', 'graph_classification']:
                 self.train_graph_task(epoch=epoch, values=(epoch_values, validation_values, test_values), train_batches=train_batches, timer=timer)
-            elif self.para.run_config.config['task'] == 'node_classification':
+            elif self.para.run_config.config['task'] in ['node_classification', 'node_regression']:
                 self.train_node_task(epoch=epoch, values=(epoch_values, validation_values, test_values), train_batches=train_batches, timer=timer)
+            else:
+                raise ValueError(f"Task {self.para.run_config.config['task']} not implemented")
 
 
             # TODO Pruning
@@ -493,8 +501,12 @@ class ModelConfiguration:
                     mae_error = torch.mean(torch.abs(target_values - target_outputs))
                     rsme_error = torch.mean(torch.sqrt((target_values - target_outputs) ** 2))
                     print(f"Mean Absolute Error: {mae_error}")
-        elif self.para.run_config.task == 'node_classification':
+        elif self.para.run_config.task in ['node_classification', 'node_regression']:
             target_values, target_outputs = self.evaluate_node_task(graph_ids)
+            if do_print and self.para.run_config.task == 'node_classification':
+                predictions = torch.argmax(target_outputs, dim=1)
+                accuracy = 100 * torch.sum(predictions == target_values).item() / len(target_values)
+                print(f"Accuracy: {accuracy} %")
         else:
             raise ValueError(f"Task {self.para.run_config.task} not implemented")
 
@@ -537,6 +549,8 @@ class ModelConfiguration:
         # move the graph data to the same device as the network (features,
         # labels, attributes); slices/num_nodes bookkeeping stays on CPU
         self.graph_data.to(self.device)
+        # new weights: drop any cached node-task evaluation outputs
+        self._node_eval_outputs = None
         print(f'Network initialized with seed {self.seed}')
 
 
@@ -566,6 +580,12 @@ class ModelConfiguration:
             self.criterion = RSMELoss
         elif self.para.run_config.loss in ['L1Loss', 'l1', 'L1', 'mean_absolute_error', 'mae', 'MAE', 'MeanAbsoluteError']:
             self.criterion = nn.L1Loss(*args, **kwargs)
+        elif self.para.run_config.loss in ['SmoothL1Loss', 'smooth_l1', 'SmoothL1', 'Huber', 'HuberLoss', 'huber']:
+            # Huber/smooth-L1: quadratic near 0, linear beyond beta -- less
+            # sensitive to outliers than MAE while still training toward it.
+            # ValidationMAE/TestMAE are computed independently of the training
+            # loss, so evaluation stays on the task metric regardless.
+            self.criterion = nn.SmoothL1Loss(*args, **kwargs)
         elif self.para.run_config.loss in ['BCELoss', 'bce', 'BCE']:
             self.criterion = nn.BCELoss(*args, **kwargs)
         elif self.para.run_config.loss in ['BCEWithLogitsLoss', 'bce_with_logits', 'BCEWithLogits']:
@@ -819,7 +839,7 @@ class ModelConfiguration:
         if evaluation_type == 'training':
             batch_acc = 0
             # if num classes is one calculate the mae and mae_std or if the task is regression
-            if self.para.run_config.task == 'graph_regression':
+            if self.para.run_config.task in ('graph_regression', 'node_regression'):
                 # flatten the labels and outputs
                 flatten_labels = labels.detach().clone().flatten()
                 flatten_outputs = outputs.detach().clone().flatten()
@@ -855,7 +875,7 @@ class ModelConfiguration:
                         train_values.accuracy_roc_auc = (train_values.accuracy_roc_auc * train_values.current_elements + batch_roc_auc * batch_length) / (train_values.current_elements + batch_length)
             train_values.current_elements += batch_length
             if self.para.print_results:
-                if self.graph_data.num_classes == 1 or self.para.run_config.task == 'graph_regression':
+                if self.graph_data.num_classes == 1 or self.para.run_config.task in ('graph_regression', 'node_regression'):
                     print(
                         "\tepoch: {}/{}, batch: {}/{}, loss: {}, acc: {} %, mae: {}, mae_std: {}".format(epoch + 1,
                                                                                                          self.para.n_epochs,
@@ -898,14 +918,14 @@ class ModelConfiguration:
                         labels = torch.nn.functional.one_hot(labels, num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
                     elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1:
                         labels = labels.unsqueeze(1)
-                elif self.para.run_config.task == 'node_classification':
+                elif self.para.run_config.task in ['node_classification', 'node_regression']:
                     labels, outputs = self.evaluate_node_task(self.validate_data)
                 else:
                     raise ValueError(f"Task {self.para.run_config.task} not implemented")
                 # get validation loss
                 validation_loss = self.criterion(outputs, labels).item()
                 validation_values.loss = validation_loss
-                if self.para.run_config.task == 'graph_regression':
+                if self.para.run_config.task in ('graph_regression', 'node_regression'):
                     flatten_labels = labels.detach().clone().flatten()
                     flatten_outputs = outputs.detach().clone().flatten()
                     if self.para.run_config.config.get('output_features_inverse', None) is not None:
@@ -950,7 +970,7 @@ class ModelConfiguration:
                         validation_values.accuracy_roc_auc = validation_roc_auc
 
                 # update best epoch
-                if self.para.run_config.task == 'graph_regression':
+                if self.para.run_config.task in ('graph_regression', 'node_regression'):
                     if validation_values.mae <= self.best_epoch["val_mae"] or valid_pruning_configuration(self.para, epoch):
                         self.best_epoch["epoch"] = epoch
                         self.best_epoch["acc"] = train_values.accuracy
@@ -1025,14 +1045,14 @@ class ModelConfiguration:
                         labels = torch.nn.functional.one_hot(labels, num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
                     elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1:
                         labels = labels.unsqueeze(1)
-                elif self.para.run_config.task == 'node_classification':
+                elif self.para.run_config.task in ['node_classification', 'node_regression']:
                     labels, outputs = self.evaluate_node_task(self.test_data)
                 else:
                     raise ValueError(f"Task {self.para.run_config.task} not implemented")
 
                 test_loss = self.criterion(outputs, labels).item()
                 test_values.loss = test_loss
-                if self.para.run_config.task == 'graph_regression':
+                if self.para.run_config.task in ('graph_regression', 'node_regression'):
                     flatten_labels = labels.detach().clone().flatten()
                     flatten_outputs = outputs.detach().clone().flatten()
                     if self.para.run_config.config.get('output_features_inverse', None) is not None:
@@ -1107,84 +1127,344 @@ class ModelConfiguration:
         self.net.train()
         return train_values, validation_values, test_values
 
+    def collect_network_info(self) -> dict:
+        """
+        Collect a structured description of the trained network.
+
+        Gathers the run configuration, the training hyperparameters and, for every
+        layer of ``self.net``, its dimensions, trainable parameter counts and the
+        ShareGNN label/property channel information (where available).
+
+        Returns
+        -------
+        dict
+            Dictionary with the keys ``db``, ``config_id``, ``task``, ``device``,
+            ``precision``, ``seed``, ``network_architecture``, the training
+            hyperparameters, a ``layers`` list, a ``named_parameters`` list and
+            ``total_trainable_parameters``.
+
+        Notes
+        -----
+        Layer attributes are read defensively: layers that do not expose ShareGNN
+        specific attributes (node/edge labels, pairwise properties) simply contribute
+        empty channel lists.
+        """
+        run_config = self.para.run_config
+        info = {
+            'db': self.para.db,
+            'config_id': self.para.config_id,
+            'task': run_config.task,
+            'device': str(self.device),
+            'precision': run_config.config.get('precision', 'float'),
+            'seed': self.seed,
+            'network_architecture': run_config.network_architecture,
+            'optimizer': str(self.optimizer),
+            'loss': str(self.criterion),
+            'learning_rate': self.para.learning_rate,
+            'weight_decay': run_config.weight_decay,
+            'dropout': run_config.dropout,
+            'batch_size': run_config.batch_size,
+            'balance_data': self.para.balance_data,
+            'n_epochs': self.para.n_epochs,
+            'layers': [],
+            'named_parameters': [],
+            'total_trainable_parameters': 0,
+        }
+
+        for layer in self.net.net_layers:
+            layer_info = {
+                'name': getattr(layer, 'name', None) or type(layer).__name__,
+                'class': type(layer).__name__,
+                'in_features': getattr(layer, 'in_features', None),
+                'out_features': getattr(layer, 'out_features', None),
+                'in_channels': getattr(layer, 'in_channels', None),
+                'out_channels': getattr(layer, 'out_channels', None),
+                'trainable_parameters': sum(p.numel() for p in layer.parameters() if p.requires_grad),
+                'node_labels': None,
+                'edge_labels': None,
+                'property_channels': [],
+                'node_label_channels': [],
+                'weight_parameters': 0,
+                'bias_parameters': 0,
+            }
+            info['total_trainable_parameters'] += layer_info['trainable_parameters']
+
+            try:
+                layer_info['node_labels'] = layer.node_labels.num_unique_node_labels
+            except AttributeError:
+                pass
+            try:
+                layer_info['edge_labels'] = layer.edge_labels.num_unique_edge_labels
+            except AttributeError:
+                pass
+
+            try:
+                for i, n in enumerate(layer.n_properties):
+                    layer_info['property_channels'].append({
+                        'source_label_type': layer.source_label_descriptions[i],
+                        'n_source_labels': layer.n_source_labels[i],
+                        'target_label_type': layer.target_label_descriptions[i],
+                        'n_target_labels': layer.n_target_labels[i],
+                        'n_bias_labels': layer.n_bias_labels[i] if layer.bias_list[i] else None,
+                        'n_properties': n,
+                    })
+            except (AttributeError, IndexError):
+                pass
+            try:
+                for i, n in enumerate(layer.n_node_labels):
+                    layer_info['node_label_channels'].append({
+                        'node_label_type': layer.node_label_descriptions[i],
+                        'n_node_labels': n,
+                    })
+            except (AttributeError, IndexError):
+                pass
+
+            try:
+                if layer.Param_W.requires_grad:
+                    layer_info['weight_parameters'] += layer.Param_W.numel()
+            except AttributeError:
+                try:
+                    if layer.lin.weight.requires_grad:
+                        layer_info['weight_parameters'] += layer.lin.weight.numel()
+                except AttributeError:
+                    pass
+            try:
+                if layer.Param_b.requires_grad:
+                    layer_info['bias_parameters'] += layer.Param_b.numel()
+            except AttributeError:
+                try:
+                    if layer.bias.requires_grad:
+                        layer_info['bias_parameters'] += layer.bias.numel()
+                except AttributeError:
+                    pass
+
+            info['layers'].append(layer_info)
+
+        for name, param in self.net.named_parameters():
+            info['named_parameters'].append({
+                'name': name,
+                'shape': tuple(param.shape),
+                'elements': param.numel(),
+                'trainable': param.requires_grad,
+            })
+        return info
+
+    @staticmethod
+    def write_network_txt(info: dict, final_path: Path):
+        """
+        Write the plain-text network summary (append mode, legacy format).
+
+        The first line (``Network architecture: [...]``) is parsed by
+        :mod:`simplegnn.framework.utils.evaluation` to build the plot legends, so the
+        format must stay stable. The file is opened in append mode, hence it collects
+        the summaries of all runs writing to the same configuration id.
+
+        Parameters
+        ----------
+        info : dict
+            Network description as returned by :meth:`collect_network_info`.
+        final_path : Path
+            Target ``*_Network.txt`` file.
+        """
+        with open(final_path, "a") as file_obj:
+            file_obj.write(f"Network architecture: {info['network_architecture']}\n"
+                           f"Optimizer: {info['optimizer']}\n"
+                           f"Loss function: {info['loss']}\n"
+                           f"Batch size: {info['batch_size']}\n"
+                           f"Balanced data: {info['balance_data']}\n"
+                           f"Number of epochs: {info['n_epochs']}\n")
+            for layer in info['layers']:
+                file_obj.write(f"\n")
+                file_obj.write(f"Layer: {layer['name']}\n")
+                file_obj.write(f"\n")
+                file_obj.write(f"Layer Trainable Parameters: {layer['trainable_parameters']}\n")
+                if layer['node_labels'] is not None:
+                    file_obj.write(f"Node labels: {layer['node_labels']}\n")
+                for i, channel in enumerate(layer['property_channels']):
+                    file_obj.write(f"Number of Source Labels (type: {channel['source_label_type']}) in channel {i}: {channel['n_source_labels']}\n")
+                    file_obj.write(f"Number of Target Labels (type: {channel['target_label_type']}) in channel {i}: {channel['n_target_labels']}\n")
+                    if channel['n_bias_labels'] is not None:
+                        file_obj.write(f"Number of Bias Labels in channel {i}: {channel['n_bias_labels']}\n")
+                    file_obj.write(f"Number of pairwise properties in channel {i}: {channel['n_properties']}\n")
+                    file_obj.write("\n")
+                for i, channel in enumerate(layer['node_label_channels']):
+                    file_obj.write(f"Number of Node Labels (type: {channel['node_label_type']}) in channel {i}: {channel['n_node_labels']}\n")
+                    file_obj.write("\n")
+                file_obj.write("Weight matrix learnable parameters: {}\n".format(layer['weight_parameters']))
+                file_obj.write("Bias learnable parameters: {}\n".format(layer['bias_parameters']))
+                if layer['edge_labels'] is not None:
+                    file_obj.write(f"Edge labels: {layer['edge_labels']}\n")
+            for param in info['named_parameters']:
+                file_obj.write(f"Layer: {param['name']} -> {param['trainable']}\n")
+
+            file_obj.write(f"\n")
+            file_obj.write(f"Total trainable parameters: {info['total_trainable_parameters']}\n")
+
+    @staticmethod
+    def write_network_markdown(info: dict, final_path: Path):
+        """
+        Write the Markdown network report of the current model (overwrite mode).
+
+        In contrast to the plain-text summary, the file is rewritten on every run, so
+        it always describes exactly the model that is currently being trained.
+
+        Parameters
+        ----------
+        info : dict
+            Network description as returned by :meth:`collect_network_info`.
+        final_path : Path
+            Target ``*_Network.md`` file.
+        """
+        total = info['total_trainable_parameters']
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        def num(value):
+            return f"{value:,}".replace(",", " ") if isinstance(value, int) else str(value)
+
+        def dim(layer):
+            features = f"{layer['in_features']} → {layer['out_features']}"
+            if layer['in_channels'] == 1 and layer['out_channels'] == 1:
+                return features
+            return f"{features} ({layer['in_channels']} → {layer['out_channels']} ch)"
+
+        lines = [
+            f"# Network report: {info['db']} · {info['config_id']}",
+            "",
+            f"*Generated {timestamp} · task `{info['task']}` · device `{info['device']}` · "
+            f"`{info['precision']}` precision · seed `{info['seed']}`*",
+            "",
+            "## Summary",
+            "",
+            "| | |",
+            "|---|---|",
+            f"| Dataset | `{info['db']}` |",
+            f"| Configuration | `{info['config_id']}` |",
+            f"| Layers | {len(info['layers'])} |",
+            f"| Total trainable parameters | **{num(total)}** |",
+            "",
+            "## Training setup",
+            "",
+            "| Parameter | Value |",
+            "|---|---|",
+            f"| Learning rate | {info['learning_rate']} |",
+            f"| Weight decay | {info['weight_decay']} |",
+            f"| Dropout | {info['dropout']} |",
+            f"| Batch size | {info['batch_size']} |",
+            f"| Epochs | {info['n_epochs']} |",
+            f"| Balanced data | {info['balance_data']} |",
+            "",
+            "<details><summary>Optimizer and loss function</summary>",
+            "",
+            "```",
+            info['optimizer'],
+            "",
+            f"Loss function: {info['loss']}",
+            "```",
+            "",
+            "</details>",
+            "",
+            "## Architecture",
+            "",
+            "| # | Layer | Class | Dimensions | Trainable parameters | Share |",
+            "|---:|---|---|---|---:|---:|",
+        ]
+        for i, layer in enumerate(info['layers']):
+            share = 100 * layer['trainable_parameters'] / total if total else 0.0
+            lines.append(f"| {i} | {layer['name']} | `{layer['class']}` | {dim(layer)} | "
+                         f"{num(layer['trainable_parameters'])} | {share:.1f} % |")
+        lines += [
+            f"| | **Total** | | | **{num(total)}** | 100.0 % |",
+            "",
+            "```mermaid",
+            "flowchart LR",
+        ]
+        for i, layer in enumerate(info['layers']):
+            label = str(layer['name']).replace('"', "'")
+            lines.append(f'    L{i}["{i}: {label}<br/>{dim(layer)}"]')
+        if info['layers']:
+            lines.append("    " + " --> ".join(f"L{i}" for i in range(len(info['layers']))))
+        lines += [
+            "```",
+            "",
+            "## Layer details",
+            "",
+        ]
+        for i, layer in enumerate(info['layers']):
+            lines += [
+                f"### {i} · {layer['name']}",
+                "",
+                "| | |",
+                "|---|---|",
+                f"| Class | `{layer['class']}` |",
+                f"| Dimensions | {dim(layer)} |",
+                f"| Trainable parameters | {num(layer['trainable_parameters'])} |",
+                f"| Weight matrix parameters | {num(layer['weight_parameters'])} |",
+                f"| Bias parameters | {num(layer['bias_parameters'])} |",
+            ]
+            if layer['node_labels'] is not None:
+                lines.append(f"| Unique node labels | {num(layer['node_labels'])} |")
+            if layer['edge_labels'] is not None:
+                lines.append(f"| Unique edge labels | {num(layer['edge_labels'])} |")
+            lines.append("")
+            if layer['property_channels']:
+                lines += [
+                    "| Channel | Source labels | Target labels | Bias labels | Pairwise properties |",
+                    "|---:|---|---|---:|---:|",
+                ]
+                for c, channel in enumerate(layer['property_channels']):
+                    bias = num(channel['n_bias_labels']) if channel['n_bias_labels'] is not None else "–"
+                    lines.append(f"| {c} | {num(channel['n_source_labels'])} "
+                                 f"(`{channel['source_label_type']}`) | "
+                                 f"{num(channel['n_target_labels'])} (`{channel['target_label_type']}`) | "
+                                 f"{bias} | {num(channel['n_properties'])} |")
+                lines.append("")
+            if layer['node_label_channels']:
+                lines += [
+                    "| Channel | Node labels |",
+                    "|---:|---|",
+                ]
+                for c, channel in enumerate(layer['node_label_channels']):
+                    lines.append(f"| {c} | {num(channel['n_node_labels'])} "
+                                 f"(`{channel['node_label_type']}`) |")
+                lines.append("")
+
+        lines += [
+            "## Parameter tensors",
+            "",
+            "<details><summary>All named parameters</summary>",
+            "",
+            "| Parameter | Shape | Elements | Trainable |",
+            "|---|---|---:|:---:|",
+        ]
+        for param in info['named_parameters']:
+            shape = " × ".join(str(s) for s in param['shape']) or "scalar"
+            lines.append(f"| `{param['name']}` | {shape} | {num(param['elements'])} | "
+                         f"{'yes' if param['trainable'] else 'no'} |")
+        lines += [
+            "",
+            "</details>",
+            "",
+            "## Network architecture (config)",
+            "",
+            "```json",
+            json.dumps(info['network_architecture'], indent=2, default=str),
+            "```",
+            "",
+        ]
+
+        with open(final_path, "w") as file_obj:
+            file_obj.write("\n".join(lines))
+
     def preprocess_writer(self)-> bool:
         if self.run_id == 0 and self.k_val == 0:
-            # create a file about the net details including (net, optimizer, learning rate, loss function, batch size, number of classes, number of epochs, balanced data, dropout)
-            file_name = f'{self.para.db}_{self.para.config_id}_Network.txt'
-            final_path = self.results_path.joinpath(f'{self.para.db}/Results/{file_name}')
-            with open(final_path, "a") as file_obj:
-                file_obj.write(f"Network architecture: {self.para.run_config.network_architecture}\n"
-                               f"Optimizer: {self.optimizer}\n"
-                               f"Loss function: {self.criterion}\n"
-                               f"Batch size: {self.para.batch_size}\n"
-                               f"Balanced data: {self.para.balance_data}\n"
-                               f"Number of epochs: {self.para.n_epochs}\n")
-                # iterate over the layers of the neural net
-                total_trainable_parameters = 0
-                for layer in self.net.net_layers:
-                    file_obj.write(f"\n")
-                    try:
-                        file_obj.write(f"Layer: {layer.name}\n")
-                    except:
-                        file_obj.write(f"Layer: {type(layer).__name__}\n")
-                    file_obj.write(f"\n")
-                    # get number of trainable parameters
-                    layer_params = sum(p.numel() for p in layer.parameters() if p.requires_grad)
-                    total_trainable_parameters += layer_params
-                    file_obj.write(f"Layer Trainable Parameters: {layer_params}\n")
-                    try:
-                        file_obj.write(f"Node labels: {layer.node_labels.num_unique_node_labels}\n")
-                    except:
-                        pass
-                    try:
-                        for i, n in enumerate(layer.n_properties):
-                            file_obj.write(f"Number of Source Labels (type: {layer.source_label_descriptions[i]}) in channel {i}: {layer.n_source_labels[i]}\n")
-                            file_obj.write(f"Number of Target Labels (type: {layer.target_label_descriptions[i]}) in channel {i}: {layer.n_target_labels[i]}\n")
-                            if layer.bias_list[i]:
-                                file_obj.write(f"Number of Bias Labels in channel {i}: {layer.n_bias_labels[i]}\n")
-                            file_obj.write(f"Number of pairwise properties in channel {i}: {n}\n")
-                            file_obj.write("\n")
-                    except:
-                        pass
-                    try:
-                        for i, n in enumerate(layer.n_node_labels):
-                            file_obj.write(f"Number of Node Labels (type: {layer.node_label_descriptions[i]}) in channel {i}: {n}\n")
-                            file_obj.write("\n")
-                    except:
-                        pass
-
-                    weight_learnable_parameters = 0
-                    bias_learnable_parameters = 0
-                    try:
-                        if layer.Param_W.requires_grad:
-                            weight_learnable_parameters += layer.Param_W.numel()
-                    except:
-                        try:
-                            if layer.lin.weight.requires_grad:
-                                weight_learnable_parameters += layer.lin.weight.numel()
-                        except:
-                            pass
-                    try:
-                        if layer.Param_b.requires_grad:
-                            bias_learnable_parameters += layer.Param_b.numel()
-                    except:
-                        try:
-                            if layer.bias.requires_grad:
-                                bias_learnable_parameters += layer.bias.numel()
-                        except:
-                            pass
-
-                    file_obj.write("Weight matrix learnable parameters: {}\n".format(weight_learnable_parameters))
-                    file_obj.write("Bias learnable parameters: {}\n".format(bias_learnable_parameters))
-                    try:
-                        file_obj.write(f"Edge labels: {layer.edge_labels.num_unique_edge_labels}\n")
-                    except:
-                        pass
-                for name, param in self.net.named_parameters():
-                    file_obj.write(f"Layer: {name} -> {param.requires_grad}\n")
-
-                file_obj.write(f"\n")
-                file_obj.write(f"Total trainable parameters: {total_trainable_parameters}\n")
+            # collect the net details (architecture, optimizer, learning rate, loss function, batch size,
+            # number of epochs, balanced data, dropout) and write them as plain text and as markdown
+            network_info = self.collect_network_info()
+            results_dir = self.results_path.joinpath(f'{self.para.db}/Results')
+            self.write_network_txt(network_info,
+                                   results_dir.joinpath(f'{self.para.db}_{self.para.config_id}_Network.txt'))
+            self.write_network_markdown(network_info,
+                                        results_dir.joinpath(f'{self.para.db}_{self.para.config_id}_Network.md'))
 
         file_name = f'{self.para.db}_{self.para.config_id}_Results_run_id_{self.run_id}_validation_step_{self.para.validation_id}.csv'
 
@@ -1193,7 +1473,7 @@ class ModelConfiguration:
             file_obj.write("")
 
         # header use semicolon as delimiter
-        if self.para.run_config.task == 'graph_regression':
+        if self.para.run_config.task in ('graph_regression', 'node_regression'):
             header = f"Dataset;Time;RunNumber;ValidationNumber;Seed;Epoch;TrainingSize;ValidationSize;TestSize;EpochLoss ({self.para.run_config.loss});" \
                      f"EpochAccuracy;EpochTime;EpochMAE;EpochMAEStd;ValidationLoss;ValidationAccuracy;ValidationMAE;ValidationMAEStd;TestLoss;TestAccuracy;TestMAE;TestMAEStd\n"
         else:
@@ -1216,7 +1496,7 @@ class ModelConfiguration:
         time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.para.print_results:
             # if class num is one print the mae and mse
-            if self.para.run_config.task == 'graph_regression':
+            if self.para.run_config.task in ('graph_regression', 'node_regression'):
                 print(
                     f'run: {self.run_id} val step: {self.k_val} epoch: {epoch + 1}/{self.para.n_epochs} epoch loss: {train_values.loss} epoch acc: {train_values.accuracy} epoch mae: {train_values.mae} +- {train_values.mae_std} epoch time: {epoch_time}'
                     f' validation acc: {validation_values.accuracy} validation loss: {validation_values.loss} validation mae: {validation_values.mae} +- {validation_values.mae_std}'
@@ -1229,7 +1509,7 @@ class ModelConfiguration:
                     f'test acc: {test_values.accuracy} test loss: {test_values.loss}'
                     f'time: {epoch_time}')
 
-        if self.para.run_config.task == 'graph_regression':
+        if self.para.run_config.task in ('graph_regression', 'node_regression'):
             res_str =   f"{self.para.db};{time};{self.run_id};{self.k_val};{self.seed};{epoch};{self.training_data.size};{self.validate_data.size};{self.test_data.size};" \
                         f"{train_values.loss};{train_values.accuracy};{epoch_time};{train_values.mae};{train_values.mae_std};" \
                         f"{validation_values.loss};{validation_values.accuracy};{validation_values.mae};{validation_values.mae_std};" \
@@ -1262,10 +1542,20 @@ class ModelConfiguration:
 
 
     def _share_gnn_batched_enabled(self) -> bool:
-        """True if the batched ShareGNN forward is enabled via
-        ``share_gnn_forward: {batched: true}`` in the configuration."""
+        """True if the batched ShareGNN forward is enabled. Batched is the
+        default; disable via ``share_gnn_forward: {batched: false}`` in the
+        configuration."""
         forward_config = self.para.run_config.config.get('share_gnn_forward', None) or {}
-        return bool(forward_config.get('batched', False))
+        return bool(forward_config.get('batched', True))
+
+    def _execution_mode_description(self) -> str:
+        """Human-readable execution mode: 'cpu', 'batched cpu', 'gpu' or
+        'batched gpu'."""
+        device_name = 'gpu' if self.device.type == 'cuda' else 'cpu'
+        if not self.para.run_config.config.get('with_invariant_layers', True):
+            # classical GNNs always process whole batches jointly
+            return f'batched {device_name}'
+        return f'batched {device_name}' if self._share_gnn_batched_enabled() else device_name
 
     def _assemble_share_gnn_batch(self, graph_ids) -> Tuple[SimpleNamespace, list]:
         """
@@ -1393,27 +1683,29 @@ class ModelConfiguration:
                     outputs[j] = self.net(self.graph_data[data_pos], pos=data_pos)
         return labels, outputs
 
-    def train_node_task(self, epoch, values, train_batches, random_variation_bool, timer):
+    def train_node_task(self, epoch, values, train_batches, timer):
+        """
+        One training epoch for node-level tasks (node_classification /
+        node_regression).
+
+        Node tasks operate on a single graph (graph 0 of the dataset): the
+        train/validation/test splits contain *node* indices instead of graph
+        indices. Every batch needs a full-graph forward pass (the model output
+        for all nodes), from which the batch rows are selected for the loss.
+        Random input variation is applied inside GraphModel.forward (only in
+        training mode), so no noise handling is needed here.
+        """
+        graph = self.graph_data[0]
         for batch_counter, batch in enumerate(train_batches, 0):
             timer.measure("forward")
             self.optimizer.zero_grad(set_to_none=True)
             timer.measure("forward_step")
-            if random_variation_bool:
-                mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
-                std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
-                x = self.graph_data[0].x
-                # match the input's dtype/device instead of re-reading the precision
-                # config (whose default was inconsistent with the model's default)
-                random_variation = torch.normal(mean=mean, std=std, size=x.size(),
-                                                dtype=x.dtype, device=x.device)
-                outputs = self.net(x + random_variation, 0)
-            else:
-                outputs = self.net(self.graph_data[0].x, 0)
-                timer.measure("forward_step")
+            outputs = self.net(graph, pos=0)
+            timer.measure("forward_step")
 
             # calculate the loss
-            # squeeze second dimension if it is one
-            if outputs.shape[1] == 1:
+            # squeeze second dimension if it is one (single-target regression)
+            if outputs.dim() > 1 and outputs.shape[1] == 1:
                 outputs = outputs.squeeze(1)
             loss = self.criterion(outputs[batch], self.graph_data.y[batch])
             timer.measure("forward")
@@ -1427,6 +1719,8 @@ class ModelConfiguration:
             timer.measure("backward")
             loss.backward()
             self.optimizer.step()
+            # the weights changed: cached full-graph evaluation outputs are stale
+            self._node_eval_outputs = None
             timer.measure("backward")
             timer.reset()
 
@@ -1449,16 +1743,26 @@ class ModelConfiguration:
                                                                                  num_batches=len(train_batches))
 
     def evaluate_node_task(self, data):
+        """
+        Evaluate the model on a set of node indices.
+
+        The full-graph forward output is cached in ``self._node_eval_outputs``
+        and invalidated whenever the weights change (optimizer step, model
+        initialization), so consecutive validation and test evaluations of the
+        same epoch share one forward pass.
+        """
         labels = self.graph_data.y[data]
 
-        # use torch no grad to save memory
-        with torch.no_grad():
-            self.net.train(False)
-            outputs = self.net(self.graph_data[0].x, 0)
-            # squeeze second dimension if it is one
-            if outputs.shape[1] == 1:
-                outputs = outputs.squeeze(1)
-        return labels, outputs[data]
+        if self._node_eval_outputs is None:
+            # use torch no grad to save memory
+            with torch.no_grad():
+                self.net.train(False)
+                outputs = self.net(self.graph_data[0], pos=0)
+                # squeeze second dimension if it is one (single-target regression)
+                if outputs.dim() > 1 and outputs.shape[1] == 1:
+                    outputs = outputs.squeeze(1)
+            self._node_eval_outputs = outputs
+        return labels, self._node_eval_outputs[data]
 
 
     def get_train_batches(self, seeds, epoch):

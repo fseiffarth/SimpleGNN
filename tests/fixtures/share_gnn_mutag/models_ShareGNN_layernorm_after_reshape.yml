@@ -1,0 +1,60 @@
+# ZINC-style tail with a layer_norm on the graph embedding (as network_ZINC.yml
+# has it): aggregation -> reshape -> linear -> layer_norm -> linear.
+# Regression fixture: the per-graph forward hands the graph embedding to the
+# layer_norm as a 1D tensor while the batched forward hands it a 2D (B, F)
+# batch. LayerNormalization only handled 2D/3D inputs and silently passed the
+# 1D tensor through unnormalized, so the two forwards computed different
+# functions -- on ZINC, where this exact tail is trained with batched: True.
+models:
+  - - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 1,
+            bias: True,
+            labels: {
+              head: { label_type: primary },
+              tail: { label_type: primary },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [1, 2] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 8,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Identity(),
+        bias: True,
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: { label_type: primary },
+          },
+          {
+            num: 3,
+            bias: True,
+            labels: { label_type: primary },
+          },
+        ],
+    }
+    - { layer_type: reshape }
+    - { layer_type: linear,
+        out_features: 4,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }

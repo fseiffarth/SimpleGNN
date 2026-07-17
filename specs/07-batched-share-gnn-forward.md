@@ -80,7 +80,8 @@ Output equivalence with the per-graph path:
 3. **`reshape.py`**: batched `pos` + default shape `[-1]` → reshape to `(B, -1)`.
 
 4. **`model_configuration.py`**
-   - Config opt-in: `share_gnn_forward: { batched: true }`.
+   - Config opt-in: `share_gnn_forward: { batched: true }`. (Since 2026-07: batched
+     is the default; opt out with `share_gnn_forward: { batched: false }`.)
    - `_assemble_share_gnn_batch(batch_ids)`: concatenate `x` rows of all batch
      graphs (single `.to(device)` if data is not already on the device → the whole
      batch is loaded to the GPU together), return `(SimpleNamespace(x=...), positions)`.
@@ -171,6 +172,46 @@ GPU; `mode: auto` picks the right batched implementation per device.
 Reproduce: `pytest tests/test_speed_share_gnn_nci1.py -m speed -s`, or as a script
 (the ROCm venv has no pytest):
 `HSA_OVERRIDE_GFX_VERSION=11.0.0 venv-rocm/bin/python tests/test_speed_share_gnn_nci1.py --device cuda`
+
+## Follow-up: ZINC profiling (2026-07-14)
+
+Profiling ZINC (12000 graphs, `network_ZINC.yml`: 20-head conv + 140-head
+aggregation, double precision, batch 128, CPU) uncovered two problems that
+MUTAG/NCI1 were too small to show:
+
+1. **16 GB peak RSS at model init, ~10 GB retained** — in both batched and
+   unbatched mode. `_build_forward_index_structures` eagerly built *two*
+   sorted index orderings (head-major `_fwd_indices` for the per-graph sparse
+   forward, node-major `_fwd_b_*` for the batched sparse forward) over the
+   ~92M-row conv `weight_distribution`. On CPU neither is used: the per-graph
+   path picks `forward_mode: dense` (graphs < 256 nodes) and the batched path
+   picks padded dense. Fix: both orderings are now built lazily on first use
+   (`_ensure_per_graph_fwd_indices` / `_ensure_batched_sparse_indices`), so
+   runs that never enter a sparse path never pay for them (also removes two
+   ~92M-element argsorts from init).
+
+2. **Aggregation `_forward_batched` materialized (total_nodes, H, F)** — the
+   segment-reduction contributions tensor is ~1.3 GB per 512-graph eval chunk
+   with H=140, F=100, and its mul-backward dominated training. Fix: one padded
+   `bmm` — `(B, H, N_max) @ (B, N_max, F)`, padded rows contribute zero — is
+   ~7x faster and peaks at ~50 MB instead of ~1.4 GB. The segment reduction is
+   kept as fallback when `B * N_max > 4 * total_nodes` (pathologically skewed
+   graph sizes in one batch).
+
+ZINC, 2 epochs, batch 128, CPU, same seed (losses identical to ~1e-13):
+
+| mode      | epoch time before | after     | peak RSS before | after   |
+|-----------|-------------------|-----------|-----------------|---------|
+| unbatched | 40.6-55.2 s       | ~58 s     | 16.0 GB         | 5.8 GB  |
+| batched   | 17.5-18.0 s       | **5.7 s** | 16.0 GB         | 6.1 GB  |
+
+(unbatched epoch time is unchanged — its forward paths were not touched; the
+batched CPU forward is now ~10x faster per epoch than unbatched.)
+
+The remaining ~5 GB retained memory is the raw `weight_distribution`
+(92M x 4 int64 = 3.0 GB) and `bias_distribution` (1.8 GB) of the conv layer —
+shrinking those (int32 columns, or slicing per batch from disk) is a possible
+next step.
 
 ## Non-goals
 

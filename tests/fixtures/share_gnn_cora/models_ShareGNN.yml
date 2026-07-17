@@ -1,0 +1,22 @@
+# Minimal ShareGNN model for the Cora node classification smoke test
+models:
+  - - { layer_type: invariant_based_convolution,
+        activation: torch.nn.Tanh(),
+        bias: True,
+        heads: [
+          { num: 1,
+            bias: True,
+            labels: {
+              head: { label_type: wl, depth: 0, max_labels: 20 },
+              tail: { label_type: wl, depth: 0, max_labels: 20 },
+              bias: { label_type: wl, depth: 0, max_labels: 20 },
+            },
+            properties: { name: distances, values: [ 0, 1 ], cutoff: 2 },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 7,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }

@@ -1,5 +1,6 @@
 # Hyperparameters for substructure counting (migrated from old monolithic main config).
 device: cpu
+share_gnn_forward: { batched: True }
 mode: experiments
 precision: double
 

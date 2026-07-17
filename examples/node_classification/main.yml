@@ -1,0 +1,18 @@
+# Main configuration: ShareGNN node classification on the Cora citation network.
+# The split file is generated from the standard Planetoid masks by main.py.
+datasets:
+  - {
+    name: "Cora", # dataset name (Planetoid citation network)
+    source: "Planetoid",  # dataset source type
+    task: "node_classification", # node-level task: one prediction per node of the single graph
+    validation_folds: 1, # the Planetoid split is a single standard fold
+    paths: {
+      data: "data/Planetoid/", # path to the dataset (will be downloaded if not present)
+      labels: "data/Planetoid/labels/", # path to the generated node labels
+      properties: "data/Planetoid/properties/", # path to the precomputed pairwise properties
+      results: "results/node_classification/", # path to save the results
+      models: "examples/node_classification/models_ShareGNN.yml", # model configuration file
+      hyperparameters: "examples/node_classification/parameters.yml", # hyperparameter configuration file
+      splits: "examples/node_classification/Cora_splits.json", # node-level train/val/test splits
+    }
+  }

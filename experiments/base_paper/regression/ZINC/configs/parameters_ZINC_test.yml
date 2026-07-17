@@ -1,10 +1,11 @@
 # Hyperparameters for ZINC (migrated from old monolithic main config).
 device: cpu
+share_gnn_forward: { batched: True }
 mode: experiments
-precision: double
+precision: float
 
 optimizer:
-  - Adam
+  - AdamW
 
 loss:
   - MAE
@@ -22,11 +23,13 @@ batch_size:
 learning_rate:
   - 0.001
 epochs:
-  - 150
+  - 300
 
 early_stopping:
   enabled: False
   patience: 25
+
+csv_flush_interval: 1
 
 scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.0001 }
 

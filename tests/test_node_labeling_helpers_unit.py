@@ -47,15 +47,21 @@ def test_wl_labeling_returns_labels_for_each_node():
     assert len(db_unique) > 0
 
 
-def test_combine_node_labels_returns_two_column_tensor():
+def test_combine_node_labels_returns_per_node_labels():
+    # NodeLabels takes a two-column (original, relabeled) tensor and stores
+    # each column as a 1-D per-node tensor; combine_node_labels feeds it the
+    # (unique-pair index, frequency-sorted index) columns.
     l1 = NodeLabels("MUTAG", "a", torch.tensor([[0, 0], [1, 1], [2, 2], [-1, -1]]))
     l2 = NodeLabels("MUTAG", "b", torch.tensor([[2, 2], [1, 1], [0, 0], [-1, -1]]))
 
     combined = combine_node_labels([l1, l2])
 
     assert combined.dataset_name == "MUTAG"
-    assert combined.node_labels.ndim == 2
-    assert combined.node_labels.shape[1] == 2
+    assert combined.label_name == "a_b"
+    assert combined.node_labels.ndim == 1
+    assert combined.original_node_labels.ndim == 1
+    # pairs (0,2), (1,1), (2,0) are distinct; (-1,-1) stays invalid
+    assert torch.equal(combined.node_labels, torch.tensor([0, 1, 2, -1]))
 
 
 def test_get_label_string_for_wl_and_primary():

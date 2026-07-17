@@ -239,7 +239,7 @@ def preprocessing_from_config(experiment_configuration, graph_data: GraphDataset
     # generate all necessary labels and properties, first need to create the nx graphs to run the algorithms on
     # graph_data.create_nx_graphs(directed=False)
     for layer in proprocessed_label_dicts_first:
-        layer_to_labels(layer)
+        layer_to_labels(experiment_configuration=experiment_configuration, layer_strings=layer, graph_data=graph_data, generation_times_labels_path=generation_times_labels_path)
     for layer in preprocessed_label_dicts:
         layer_to_labels(experiment_configuration=experiment_configuration, layer_strings=layer, graph_data=graph_data, generation_times_labels_path=generation_times_labels_path)
     for preprocessed_property in preprocessed_properties:

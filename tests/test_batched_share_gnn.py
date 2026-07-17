@@ -100,6 +100,65 @@ def test_full_pipeline_with_batched_forward(tmp_path, mutag_main_config):
 
 
 @pytest.mark.integration
+def test_multi_group_aggregation_with_mlp_after_reshape(share_gnn_setup_factory):
+    """Regression: an aggregation layer with several head groups followed by
+    reshape -> MLP (the ZINC architecture). The aggregation output folds all
+    heads into the feature dimension, so the layer must report out_channels=1;
+    it used to report the number of head groups, which inflated the reshape
+    layer's out_features and made the first MLP linear crash on a shape
+    mismatch."""
+    graph_data, para = share_gnn_setup_factory("models_ShareGNN_mlp_after_reshape.yml")
+    net = _build_net(graph_data, para)
+    net.eval()
+
+    aggregation = next(l for l in net.net_layers if "Aggregation" in l.name)
+    assert aggregation.out_channels == 1
+    # 8 features x (2 + 3) heads folded into the flat output vector
+    assert aggregation.out_features == 40
+
+    positions = list(range(4))
+    with torch.no_grad():
+        per_graph = torch.stack([net(graph_data[p], pos=p) for p in positions])
+        batched = net(_batched_input(graph_data, positions), pos=positions)
+
+    assert per_graph.shape == (4, 2)
+    torch.testing.assert_close(batched, per_graph, rtol=1e-9, atol=1e-9)
+
+
+@pytest.mark.integration
+def test_layer_norm_on_graph_embedding_matches_per_graph(share_gnn_setup_factory):
+    """Regression: a layer_norm after the graph-level reshape (the ZINC tail)
+    sees a 1D tensor in the per-graph forward and a 2D (B, F) batch in the
+    batched one. The 1D case used to fall through unnormalized, so the two
+    forwards silently computed different functions."""
+    graph_data, para = share_gnn_setup_factory("models_ShareGNN_layernorm_after_reshape.yml")
+    net = _build_net(graph_data, para)
+    net.eval()
+
+    graph_norm = net.net_layers[6]
+    assert "Layer Normalization" in graph_norm.name
+    normalized = []
+    handle = graph_norm.register_forward_hook(lambda _m, _i, out: normalized.append(out.detach()))
+
+    positions = list(range(8))
+    try:
+        with torch.no_grad():
+            per_graph = torch.stack([net(graph_data[p], pos=p) for p in positions])
+            batched = net(_batched_input(graph_data, positions), pos=positions)
+    finally:
+        handle.remove()
+
+    torch.testing.assert_close(batched, per_graph, rtol=1e-9, atol=1e-9)
+
+    # the 1D per-graph embedding must come out normalized, not passed through
+    # (the std stays a little under 1 because of layer_norm's eps)
+    for out in normalized[:len(positions)]:
+        torch.testing.assert_close(out.mean(dim=-1), torch.zeros_like(out.mean(dim=-1)), atol=1e-9, rtol=0)
+        torch.testing.assert_close(out.std(dim=-1, unbiased=False),
+                                   torch.ones_like(out.std(dim=-1, unbiased=False)), atol=0.02, rtol=0)
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("mode", ["auto", "dense", "sparse"])
 def test_batched_backward_matches_per_graph(share_gnn_setup, mode):
     """Both paths must push identical gradients into the shared parameters."""

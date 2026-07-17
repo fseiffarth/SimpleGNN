@@ -3,12 +3,14 @@ def config_paths_to_absolute(experiment_configuration, absolute_path):
     experiment_configuration['paths']['results'] = absolute_path.joinpath(experiment_configuration['paths']['results'])
     experiment_configuration['paths']['splits'] = absolute_path.joinpath(experiment_configuration['paths']['splits'])
 
-    experiment_configuration['paths']['labels'] = ''
     if 'labels' in experiment_configuration['paths']:
         experiment_configuration['paths']['labels'] = absolute_path.joinpath(experiment_configuration['paths']['labels'])
-    experiment_configuration['paths']['properties'] = ''
+    else:
+        experiment_configuration['paths']['labels'] = ''
     if 'properties' in experiment_configuration['paths']:
         experiment_configuration['paths']['properties'] = absolute_path.joinpath(experiment_configuration['paths']['properties'])
+    else:
+        experiment_configuration['paths']['properties'] = ''
 
 
 def paths_to_absolute(paths, absolute_path):

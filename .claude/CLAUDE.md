@@ -194,6 +194,7 @@ SimpleGNN/                            # Repo root (== git root)
 ├── tests/                            # pytest suite (unit + import/API smoke tests)
 ├── examples/                         # Example experiments with YAML configs
 │   ├── classical_gnns/               # Classical MPNNs (GCN/GIN/GAT/...)
+│   ├── node_classification/          # ShareGNN node classification on Cora (Planetoid)
 │   ├── share_gnn_basic/              # ShareGNN baseline
 │   ├── share_gnn_hyperparameter_search/  # ShareGNN grid search
 │   ├── test_betweenness/             # Betweenness-based benchmark

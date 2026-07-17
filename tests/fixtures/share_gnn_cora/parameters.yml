@@ -1,0 +1,31 @@
+# Minimal hyperparameters for the Cora node classification smoke test
+device: cpu
+mode: experiments
+precision: float
+
+optimizer:
+  - Adam
+
+loss:
+  - CrossEntropyLoss
+
+batch_size:
+  - 140
+learning_rate:
+  - 0.01
+epochs:
+  - 3
+
+early_stopping:
+  enabled:
+    False
+  patience:
+    100
+
+input_features: { name: node_features }
+
+weight_initialization:
+  convolution: { type: normal, mean: 0.0, std: 0.1 }
+  convolution_bias: { type: constant, value: 0.0 }
+
+save_best_model: True

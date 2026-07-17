@@ -1,5 +1,6 @@
 # Hyperparameters for ZINC (migrated from old monolithic main config).
-device: cpu
+device: cuda
+share_gnn_forward: { batched: True }
 mode: experiments
 precision: double
 
@@ -27,6 +28,8 @@ epochs:
 early_stopping:
   enabled: False
   patience: 25
+
+csv_flush_interval: 1
 
 scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.0001 }
 

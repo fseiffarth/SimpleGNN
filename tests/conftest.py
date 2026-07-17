@@ -65,8 +65,9 @@ def seed_all():
 
 
 @pytest.fixture
-def share_gnn_setup(mutag_main_config):
-    """Preprocess MUTAG and return (graph_data, para) for the ShareGNN fixture model.
+def share_gnn_setup_factory(mutag_main_config):
+    """Factory: preprocess MUTAG and return (graph_data, para) for a ShareGNN
+    fixture model (models file name relative to fixtures/share_gnn_mutag).
 
     This mirrors what FrameworkMain.run_configuration does before handing off to
     ModelConfiguration, so tests can build a real GraphModel without going
@@ -79,31 +80,40 @@ def share_gnn_setup(mutag_main_config):
         load_preprocessed_data_and_parameters,
     )
 
-    share_gnn = FIXTURES / "share_gnn_mutag"
-    main_config_path = mutag_main_config(
-        models=share_gnn / "models_ShareGNN.yml",
-        hyperparameters=share_gnn / "parameters.yml",
-    )
+    def _setup(models_file="models_ShareGNN.yml"):
+        share_gnn = FIXTURES / "share_gnn_mutag"
+        main_config_path = mutag_main_config(
+            models=share_gnn / models_file,
+            hyperparameters=share_gnn / "parameters.yml",
+        )
 
-    experiment = FrameworkMain(main_config_path)
-    experiment.preprocessing(num_threads=1)
+        experiment = FrameworkMain(main_config_path)
+        experiment.preprocessing(num_threads=1)
 
-    dataset_key = next(iter(experiment.network_configurations))
-    configuration = experiment.network_configurations[dataset_key][0]
-    graph_data = preprocess_graph_data(configuration)
-    run_config = get_run_configs(configuration)[0]
+        dataset_key = next(iter(experiment.network_configurations))
+        configuration = experiment.network_configurations[dataset_key][0]
+        graph_data = preprocess_graph_data(configuration)
+        run_config = get_run_configs(configuration)[0]
 
-    para = Parameters()
-    load_preprocessed_data_and_parameters(
-        config_id=0,
-        run_id=0,
-        validation_id=0,
-        validation_folds=run_config.config.get("validation_folds", 10),
-        graph_data=graph_data,
-        run_config=run_config,
-        para=para,
-    )
-    return graph_data, para
+        para = Parameters()
+        load_preprocessed_data_and_parameters(
+            config_id=0,
+            run_id=0,
+            validation_id=0,
+            validation_folds=run_config.config.get("validation_folds", 10),
+            graph_data=graph_data,
+            run_config=run_config,
+            para=para,
+        )
+        return graph_data, para
+
+    return _setup
+
+
+@pytest.fixture
+def share_gnn_setup(share_gnn_setup_factory):
+    """(graph_data, para) for the default ShareGNN fixture model."""
+    return share_gnn_setup_factory()
 
 
 @pytest.fixture

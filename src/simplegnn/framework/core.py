@@ -197,7 +197,7 @@ class FrameworkMain:
 
 
 
-    def run_configurations(self, num_threads=-1):
+    def run_configurations(self, num_threads=-1, config_ids=None):
         """
         Execute hyperparameter grid search for all datasets and configurations.
 
@@ -220,6 +220,14 @@ class FrameworkMain:
             - -1: Use all available CPU cores (default)
             - 1: Sequential execution
             - >1: Use specified number of threads
+        config_ids : int or iterable of int, optional
+            Restrict the grid search to specific hyperparameter
+            configuration indices (0-based, as ordered by
+            ``get_run_configs``). Useful to run only a single model
+            instead of the full cartesian grid.
+            - None: Run all configurations (default)
+            - int: Run only that configuration
+            - iterable: Run only those configurations
 
         Notes
         -----
@@ -259,6 +267,10 @@ class FrameworkMain:
         framework.run_configuration.get_run_configs : Generate config grid
         """
         torch.set_warn_always(False)
+        # normalize the optional config_ids selection into a set of indices (or None for all)
+        if config_ids is not None and not hasattr(config_ids, '__iter__'):
+            config_ids = [config_ids]
+        selected_config_ids = set(config_ids) if config_ids is not None else None
         # set omp num threads to 1 to avoid conflicts with OpenMP if num_threads is unequal to 1
         if num_threads != 1:
             os.environ['OMP_NUM_THREADS'] = '1'         # set omp_num_threads to 1 to avoid conflicts with OpenMP
@@ -289,8 +301,19 @@ class FrameworkMain:
                     config_id_names[idx] = f'Configuration_{str(config_id).zfill(6)}'
                 print(f"Total number of hyperparameter configurations: {len(run_configs)}")
 
+                # optionally restrict the grid search to selected configuration indices
+                if selected_config_ids is not None:
+                    active_config_ids = [c_idx for c_idx in range(len(run_configs)) if c_idx in selected_config_ids]
+                    if not active_config_ids:
+                        print(f"None of the requested config_ids {sorted(selected_config_ids)} exist "
+                              f"(valid range 0-{len(run_configs) - 1}); skipping dataset {dataset}")
+                        continue
+                    print(f"Restricting grid search to configuration indices: {active_config_ids}")
+                else:
+                    active_config_ids = list(range(len(run_configs)))
+
                 # zip all configurations for parallelization and run the grid search
-                run_loops = [(validation_id, run_id, c_idx) for validation_id in range(len(configuration.get('splits')['train'])) for run_id in range(configuration.get('num_runs', 1)) for c_idx in range(len(run_configs))]
+                run_loops = [(validation_id, run_id, c_idx) for validation_id in range(len(configuration.get('splits')['train'])) for run_id in range(configuration.get('num_runs', 1)) for c_idx in active_config_ids]
                 num_threads = min(num_threads, len(run_loops))
                 print(f"Run the grid search for dataset {dataset} using {len(configuration.get('splits')['train'])}-fold cross-validation and {num_threads} number of parallel jobs")
                 joblib.Parallel(n_jobs=num_threads)(

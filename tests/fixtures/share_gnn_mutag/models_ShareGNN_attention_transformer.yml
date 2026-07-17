@@ -1,0 +1,61 @@
+# Same tail as models_ShareGNN_factorized_readout.yml, but the readout is a
+# pre-LN transformer encoder block over the H=5 head embeddings (the heads
+# exchange information via self-attention) followed by gated attention
+# pooling.
+models:
+  - - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 1,
+            bias: True,
+            labels: {
+              head: { label_type: primary },
+              tail: { label_type: primary },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [1, 2] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 8,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Identity(),
+        bias: True,
+        flatten: False,
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: { label_type: primary },
+          },
+          {
+            num: 3,
+            bias: True,
+            labels: { label_type: primary },
+          },
+        ],
+    }
+    - { layer_type: attention_readout,
+        variant: transformer,
+        attention_dim: 4,
+        num_attention_heads: 2,
+        ffn_dim: 16,
+        head_embeddings: True,
+        out_features: 4,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }

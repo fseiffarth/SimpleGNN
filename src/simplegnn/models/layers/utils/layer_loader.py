@@ -166,6 +166,13 @@ def check_layer(i:int, layer: dict)->(bool, str):
         for req in required:
             if req not in layer:
                 return False, f'{req} not defined in layer {i}'
+    elif layer['layer_type'] == LayerTypes.ATTENTION_READOUT.value:
+        required = ['out_features']
+        for req in required:
+            if req not in layer:
+                return False, f'{req} not defined in layer {i}'
+        if layer.get('variant', 'gated') not in ('gated', 'pma', 'transformer'):
+            return False, f'variant must be gated, pma or transformer in layer {i}'
     elif layer['layer_type'] == LayerTypes.RESHAPE.value:
         pass
     elif layer['layer_type'] == LayerTypes.LAYER_NORM.value:

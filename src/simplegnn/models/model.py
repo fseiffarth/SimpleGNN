@@ -48,6 +48,7 @@ from simplegnn.models.layers.mpnn_classical.gin_conv import GINConv
 from simplegnn.models.layers.mpnn_classical.global_pooling import GlobalPooling
 from simplegnn.models.layers.mpnn_classical.sage_conv import SAGEConv
 from simplegnn.models.layers.nn_standard.activation import ActivationLayer
+from simplegnn.models.layers.nn_standard.attention_readout import AttentionReadoutLayer
 from simplegnn.models.layers.nn_standard.batch_normalization import BatchNormLayer
 from simplegnn.models.layers.nn_standard.dropout import DropoutLayer
 from simplegnn.models.layers.nn_standard.layer_normalization import LayerNormalization
@@ -300,7 +301,9 @@ class GraphModel(torch.nn.Module):
         >>> output = model(batch_data)
         """
         x = batch_data.x
-        if self.random_variation_bool:
+        # random input variation is a training-time augmentation: applying it
+        # during evaluation would make validation/test results noisy
+        if self.random_variation_bool and self.training:
             mean = self.para.run_config.config['input_features']['random_variation'].get('mean', 0.0)
             std = self.para.run_config.config['input_features']['random_variation'].get('std', 0.1)
             # match the input's dtype/device instead of re-reading the precision
@@ -435,7 +438,21 @@ class GraphModel(torch.nn.Module):
         # TODO how to get the out channels from in_channels and num_heads. At the moment extent each in_channel by num_heads, but this may not be the case for all layers
         # another option is apply one head to one in_channel (only if num_heads == in_channels)
         if 'heads' in layer_args:
-            layer_args['num_heads'] = len(layer_args['heads'])
+            # Total number of heads (sum over the head groups), matching how
+            # FrameworkLayer counts them — len(heads) would only count groups.
+            layer_args['num_heads'] = sum(head['num'] for head in layer_args['heads'])
+        elif layer.layer_type == LayerTypes.LINEAR.value and layer_args.get('mode') in (
+                'channel_wise', 'aggr_channels', 'factorized'):
+            # A linear layer has no 'heads' key, so without this its num_heads
+            # would default to 1 and the channel-aware modes would size their
+            # weights for a single channel. They all consume the channels of the
+            # incoming tensor, so num_heads is the incoming channel count.
+            layer_args['num_heads'] = layer_args['in_channels']
+            if layer_args.get('mode') == 'channel_wise':
+                # one weight matrix per channel: channels are neither created
+                # nor removed (the aggregating modes set out_channels = 1
+                # themselves)
+                layer_args['head_mode'] = 'same_as_in_channels'
 
         num_heads = layer_args.get('num_heads', 1)
         head_mode = layer_args.get('head_mode', 'extend_in_channels')
@@ -443,7 +460,7 @@ class GraphModel(torch.nn.Module):
             layer_args['out_channels'] = layer_args['in_channels'] * num_heads
         elif head_mode == 'same_as_in_channels':
             if num_heads != layer_args['in_channels']:
-                raise ValueError(f'num_heads must be equal to in_channels when head_mode is same_as_in_channels, but got num_heads={num_heads} and in_channels={in_channels}')
+                raise ValueError(f'num_heads must be equal to in_channels when head_mode is same_as_in_channels, but got num_heads={num_heads} and in_channels={layer_args["in_channels"]}')
             layer_args['out_channels'] = layer_args['in_channels']
         layer_args['dtype'] = self.precision
         layer_args['out_features'] = layer_args.get('out_features', layer_args['in_features'])
@@ -486,6 +503,8 @@ class GraphModel(torch.nn.Module):
             return LayerNormalization(layer_args=layer_args).type(self.precision)
         elif layer.layer_type == LayerTypes.LINEAR.value:
             return LinearLayer(layer_args=layer_args).type(self.precision)
+        elif layer.layer_type == LayerTypes.ATTENTION_READOUT.value:
+            return AttentionReadoutLayer(layer_args=layer_args).type(self.precision)
         elif layer.layer_type == LayerTypes.RESHAPE.value:
             return Reshape(layer_args=layer_args).type(self.precision)
         else:

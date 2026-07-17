@@ -5,6 +5,7 @@ class LayerTypes(Enum):
     """All currently supported layer types."""
     ### standard layers
     LINEAR = 'linear'
+    ATTENTION_READOUT = 'attention_readout'
     RESHAPE = 'reshape'
     LAYER_NORM = 'layer_norm'
     GLOBAL_POOLING = 'global_pooling'

@@ -243,7 +243,7 @@ class GraphDataset(InMemoryDataset):
 
         # TODO : do the following in the preprocess function (use primary node labels and primary edge labels and node_attributes and edge_attributes)
         #if data.get('y', None) is not None:
-        if self.task == 'graph_classification':
+        if self.task in ('graph_classification', 'node_classification'):
             # convert y to long
             data['y'] = data['y'].long()
             # flatten y
@@ -269,7 +269,16 @@ class GraphDataset(InMemoryDataset):
             else:
                 self.number_of_output_classes = 1
         elif self.task == 'node_classification':
-            self.number_of_output_classes = self.num_node_labels
+            # number of distinct node-level target classes; computed from y
+            # directly (num_node_labels counts *primary* structural labels,
+            # which are independent of the prediction targets for some sources)
+            self.number_of_output_classes = int(torch.unique(data['y']).shape[0])
+        elif self.task == 'node_regression':
+            # if y is a 2D-tensor, the second axis is the number of regression targets
+            if data['y'].dim() == 2:
+                self.number_of_output_classes = data['y'].shape[1]
+            else:
+                self.number_of_output_classes = 1
         elif self.task == 'edge_classification':
             self.number_of_output_classes = self.num_edge_labels
         elif self.task == 'link_prediction':
@@ -398,14 +407,35 @@ class GraphDataset(InMemoryDataset):
                 pass
             elif self.from_existing_data in ['planetoid', 'cora', 'citeseer', 'pubmed', 'Planetoid']:
                 dataset = torch_geometric.datasets.Planetoid(root='tmp/', name=self.name)
-                self.data = dataset[0]
-                self.slices = dict()
-                for key, value in dataset.data:
-                    self.slices[key] = torch.tensor([0, value.shape[0]], dtype=torch.long)
+                data = dataset[0]
+                num_nodes = data.x.shape[0]
+                num_edges = data.edge_index.shape[1]
+                # add the attributes the framework expects on every dataset;
+                # the structural (primary) node/edge labels are trivial — the
+                # prediction targets live in y and must not leak into the
+                # invariant-layer weight sharing
+                data.primary_node_labels = torch.zeros(num_nodes, dtype=torch.long)
+                data.node_attributes = data.x.clone()
+                data.primary_edge_labels = torch.zeros(num_edges, dtype=torch.long)
+                data.edge_attributes = torch.Tensor()
+                self.data = data
+                # single graph: every per-node attribute spans [0, num_nodes),
+                # edge_index spans [0, num_edges) along its concat dimension
+                self.slices = {
+                    'x': torch.tensor([0, num_nodes], dtype=torch.long),
+                    'y': torch.tensor([0, num_nodes], dtype=torch.long),
+                    'edge_index': torch.tensor([0, num_edges], dtype=torch.long),
+                    'primary_node_labels': torch.tensor([0, num_nodes], dtype=torch.long),
+                    'node_attributes': torch.tensor([0, num_nodes], dtype=torch.long),
+                    'primary_edge_labels': torch.tensor([0, num_edges], dtype=torch.long),
+                    'train_mask': torch.tensor([0, num_nodes], dtype=torch.long),
+                    'val_mask': torch.tensor([0, num_nodes], dtype=torch.long),
+                    'test_mask': torch.tensor([0, num_nodes], dtype=torch.long),
+                }
                 sizes = {
                     'num_node_labels': len(torch.unique(self.data.y)),
                     'num_node_attributes': self.data.x.shape[1],
-                    'num_edge_labels': 0,
+                    'num_edge_labels': 1,
                     'num_edge_attributes': 0
                 }
             elif self.from_existing_data in ['Nell', 'nell', 'NELL']:
@@ -780,6 +810,11 @@ class GraphDataset(InMemoryDataset):
                 non_zero_columns = torch.where(data['node_attributes'].sum(dim=0) != 0)[0]
                 data['node_attributes'] = data['node_attributes'][:, non_zero_columns]
                 data['x'] = data['node_attributes'].type(self.precision)
+                if transformation in ('normalize_rows', 'row_normalize'):
+                    # scale each node's feature vector to sum to one (the
+                    # standard bag-of-words normalization for citation
+                    # networks); keeps neighborhood aggregations bounded
+                    data['x'] = data['x'] / data['x'].sum(dim=1, keepdim=True).clamp(min=1e-12)
                 if use_train_node_labels:
                     # get data y one hot
                     y_one_hot = torch.nn.functional.one_hot(data['y']).type(self.precision)

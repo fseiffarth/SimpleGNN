@@ -2,7 +2,8 @@
 
 device: cpu
 # batched ShareGNN forward: process all graphs of a batch jointly (one matmul per
-# invariant layer instead of one per graph) — recommended on both GPU and CPU.
+# invariant layer instead of one per graph) — enabled by default on GPU and CPU.
+# Disable with share_gnn_forward: { batched: False } to use the per-graph forward.
 # mode (auto|dense|sparse) picks the batched implementation; auto = padded dense
 # on CPU, block-diagonal sparse on GPU. See specs/07-batched-share-gnn-forward.md
 # share_gnn_forward: { batched: True }

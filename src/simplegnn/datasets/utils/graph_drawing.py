@@ -1,5 +1,109 @@
+from pathlib import Path
+
+import networkx as nx
+import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.colors as mcolors
+
+
+def load_positions(pos_path):
+    """Load node positions from a whitespace-separated file, or None if absent.
+
+    File format (one node per line): ``<node_id> <x> <y>``.
+    """
+    if pos_path is None or str(pos_path) == '' or not Path(pos_path).is_file():
+        return None
+    pos = dict()
+    with open(pos_path, 'r') as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 3:
+                pos[int(parts[0])] = (float(parts[1]), float(parts[2]))
+    return pos
+
+
+def save_positions(pos, pos_path):
+    if pos_path is None or str(pos_path) == '':
+        return
+    with open(pos_path, 'w') as f:
+        for key, value in pos.items():
+            f.write(f"{key} {value[0]} {value[1]}\n")
+
+
+def compute_positions(graph, draw_type, root_node=None):
+    """Node positions for a networkx graph using the configured layout.
+
+    ``draw_type='circle'`` walks the graph from ``root_node`` and places the
+    nodes on a circle of radius 400 in visit order (intended for ring-shaped
+    graphs); any node the walk cannot reach is appended in iteration order so
+    the layout terminates on arbitrary graphs.
+    """
+    if draw_type == 'circle':
+        if root_node is None or root_node not in graph:
+            root_node = next(iter(graph.nodes()))
+        pos = {root_node: (400.0, 0.0)}
+        angle = 2 * np.pi / max(graph.number_of_nodes(), 1)
+        cur_node = root_node
+        last_node = None
+        counter = 0
+        while len(pos) < graph.number_of_nodes():
+            for next_node in graph.neighbors(cur_node):
+                if next_node != last_node and next_node not in pos:
+                    counter += 1
+                    pos[next_node] = (400 * np.cos(counter * angle), 400 * np.sin(counter * angle))
+                    last_node = cur_node
+                    cur_node = next_node
+                    break
+            else:
+                for node in graph.nodes():
+                    if node not in pos:
+                        counter += 1
+                        pos[node] = (400 * np.cos(counter * angle), 400 * np.sin(counter * angle))
+                break
+        return pos
+    if draw_type == 'kawai':
+        pos = nx.kamada_kawai_layout(graph)
+    elif draw_type == 'shell':
+        pos = nx.shell_layout(graph)
+    elif draw_type == 'bfs':
+        pos = nx.bfs_layout(graph, 0)
+    else:
+        pos = nx.nx_pydot.graphviz_layout(graph)
+    return {int(k): v for k, v in pos.items()}
+
+
+def resolve_positions(graph, draw_type, pos_path='', root_node=None):
+    """Positions from the cache file if present, else computed and cached."""
+    pos = load_positions(pos_path)
+    if pos is not None:
+        return pos
+    pos = compute_positions(graph, draw_type, root_node=root_node)
+    save_positions(pos, pos_path)
+    return pos
+
+
+def filter_weight_bounds(graph_weights, filter_weights):
+    """Zero out all weights except the largest and smallest ones.
+
+    Keeps a weight if it is among the ``absolute`` largest or ``absolute``
+    smallest unique values, or within the top/bottom ``percentage`` fraction
+    of unique values; everything in between is set to 0 (i.e. not drawn).
+    """
+    graph_weights = np.asarray(graph_weights)
+    if filter_weights is None or graph_weights.size == 0:
+        return graph_weights
+    unique_weights = np.unique(graph_weights)  # sorted ascending
+    n = len(unique_weights)
+    if filter_weights.get('percentage', None) is not None:
+        keep = int(n * filter_weights['percentage'])
+    elif filter_weights.get('absolute', None) is not None:
+        keep = int(filter_weights['absolute'])
+    else:
+        raise ValueError("filter_weights needs a 'percentage' or 'absolute' key")
+    keep = min(max(keep, 1), n)
+    lower_bound = unique_weights[keep - 1]
+    upper_bound = unique_weights[n - keep]
+    return np.where((graph_weights <= lower_bound) | (graph_weights >= upper_bound), graph_weights, 0)
 
 class CustomColorMap:
     def __init__(self):

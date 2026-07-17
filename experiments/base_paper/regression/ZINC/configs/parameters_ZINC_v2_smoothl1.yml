@@ -1,0 +1,54 @@
+# Same as parameters_ZINC_v2.yml, but loss: MAE -> SmoothL1 (Huber): quadratic
+# near 0, linear beyond it, so it is less sensitive to outlier graphs than MAE
+# while still training toward the same target. specs/09-...md #3 suggested
+# Huber/smooth-L1 training with MAE evaluation as a possible convergence win.
+# ValidationMAE/TestMAE are computed independently of the training loss
+# (model_configuration.py), so evaluation still reads the true task metric --
+# but model *selection* (evaluate_results()) falls through to a tie-break on
+# min(ValidationLoss), which would now be a SmoothL1 value, not comparable
+# across a mixed MAE/SmoothL1 grid. Kept as its own file for exactly that
+# reason: this loss is not mixed into the weight_decay grid of the other
+# variants, so each file's own automatic model selection stays internally
+# consistent.
+device: cuda
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: double
+
+optimizer:
+  - AdamW
+
+loss:
+  - SmoothL1
+
+rule_occurrence_threshold: 2
+
+weight_initialization: { convolution: { type: 'lower_upper', value: -0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0 },
+                         aggregation: { type: 'lower_upper', value: -0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 } }
+
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+weight_decay:
+  - 0.0
+  - 1.0e-6
+  - 1.0e-5
+  - 1.0e-4
+epochs:
+  - 50
+
+early_stopping:
+  enabled: False
+  patience: 25
+
+csv_flush_interval: 1
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default' }
+
+input_features: { name: node_labels, transformation: 'one_hot' }
+best_model: True

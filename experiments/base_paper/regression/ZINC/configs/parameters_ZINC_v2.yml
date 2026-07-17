@@ -1,0 +1,56 @@
+# Hyperparameters shared by the ZINC variants of
+# specs/09-zinc-readout-and-architecture-improvements.md (Stage C + step 1).
+#
+# Differences to parameters_ZINC.yml:
+#   * AdamW instead of Adam, so the weight decay is decoupled from the gradient
+#   * weight_decay is grid-searched: it was never set and defaults to 0.0
+#   * min_lr 1e-4 -> 1e-6: the old floor stops the annealing early
+# epochs cut to 50: the small variant plateaued by epoch ~78 (best valMAE
+# 0.1365, no improvement through epoch 127), consistent with the baseline's
+# ~30-epoch convergence, so the 150-epoch budget was pure waste of GPU time.
+# precision stays double, so that a comparison against the baseline isolates
+# the architecture change. Switching to `precision: float` is a safe speedup --
+# the invariant layers are index-based, not precision-critical.
+device: cuda
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: double
+
+optimizer:
+  - AdamW
+
+loss:
+  - MAE
+
+# rule_occurrence_threshold: how often a rule must occur to be used in the network
+rule_occurrence_threshold: 2
+
+weight_initialization: { convolution: { type: 'lower_upper', value: -0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0 },
+                         aggregation: { type: 'lower_upper', value: -0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 } }
+
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+weight_decay:
+  - 0.0
+  - 1.0e-6
+  - 1.0e-5
+  - 1.0e-4
+epochs:
+  - 50
+
+early_stopping:
+  enabled: False
+  patience: 25
+
+csv_flush_interval: 1
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default' }
+
+input_features: { name: node_labels, transformation: 'one_hot' }
+best_model: True

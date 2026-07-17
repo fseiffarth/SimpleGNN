@@ -20,7 +20,19 @@ def test_generate_layer_options_cross_product_with_properties():
     }
 
     options = generate_layer_options(layer_dict)
-    assert len(options) == 8
+    # grid axes: max_labels [3, 5] x depth [1, 2] = 4. A property's `values`
+    # list is the set of valid property values for ONE config (e.g. all
+    # distances of a layer), not a grid axis; grids over properties use
+    # multiple property dicts.
+    assert len(options) == 4
+    combos = {
+        (o["channels"][0]["labels"]["max_labels"], o["channels"][0]["labels"]["depth"])
+        for o in options
+    }
+    assert combos == {(3, 1), (3, 2), (5, 1), (5, 2)}
+    for o in options:
+        assert o["channels"][0]["properties"] == {"name": "dist", "values": [1, 2]}
+        assert o["bias"] is True
 
 
 def test_preprocess_network_architectures_raises_on_invalid_architecture():

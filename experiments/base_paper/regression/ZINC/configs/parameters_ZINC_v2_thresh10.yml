@@ -1,0 +1,50 @@
+# Same as parameters_ZINC_v2.yml, but rule_occurrence_threshold 2 -> 10: a rule
+# in the shared message-passing weights (invariant_based_convolution) must now
+# occur at least 10 times to get its own weight, shrinking the conv layer's
+# 405,493 params (57-67% of the model, per specs/09-...md #6) without any
+# architecture change. Follows the repo's existing threshold-ablation
+# convention (experiments/base_paper/classification/configs/ablation/threshold/)
+# of one file per threshold value rather than a grid list -- run_configuration.py
+# does not treat rule_occurrence_threshold as a grid-searchable key.
+device: cuda
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: double
+
+optimizer:
+  - AdamW
+
+loss:
+  - MAE
+
+rule_occurrence_threshold: 10
+
+weight_initialization: { convolution: { type: 'lower_upper', value: -0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0 },
+                         aggregation: { type: 'lower_upper', value: -0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 } }
+
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+weight_decay:
+  - 0.0
+  - 1.0e-6
+  - 1.0e-5
+  - 1.0e-4
+epochs:
+  - 50
+
+early_stopping:
+  enabled: False
+  patience: 25
+
+csv_flush_interval: 1
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default' }
+
+input_features: { name: node_labels, transformation: 'one_hot' }
+best_model: True

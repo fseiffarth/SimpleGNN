@@ -2,6 +2,8 @@ import json
 import os
 from pathlib import Path
 
+import torch
+
 from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.edge_labeling import Properties
 from simplegnn.datasets.utils.node_labeling import load_labels, get_label_string
@@ -457,9 +459,11 @@ class Preprocessing:
         """
         # create the splits
         if self.experiment_configuration.get('with_splits', True):
-            create_splits(self.db_name, Path(self.experiment_configuration['paths']['data']),
+            create_splits(self.db_name,
                           Path(self.experiment_configuration['paths']['splits']),
-                          folds=self.experiment_configuration['validation_folds'], graph_data=self.graph_data)
+                          folds=self.experiment_configuration['validation_folds'],
+                          graph_data=self.graph_data,
+                          task=self.experiment_configuration.get('task', None))
         else:
             if self.experiment_configuration.get('split_function', None) is not None:
                 # generate splits
@@ -472,6 +476,82 @@ class Preprocessing:
 
 
 
+
+
+def create_splits(db_name: str, splits_path: Path, folds: int = 10,
+                  graph_data: GraphDataset = None, task: str = None,
+                  seed: int = 42) -> Path:
+    """
+    Create a train/validation/test split file in the framework's JSON format.
+
+    For graph-level tasks the splits contain graph indices; for node-level
+    tasks ('node_classification', 'node_regression') they contain node indices
+    of the single graph in the dataset. If the dataset ships with
+    train/val/test masks (e.g. Planetoid citation networks), those are used
+    as a single fold instead of random k-folds so results stay comparable to
+    the literature.
+
+    Parameters
+    ----------
+    db_name : str
+        Dataset name; the file is written as <splits_path>/<db_name>_splits.json
+        (or to splits_path directly if it already ends with .json).
+    splits_path : Path
+        Target directory (or file path) for the split file.
+    folds : int
+        Number of cross-validation folds for the random k-fold strategy.
+    graph_data : GraphDataset
+        Loaded dataset; provides the number of graphs/nodes and, for node
+        tasks, the optional split masks.
+    task : str, optional
+        Task type; decides whether graph or node indices are split.
+    seed : int
+        Seed for the random k-fold shuffling.
+
+    Returns
+    -------
+    Path
+        Path of the written split file.
+    """
+    import numpy as np
+
+    if splits_path.suffix == '.json':
+        out_file = splits_path
+    else:
+        out_file = splits_path.joinpath(f'{db_name}_splits.json')
+    if out_file.is_file():
+        return out_file
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    node_task = task in ('node_classification', 'node_regression')
+    splits = []
+    data = graph_data.data if graph_data is not None else None
+    if node_task and data is not None and 'train_mask' in data and data['train_mask'] is not None:
+        # dataset ships with a standard split (e.g. Planetoid): use it as one fold
+        train = torch.where(data['train_mask'])[0].tolist()
+        validation = torch.where(data['val_mask'])[0].tolist()
+        test = torch.where(data['test_mask'])[0].tolist()
+        splits.append({'test': test, 'model_selection': [{'train': train, 'validation': validation}]})
+    else:
+        if node_task:
+            num_elements = int(data['x'].shape[0])
+        else:
+            num_elements = len(graph_data)
+        indices = np.arange(num_elements)
+        rng = np.random.default_rng(seed)
+        rng.shuffle(indices)
+        parts = np.array_split(indices, folds)
+        for i in range(folds):
+            test = parts[i]
+            validation = parts[(i + 1) % folds]
+            train = np.concatenate([parts[j] for j in range(folds) if j != i and j != (i + 1) % folds])
+            splits.append({'test': sorted(int(x) for x in test),
+                           'model_selection': [{'train': sorted(int(x) for x in train),
+                                                'validation': sorted(int(x) for x in validation)}]})
+    with open(out_file, 'w') as f:
+        json.dump(splits, f)
+    print(f'Created split file {out_file}')
+    return out_file
 
 
 def load_splits(splits_path: Path) -> dict:

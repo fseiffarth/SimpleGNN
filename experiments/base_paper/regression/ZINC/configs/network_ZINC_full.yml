@@ -10,7 +10,7 @@ models:
     bias: false
     activation: torch.nn.Identity()
     heads:
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -55,7 +55,7 @@ models:
         - 21
         - 22
         - 23
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -100,7 +100,7 @@ models:
         - 21
         - 22
         - 23
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -145,7 +145,7 @@ models:
         - 21
         - 22
         - 23
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -190,7 +190,7 @@ models:
         - 21
         - 22
         - 23
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -226,7 +226,7 @@ models:
         - 21
         - 22
         - 23
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -246,7 +246,7 @@ models:
         - 2
         - 3
         - 4
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -264,281 +264,7 @@ models:
         - 0
         - 1
         - 2
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type: wl_labeled_edges
-          depth: 0
-        tail:
-          label_type: wl_labeled_edges
-          depth: 0
-        bias:
-          label_type: wl_labeled_edges
-          depth: 0
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 6
-          max_cycle_length: 6
-        tail:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 6
-          max_cycle_length: 6
-        bias:
-          label_type: wl_labeled
-          depth: 2
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-        - 5
-        - 6
-        - 7
-        - 8
-        - 9
-        - 10
-        - 11
-        - 12
-        - 13
-        - 14
-        - 15
-        - 16
-        - 17
-        - 18
-        - 19
-        - 20
-        - 21
-        - 22
-        - 23
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 7
-          max_cycle_length: 7
-        tail:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 7
-          max_cycle_length: 7
-        bias:
-          label_type: wl_labeled
-          depth: 2
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-        - 5
-        - 6
-        - 7
-        - 8
-        - 9
-        - 10
-        - 11
-        - 12
-        - 13
-        - 14
-        - 15
-        - 16
-        - 17
-        - 18
-        - 19
-        - 20
-        - 21
-        - 22
-        - 23
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 8
-          max_cycle_length: 8
-        tail:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 8
-          max_cycle_length: 8
-        bias:
-          label_type: wl_labeled
-          depth: 2
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-        - 5
-        - 6
-        - 7
-        - 8
-        - 9
-        - 10
-        - 11
-        - 12
-        - 13
-        - 14
-        - 15
-        - 16
-        - 17
-        - 18
-        - 19
-        - 20
-        - 21
-        - 22
-        - 23
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 9
-          max_cycle_length: 9
-        tail:
-          label_type:
-          - induced_cycles
-          - primary
-          min_cycle_length: 9
-          max_cycle_length: 9
-        bias:
-          label_type: wl_labeled
-          depth: 2
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-        - 5
-        - 6
-        - 7
-        - 8
-        - 9
-        - 10
-        - 11
-        - 12
-        - 13
-        - 14
-        - 15
-        - 16
-        - 17
-        - 18
-        - 19
-        - 20
-        - 21
-        - 22
-        - 23
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type: primary
-        tail:
-          label_type: primary
-        bias:
-          label_type: primary
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-        - 5
-        - 6
-        - 7
-        - 8
-        - 9
-        - 10
-        - 11
-        - 12
-        - 13
-        - 14
-        - 15
-        - 16
-        - 17
-        - 18
-        - 19
-        - 20
-        - 21
-        - 22
-        - 23
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type: wl_labeled
-          depth: 0
-        tail:
-          label_type: wl_labeled
-          depth: 0
-        bias:
-          label_type: wl_labeled
-          depth: 0
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-    - num: 1
-      bias: false
-      labels:
-        head:
-          label_type: wl_labeled_edges
-          depth: 1
-        tail:
-          label_type: wl_labeled_edges
-          depth: 1
-        bias:
-          label_type: wl_labeled_edges
-          depth: 1
-      properties:
-        name: distances
-        values:
-        - 0
-        - 1
-        - 2
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:

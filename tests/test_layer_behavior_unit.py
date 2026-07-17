@@ -136,21 +136,52 @@ class TestLayerNormalization:
             out.var(dim=-1, unbiased=False), torch.ones(10), atol=1e-4
         )
 
-    def test_3d_normalizes_over_nodes_and_features_jointly(self):
-        """Documents current behavior: for (C, N, F) input the layer
-        normalizes over the last TWO dims, i.e. per channel across all nodes
-        jointly -- NOT per node. Individual node rows are not unit-variance."""
+    def test_3d_normalizes_each_node_row(self):
+        """For (C, N, F) input the layer normalizes over the feature dim only
+        (per node row), consistent with the 2D case -- it used to normalize
+        over the last TWO dims jointly in the per-graph forward, making the
+        batched and per-graph forwards compute different functions."""
         layer = LayerNormalization(make_args(in_features=8, out_features=8))
         x = torch.randn(3, 10, 8) * 4.0 + 2.0
         out = layer(x)
-        # Per-channel statistics over (N, F) are normalized...
-        assert torch.allclose(out.mean(dim=(-2, -1)), torch.zeros(3), atol=1e-5)
+        assert torch.allclose(out.mean(dim=-1), torch.zeros(3, 10), atol=1e-5)
         assert torch.allclose(
-            out.var(dim=(-2, -1), unbiased=False), torch.ones(3), atol=1e-4
+            out.var(dim=-1, unbiased=False), torch.ones(3, 10), atol=1e-4
         )
-        # ...but per-node rows are generally not.
-        per_node_var = out.var(dim=-1, unbiased=False)
-        assert not torch.allclose(per_node_var, torch.ones_like(per_node_var), atol=1e-2)
+
+    def test_has_learnable_affine_parameters(self):
+        layer = LayerNormalization(make_args(in_features=8, out_features=8))
+        params = dict(layer.named_parameters())
+        assert params["layer_norm.weight"].shape == (8,)
+        assert params["layer_norm.bias"].shape == (8,)
+        assert torch.equal(params["layer_norm.weight"], torch.ones(8))
+        assert torch.equal(params["layer_norm.bias"], torch.zeros(8))
+        # Gradients flow to both parameters.
+        out = layer(torch.randn(10, 8))
+        out.sum().backward()
+        assert params["layer_norm.weight"].grad is not None
+        assert params["layer_norm.bias"].grad is not None
+
+    def test_affine_parameters_scale_and_shift_output(self):
+        layer = LayerNormalization(make_args(in_features=4, out_features=4))
+        with torch.no_grad():
+            layer.layer_norm.weight.fill_(2.0)
+            layer.layer_norm.bias.fill_(3.0)
+        x = torch.randn(6, 4)
+        plain = torch.nn.functional.layer_norm(x, normalized_shape=[4])
+        assert torch.allclose(layer(x), plain * 2.0 + 3.0, atol=1e-6)
+
+    def test_elementwise_affine_false_has_no_parameters(self):
+        layer = LayerNormalization(
+            make_args(in_features=8, out_features=8, elementwise_affine=False)
+        )
+        assert list(layer.parameters()) == []
+
+    def test_bias_false_has_weight_only(self):
+        layer = LayerNormalization(make_args(in_features=8, out_features=8, bias=False))
+        params = dict(layer.named_parameters())
+        assert "layer_norm.weight" in params
+        assert "layer_norm.bias" not in params or params["layer_norm.bias"] is None
 
 
 class TestLinearLayer:

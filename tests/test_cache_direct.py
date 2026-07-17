@@ -56,6 +56,8 @@ def test_invariant_layer_weight_distribution_is_cached_and_stable(share_gnn_setu
 
     for first_layer, second_layer in zip(first_layers, second_layers):
         assert sum(first_layer.weight_num) == sum(second_layer.weight_num)
-        assert torch.equal(
-            first_layer.weight_distribution, second_layer.weight_distribution
-        )
+        for head_id in range(len(first_layer.layer.layer_heads)):
+            assert torch.equal(
+                getattr(first_layer, f"_pv_{head_id}"),
+                getattr(second_layer, f"_pv_{head_id}"),
+            )

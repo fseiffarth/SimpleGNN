@@ -1,0 +1,42 @@
+# Hyperparameters for ShareGNN node classification on Cora
+
+device: cpu
+mode: experiments
+precision: float
+
+optimizer:
+  - Adam
+
+loss:
+  - CrossEntropyLoss
+
+# one batch = the full training node set (140 nodes in the standard Cora split)
+batch_size:
+  - 140
+learning_rate:
+  - 0.01
+weight_decay:
+  - 0.0005
+epochs:
+  - 200
+
+early_stopping:
+  enabled:
+    True
+  patience:
+    50
+
+# row-normalized bag-of-words node attributes are the model input;
+# one_hot_train_labels additionally prepends the one-hot class of the
+# *training* nodes (uniform 1/num_classes rows for all other nodes), so the
+# message passing can propagate the known labels through the graph without
+# leaking validation/test targets
+input_features: { name: node_features, transformation: normalize_rows, one_hot_train_labels: True }
+
+# start the convolution as a uniform neighborhood aggregator; training learns
+# per-(degree, degree, distance) deviations from it
+weight_initialization:
+  convolution: { type: constant, value: 0.3 }
+  convolution_bias: { type: constant, value: 0.0 }
+
+save_best_model: True

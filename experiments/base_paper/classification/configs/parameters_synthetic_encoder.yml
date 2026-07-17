@@ -1,5 +1,6 @@
 # Synthetic-classification hyperparameters (migrated from old monolithic main config).
 device: cpu
+share_gnn_forward: { batched: True }
 mode: experiments
 precision: double
 

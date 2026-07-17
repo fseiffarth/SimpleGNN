@@ -3,6 +3,7 @@
 # one. Added the project default (constant 1.0), matching the other TU classification
 # configs.
 device: cpu
+share_gnn_forward: { batched: True }
 mode: experiments
 precision: double
 

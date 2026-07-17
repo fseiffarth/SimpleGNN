@@ -75,7 +75,9 @@ def generate_layer_options(layer_dict):
                     value_combinations = new_combinations
             for i, values in enumerate(value_combinations):
                 if properties_dict is None or len(properties_dict) == 0:
-                    curr_layer_dict = base_dict
+                    # copy: reusing base_dict would alias all options onto one
+                    # dict, collapsing the grid to N copies of the last combo
+                    curr_layer_dict = base_dict.copy()
                     channels_list = []
                     label_dict = {'label_type': label_type['label_type']}
                     for j, value in enumerate(values):
@@ -85,7 +87,7 @@ def generate_layer_options(layer_dict):
                     options.append(curr_layer_dict)
                 else:
                     for prop_val in properties_dict:
-                        curr_layer_dict = base_dict
+                        curr_layer_dict = base_dict.copy()
                         channels_list = []
                         label_dict = {'label_type': label_type['label_type']}
                         for j, value in enumerate(values):

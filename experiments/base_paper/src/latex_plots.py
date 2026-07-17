@@ -286,8 +286,8 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
             for i in range(0, num_convolution_layers):
                 # get convolution layer
                 convolution_layer = net.net_layers[i]
-                for filter_weights in filtering:
-                    convolution_layer.draw(ax=axs[2+i], graph_id=graph_ids[0], graph_drawing=graph_drawing, filter_weights=filter_weights, pos_path=pos_path)
+                for j, filter_weights in enumerate(filtering):
+                    convolution_layer.draw(ax=axs[1+column_for_invariants + i*len(filtering) + j], graph_id=graph_ids[0], graph_drawing=graph_drawing, filter_weights=filter_weights, pos_path=pos_path)
 
             # add subplots column and row titles
             if molecule:
@@ -351,7 +351,6 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
 
 
             for idx, graph_id in enumerate(graph_ids):
-                axs.axis('off')
                 axs[idx][0].set_ylabel(f'Graph Label: ${net.graph_data.y[graph_id].item()}$')
 
 
@@ -416,7 +415,7 @@ def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_
 
 
 
-        plt.savefig(output_path.joinpath(f'{db_name}_{"_".join(map(str, graph_ids))}.pdf', bbox_inches='tight', backend='pgf'))
+        plt.savefig(output_path.joinpath(f'{db_name}_{"_".join(map(str, graph_ids))}.pdf'), bbox_inches='tight', backend='pgf')
 
         # remove matplotlib frame
         # remove frame from each side of plot
@@ -441,10 +440,13 @@ def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, chann
             ])
         })
 
-        weight_distribution = layer.weight_distribution
+        # param-index column of every graph's assembled rows (the layer no
+        # longer stores a dataset-wide weight_distribution tensor)
+        import torch as _torch
+        weights = _torch.cat([layer.get_graph_weights(g)[:, 3]
+                              for g in range(len(layer.graph_data))]).numpy()
         num_weights = layer.Param_W.shape[0]
         weight_array = np.zeros(num_weights)
-        weights = weight_distribution[:, 3]
         # get unique counts of entries in weights
         weight_array = np.bincount(weights)
         # sort the weight_array (largest occurence first) and save the sorted indices

@@ -1,0 +1,57 @@
+# ZINC-style tail: multi-group aggregation -> reshape -> MLP.
+# Regression fixture for the shape bookkeeping bug where the aggregation
+# layer reported out_channels = number of head groups although its heads are
+# already folded into out_features, inflating the reshape layer's
+# out_features and crashing the first MLP linear after it.
+models:
+  - - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 1,
+            bias: True,
+            labels: {
+              head: { label_type: primary },
+              tail: { label_type: primary },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [1, 2] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 8,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        activation: torch.nn.Identity(),
+        bias: True,
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: { label_type: primary },
+          },
+          {
+            num: 3,
+            bias: True,
+            labels: { label_type: primary },
+          },
+        ],
+    }
+    - { layer_type: reshape }
+    - { layer_type: linear,
+        out_features: 4,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }

@@ -20,7 +20,7 @@ if [ $NUM_THREADS -gt 1 ] || [ $NUM_THREADS -eq -1 ]; then
 fi
 
 # Activate virtual environment
-ENV_DIR="$ROOT_DIR/venv/bin/activate"
+ENV_DIR="$ROOT_DIR/venv-rocm/bin/activate"
 echo "Environment directory: $ENV_DIR"
 if [ ! -d "$ROOT_DIR/venv" ] || [ ! -f "$ENV_DIR" ]; then
     echo "Error: Virtual environment not found at $ROOT_DIR/venv. Please run ./install.sh first."

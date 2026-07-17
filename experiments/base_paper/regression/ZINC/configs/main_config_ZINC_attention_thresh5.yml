@@ -1,0 +1,18 @@
+# ZINC graph-regression experiment -- attention readout, thresh5 ablation
+# (specs/09-zinc-readout-and-architecture-improvements.md).
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_attention_thresh5/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_attention.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_v2_thresh5.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

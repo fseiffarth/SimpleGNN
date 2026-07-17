@@ -1,0 +1,18 @@
+# ZINC graph-regression experiment -- small variant
+# (specs/09-zinc-readout-and-architecture-improvements.md).
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_small/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_small.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_v2.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

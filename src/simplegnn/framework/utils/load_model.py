@@ -49,8 +49,8 @@ def load_model_old(
     This preserves the old path resolution strategy, including first-match
     globbing for best models.
     """
-    graph_data = _preprocess_graph_data(experiment_configuration)
-    run_configs = get_run_configs(experiment_configuration)
+    # Resolve and validate model paths before the expensive dataset
+    # preprocessing so bad paths fail fast.
     path_to_models = experiment_configuration["paths"]["results"].joinpath(db_name).joinpath("Models")
 
     if best:
@@ -68,9 +68,12 @@ def load_model_old(
             f"model_Configuration_{str(config_id).zfill(6)}_run_{run_id}_val_step_{validation_id}.pt"
         )
 
-    run_config = run_configs[config_id]
     if not model_path.exists():
         raise FileNotFoundError(f"Model {model_path} not found")
+
+    graph_data = _preprocess_graph_data(experiment_configuration)
+    run_configs = get_run_configs(experiment_configuration)
+    run_config = run_configs[config_id]
 
     para = Parameters()
     load_preprocessed_data_and_parameters(
@@ -100,8 +103,8 @@ def load_model(
     device: str | torch.device = "cpu",
 ) -> torch.nn.Module:
     """Load a trained model with deterministic model-path resolution."""
-    graph_data = _preprocess_graph_data(experiment_configuration)
-    run_configs = get_run_configs(experiment_configuration)
+    # Resolve and validate model paths before the expensive dataset
+    # preprocessing so bad paths fail fast.
     path_to_models = experiment_configuration["paths"]["results"].joinpath(db_name).joinpath("Models")
 
     if not path_to_models.exists():
@@ -139,6 +142,8 @@ def load_model(
         if not model_path.exists():
             raise FileNotFoundError(f"Model {model_path} not found")
 
+    graph_data = _preprocess_graph_data(experiment_configuration)
+    run_configs = get_run_configs(experiment_configuration)
     run_config = run_configs[config_id]
     para = Parameters()
     load_preprocessed_data_and_parameters(
