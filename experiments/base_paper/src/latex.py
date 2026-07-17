@@ -587,10 +587,15 @@ def training_and_preprocessing_time(share_gnn_type=''):
 
                 # get preprocessing time for distances
                 with open(Path(path).joinpath('generation_times_properties.txt'), 'r') as f:
-                    for i, line in enumerate(f):
-                        if i != 0:
-                            dataset, _ , time = line.split(',')
-                            results[dataset.strip()]['preprocessing_time'] = float(time.strip())
+                    for line in f:
+                        line = line.strip()
+                        if not line.startswith('|'):
+                            continue
+                        cells = [c.strip() for c in line.strip('|').split('|')]
+                        if len(cells) != 3 or cells[0] == 'Dataset' or set(cells[2]) <= set('-'):
+                            continue
+                        dataset, _ , time = cells
+                        results[dataset]['preprocessing_time'] = float(time)
 
 
 
@@ -598,9 +603,15 @@ def training_and_preprocessing_time(share_gnn_type=''):
                 if share_gnn_type == '':
                     preprocessing_times = dict()
                     with open(Path(path).joinpath('generation_times_labels.txt'), 'r') as f:
-                        for i, line in enumerate(f):
-                            if i != 0:
-                                dataset, label , time = line.split(',')
+                        for line in f:
+                            line = line.strip()
+                            if not line.startswith('|'):
+                                continue
+                            cells = [c.strip() for c in line.strip('|').split('|')]
+                            if len(cells) != 3 or cells[0] == 'Dataset' or set(cells[2]) <= set('-'):
+                                continue
+                            if True:
+                                dataset, label , time = cells
                                 # remove _None from label
                                 label = label.replace('_None', '')
                                 # if the word simple or induced appears twice, remove all after the second appearance

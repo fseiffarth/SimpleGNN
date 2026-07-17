@@ -13,10 +13,13 @@ CONFIGS = Path('experiments/base_paper/regression/ZINC/configs')
 # 3 = v2 architecture with rule_occurrence_threshold=1 (no count-based pruning;
 # proximal L1 does loss-driven rule selection) + cosine-annealing lr that anneals
 # the L1 threshold, writing to results/base_paper/regression/ZINC_test_v3/.
+# 4 = v2 architecture with cycle-based node labels replaced by closed-walk labels
+# ((A^k)_ii diagonals, k=5-10), writing to results/base_paper/regression/ZINC_test_v4/.
 MAIN_CONFIGS = {
     1: CONFIGS / 'main_config_ZINC_test.yml',
     2: CONFIGS / 'main_config_ZINC_test_v2.yml',
     3: CONFIGS / 'main_config_ZINC_test_v3.yml',
+    4: CONFIGS / 'main_config_ZINC_test_v4.yml',
 }
 
 
@@ -31,9 +34,10 @@ def main_ZINC(num_threads=-1, version=1):
 
 @click.command()
 @click.option('--num_threads', default=-1, help='Number of threads to use')
-@click.option('--version', default=1, type=click.Choice([1, 2, 3]),
+@click.option('--version', default=1, type=click.Choice([1, 2, 3, 4]),
               help='Network version: 1 = test network, 2 = PE encoder + pre-norm residual (specs/15), '
-                   '3 = v2 + rule_occurrence_threshold=1 + cosine-annealed L1')
+                   '3 = v2 + rule_occurrence_threshold=1 + cosine-annealed L1, '
+                   '4 = v2 + closed-walk node labels')
 def main(num_threads, version):
     main_ZINC(num_threads=num_threads, version=version)
 

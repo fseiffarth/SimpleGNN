@@ -10,7 +10,7 @@ datasets:
         labels: "data/ZINC/labels/",
         properties: "data/ZINC/properties/",
         results: "results/base_paper/regression/ZINC_test/",
-        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v2.yml",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test.yml",
         hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test.yml",
         splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
       }

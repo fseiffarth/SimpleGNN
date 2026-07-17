@@ -81,7 +81,7 @@ def write_distance_properties(graph_data:GraphDataset, cutoff=None, out_path: Pa
             yaml.dump(valid_properties_dict, f)
         if save_times is not None:
             with open(save_times, 'a') as f:
-                f.write(f"{graph_data.name}, distance, {time.time() - start_time}\n")
+                f.write(f"| {graph_data.name} | distance | {time.time() - start_time:.4f} |\n")
     else:
         print(f"File {out} already exists. Skipping.")
 
@@ -152,7 +152,7 @@ def write_distance_circle_properties(graph_data:GraphDataset, label_path, db_nam
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{db_name}, circle_distance, {time.time() - start_time}\n")
+                    f.write(f"| {db_name} | circle_distance | {time.time() - start_time:.4f} |\n")
             except:
                 print("Could not write to file")
                 pass
@@ -262,6 +262,6 @@ def write_distance_edge_properties(graph_data:GraphDataset, out_path:Path = Path
             yaml.dump(valid_properties_dict, f)
         if save_times is not None:
             with open(save_times, 'a') as f:
-                f.write(f"{graph_data.name}, edge_label_distance, {time.time() - start_time}\n")
+                f.write(f"| {graph_data.name} | edge_label_distance | {time.time() - start_time:.4f} |\n")
     else:
         print(f"File {out} already exists. Skipping.")

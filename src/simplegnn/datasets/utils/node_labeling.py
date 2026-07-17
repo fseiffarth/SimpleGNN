@@ -547,7 +547,7 @@ class NodeLabelingBase(abc.ABC):
             if self.save_times is not None:
                 try:
                     with open(self.save_times, 'a') as f:
-                        f.write(f"{self.graph_data.name}, {self.string_label_name}, {time.time() - start_time}\n")
+                        f.write(f"| {self.graph_data.name} | {self.string_label_name} | {time.time() - start_time:.4f} |\n")
                 except:
                     raise ValueError("No save time path given")
         else:
@@ -1084,7 +1084,7 @@ def save_primary_labels(graph_data:GraphDataset, label_path=None, max_labels=Non
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1118,7 +1118,7 @@ def save_degree_labels(graph_data:GraphDataset, label_path=None, max_labels=None
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1164,7 +1164,7 @@ def save_labeled_degree_labels(graph_data:GraphDataset, label_path=None, max_lab
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1188,7 +1188,7 @@ def save_trivial_labels(graph_data:GraphDataset, label_path=None, save_times=Non
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1222,7 +1222,7 @@ def save_index_labels(graph_data:GraphDataset, max_labels=None, label_path=None,
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1250,7 +1250,7 @@ def save_wl_labels(graph_data:GraphDataset, depth, max_labels=None, label_path=N
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}_{max_labels}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l}_{max_labels} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1279,7 +1279,7 @@ def save_wl_labeled_labels(graph_data:GraphDataset, depth, max_labels=None, labe
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}_{max_labels}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l}_{max_labels} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1309,7 +1309,7 @@ def save_wl_labeled_edges_labels(graph_data:GraphDataset, depth, max_labels=None
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}_{max_labels}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l}_{max_labels} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1360,7 +1360,7 @@ def save_cycle_labels(graph_data:GraphDataset, min_cycle_length=None, max_cycle_
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {cycle_type}_cycles_{max_cycle_length}{l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {cycle_type}_cycles_{max_cycle_length}{l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1397,7 +1397,7 @@ def save_in_circle_labels(graph_data:GraphDataset, length_bound=6, max_labels=No
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1456,7 +1456,7 @@ def save_subgraph_labels(graph_data:GraphDataset, subgraphs=List[nx.Graph], name
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1500,7 +1500,7 @@ def save_clique_labels(graph_data:GraphDataset, max_clique=6, max_labels=None, l
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1556,7 +1556,7 @@ def save_betweenness_centrality_labels(graph_data: GraphDataset, label_path: Opt
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
@@ -1620,7 +1620,7 @@ def save_closed_walk_labels(graph_data: GraphDataset, min_walk_length: Optional[
         if save_times is not None:
             try:
                 with open(save_times, 'a') as f:
-                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
             except:
                 raise ValueError("No save time path given")
     else:
