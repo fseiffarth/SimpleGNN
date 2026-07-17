@@ -1,6 +1,7 @@
-# Hyperparameters for ZINC test v2 (network_ZINC_test_v2.yml): identical to
-# parameters_ZINC_test.yml plus the positional_encoding init for the
-# invariant-based encoder layer (specs/15).
+# Hyperparameters for ZINC test v3 (network_ZINC_test_v3.yml): identical to
+# parameters_ZINC_test_v2.yml EXCEPT rule_occurrence_threshold: 1 (no count-based
+# rule pruning). Strategy: keep every rule and let the proximal L1 do loss-driven
+# selection instead of frequency-based pruning (specs/15).
 device: cpu
 share_gnn_forward: { batched: True }
 mode: experiments
@@ -18,8 +19,11 @@ loss:
 
 # rule_occurrence_threshold: how often a rule must occur to be used in the network.
 # NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
-# scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
-# against overfitting: it deletes rare-rule parameters instead of shrinking them.
+# scalar and edit per run. v3 sets it to 1: NO count-based pruning -> every rule
+# (incl. singletons seen in one graph) gets a weight, and the proximal L1 below
+# does the pruning on loss/gradient signal instead of frequency. This keeps a
+# rare-but-discriminative rule if it earns its weight; count-based pruning (>=2)
+# would drop it blind.
 rule_occurrence_threshold: 1
 
 # l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
@@ -57,7 +61,12 @@ early_stopping:
 
 csv_flush_interval: 1
 
-scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.0001 }
+# v3 scheduler: single cosine decay from lr=1e-3 to eta_min over all 500 epochs.
+# Because the proximal-L1 threshold is lr*lambda, cosine-annealing lr also anneals
+# the pruning strength: high early (aggressive, loss-driven rule selection while
+# the network is plastic) -> gentle late (fine-tune the surviving rules without
+# eroding them). T_max defaults to `epochs` if omitted.
+scheduler: { type: 'CosineAnnealingLR', T_max: 500, eta_min: 0.00001 }
 
 training_data_sampling: { type: 'default' }
 

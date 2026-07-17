@@ -1,0 +1,23 @@
+# ZINC graph-regression test v3: identical architecture to test_v2 (invariant-based
+# positional encoding node encoder + pre-norm residual conv, specs/15), but with
+# rule_occurrence_threshold: 1 -> NO count-based rule pruning. All rules are kept
+# and the proximal L1 (convolution/aggregation = 0.01) does the selection instead:
+# loss-driven, data-driven pruning that keeps a rare-but-discriminative rule if it
+# earns its weight, and zeros the rest. A cosine-annealing lr schedule anneals the
+# L1 threshold (lr*lambda): aggressive pruning early, gentle fine-tuning late.
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_test_v3/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v3.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v3.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

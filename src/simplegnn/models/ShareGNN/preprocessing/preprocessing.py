@@ -6,7 +6,7 @@ from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.node_labeling import get_label_string, save_labels_to_file, save_primary_labels, \
     save_trivial_labels, save_index_labels, save_degree_labels, save_wl_labels, save_labeled_degree_labels, \
     save_wl_labeled_labels, save_wl_labeled_edges_labels, save_cycle_labels, save_subgraph_labels, save_clique_labels, \
-    save_betweenness_centrality_labels, load_labels, combine_node_labels
+    save_betweenness_centrality_labels, save_closed_walk_labels, load_labels, combine_node_labels
 from simplegnn.framework.run_configuration import get_run_configs
 from simplegnn.models.ShareGNN.preprocessing.properties import write_distance_properties, write_distance_edge_properties
 
@@ -171,6 +171,13 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
                                            max_labels=layer.get('max_labels', None),
                                            label_path=label_path,
                                            save_times=generation_times_labels_path)
+        elif layer['label_type'] == 'closed_walks':
+            file_path = save_closed_walk_labels(graph_data=graph_data,
+                                                min_walk_length=layer.get('min_walk_length', None),
+                                                max_walk_length=layer.get('max_walk_length', 6),
+                                                max_labels=layer.get('max_labels', None),
+                                                label_path=label_path,
+                                                save_times=generation_times_labels_path)
         elif layer['label_type'] == 'betweenness_centrality':
             if 'max_labels' not in layer:
                 layer['max_labels'] = None

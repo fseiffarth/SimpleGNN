@@ -56,7 +56,7 @@ import sklearn
 import torch
 from torch import optim, nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR
 
 from simplegnn.datasets.graph_dataset import GraphDataset, GraphData, CustomBatchLoader
 from simplegnn.framework.utils.data_sampling import curriculum_sampling
@@ -715,7 +715,7 @@ class ModelConfiguration:
         Scheduler type and parameters are read from
         para.run_config.config['scheduler'] if present.
 
-        Supported schedulers: StepLR, ReduceLROnPlateau, etc.
+        Supported schedulers: StepLR, ReduceLROnPlateau, CosineAnnealingLR.
 
         ReduceLROnPlateau requires validation loss as input during
         scheduler.step() calls.
@@ -736,6 +736,15 @@ class ModelConfiguration:
                 self.scheduler = StepLR(self.optimizer, step_size=scheduler.get('step_size', None), gamma=scheduler.get('gamma', None))
             elif scheduler_type == 'ReduceLROnPlateau':
                 self.scheduler = ReduceLROnPlateau(self.optimizer, mode='min', patience=scheduler.get('patience', 10), min_lr=scheduler.get('min_lr', 0), factor=scheduler.get('factor', 0.1))
+            elif scheduler_type == 'CosineAnnealingLR':
+                # Single cosine decay from the initial lr to eta_min over T_max
+                # epochs (steps once per epoch via the else-branch in run_model).
+                # T_max defaults to the run's epoch count -> one full half-cosine
+                # so lr (and hence the L1 threshold lr*lambda) is high early and
+                # anneals to eta_min late: aggressive rule pruning first, gentle
+                # fine-tuning of the survivors after.
+                t_max = scheduler.get('T_max', self.para.run_config.config['epochs'])
+                self.scheduler = CosineAnnealingLR(self.optimizer, T_max=t_max, eta_min=scheduler.get('eta_min', 0))
 
 
     def early_stopping(self, epoch):

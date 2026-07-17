@@ -7,7 +7,13 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from simplegnn.datasets.utils.NodeLabels import NodeLabels
-from simplegnn.datasets.utils.node_labeling import combine_node_labels, get_label_string, relabel_node_labels
+from simplegnn.datasets.utils.node_labeling import (
+    ClosedWalkNodeLabeling,
+    combine_node_labels,
+    get_label_string,
+    relabel_node_labels,
+    save_closed_walk_labels,
+)
 from simplegnn.datasets.utils.node_labeling_functions import (
     degree_node_labeling,
     standard_node_labeling,
@@ -67,6 +73,65 @@ def test_combine_node_labels_returns_per_node_labels():
 def test_get_label_string_for_wl_and_primary():
     assert get_label_string({"label_type": "primary"}) == "primary"
     assert get_label_string({"label_type": "wl", "depth": 3}) == "wl_3"
+
+
+class _StubGraphData:
+    def __init__(self, graphs):
+        self.name = "stub"
+        self.nx_graphs = graphs
+
+
+def test_get_label_string_for_closed_walks():
+    assert get_label_string({"label_type": "closed_walks", "max_walk_length": 4}) == "closed_walks_4"
+    assert get_label_string({"label_type": "closed_walks"}) == "closed_walks_6"
+    assert (
+        get_label_string({"label_type": "closed_walks", "min_walk_length": 3, "max_walk_length": 3, "max_labels": 10})
+        == "closed_walks_3_3_10"
+    )
+
+
+def test_closed_walk_labeling_distinguishes_cycle_structure():
+    # triangle: every node has profile ((A^2)_ii, (A^3)_ii) = (2, 2)
+    # path 0-1-2: ends have (1, 0), middle has (2, 0)
+    triangle = nx.cycle_graph(3)
+    path = nx.path_graph(3)
+    labeling = ClosedWalkNodeLabeling(_StubGraphData([triangle, path]), max_walk_length=3)
+
+    labels = labeling.generate()
+
+    tri_labels, path_labels = labels
+    assert tri_labels[0] == tri_labels[1] == tri_labels[2]
+    assert path_labels[0] == path_labels[2]
+    assert path_labels[1] != path_labels[0]
+    # triangle nodes and path middle both have degree 2, but only the walk
+    # profile separates them (degree labeling would merge them)
+    assert tri_labels[0] != path_labels[1]
+
+
+def test_closed_walk_single_length_equals_diagonal_of_matrix_power():
+    # min == max == 3 labels nodes by (A^3)_ii alone: 2 for triangle nodes, 0 for path nodes
+    triangle = nx.cycle_graph(3)
+    path = nx.path_graph(3)
+    labeling = ClosedWalkNodeLabeling(_StubGraphData([triangle, path]), min_walk_length=3, max_walk_length=3)
+
+    tri_labels, path_labels = labeling.generate()
+
+    assert len(set(tri_labels)) == 1
+    assert len(set(path_labels)) == 1
+    assert tri_labels[0] != path_labels[0]
+
+
+def test_save_closed_walk_labels_writes_expected_file(tmp_path):
+    graph_data = _StubGraphData([nx.cycle_graph(4)])
+
+    file = save_closed_walk_labels(graph_data, max_walk_length=4, label_path=tmp_path)
+
+    assert file.name == "stub_labels_closed_walks_4.pt"
+    assert file.exists()
+    dataset_name, label_name, node_labels = torch.load(file, weights_only=False)
+    assert dataset_name == "stub"
+    assert label_name == "closed_walks_4"
+    assert node_labels.shape == (4, 2)
 
 
 def test_relabel_node_labels_handles_cap_and_invalids():

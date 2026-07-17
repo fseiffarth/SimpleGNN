@@ -203,6 +203,7 @@ def get_label_string(label_dict: dict) -> str:
     - 'induced_cycles': Induced cycle membership
     - 'cliques': Clique membership (requires 'max_clique_size')
     - 'subgraph': Subgraph pattern matching (requires 'id')
+    - 'closed_walks': Closed walk counts (A^k)_ii (requires 'max_walk_length')
 
     **Recursive Composition:**
     If label_type is a list, the function recursively generates strings for each
@@ -353,6 +354,16 @@ def get_label_string(label_dict: dict) -> str:
             l_string = f"{l_string}_bins_{num_bins}"
         if max_labels is not None:
             l_string = f"{l_string}_max_labels_{max_labels}"
+    elif label_type == "closed_walks":
+        l_string = "closed_walks"
+        if 'min_walk_length' in label_dict:
+            min_walk_length = label_dict['min_walk_length']
+            l_string = f"{l_string}_{min_walk_length}"
+        max_walk_length = label_dict.get('max_walk_length', 6)
+        l_string = f"{l_string}_{max_walk_length}"
+        max_labels = label_dict.get('max_labels', None)
+        if max_labels is not None:
+            l_string = f"{l_string}_{max_labels}"
     else:
         raise ValueError(f"Layer type {label_type} is not supported")
 
@@ -857,6 +868,103 @@ class BetweennessCentralityNodeLabeling(NodeLabelingBase):
             node_labels.append(labels.tolist())
 
         return node_labels
+
+
+class ClosedWalkNodeLabeling(NodeLabelingBase):
+    """
+    Node labeling based on closed walk counts (A^k)_ii.
+
+    The number of closed walks of length k starting and ending at node i is the
+    i-th diagonal entry of the k-th power of the adjacency matrix A. Two nodes
+    receive the same label iff their closed walk count profiles
+    ((A^l)_ii for l = min_walk_length, ..., max_walk_length) coincide.
+
+    Parameters
+    ----------
+    graph_data : GraphDataset
+        The dataset to label.
+    min_walk_length : int, optional
+        Smallest walk length included in the profile (default: 2). Length 1 is
+        always 0 for simple graphs, length 2 equals the node degree.
+    max_walk_length : int
+        Largest walk length k included in the profile (default: 6). Setting
+        min_walk_length == max_walk_length == k labels nodes by (A^k)_ii alone.
+    max_labels : int, optional
+        Maximum number of distinct labels to retain.
+    save_times : Path, optional
+        Path to file for logging generation times.
+
+    Notes
+    -----
+    - The walk counts are spectral invariants: (A^k)_ii = sum_j (v_j)_i^2 lambda_j^k,
+      so the profile over all k determines the eigenvalue support of node i.
+    - Closed walks of length 3 count triangles (times 2), length 4 relates to
+      degrees and 4-cycles, etc. — the profile captures local cycle structure
+      that 1-WL/degree labeling cannot distinguish.
+    - Raw counts are compressed to consecutive integer ids over the whole
+      dataset (sorted lexicographically by profile), as done for cycle labels.
+    - Computational complexity: O(max_walk_length * n^3) per graph (dense
+      matrix powers); fine for molecular-scale graphs.
+
+    See Also
+    --------
+    NodeLabelingBase : Base class with full documentation
+    DegreeNodeLabeling : Equivalent to the length-2 count alone
+    """
+    def __init__(self, graph_data: GraphDataset, min_walk_length: Optional[int] = None, max_walk_length: int = 6,
+                 max_labels: Optional[int] = None, label_path: Optional[Path] = None,
+                 save_times: Optional[Path] = None):
+        optional_params = []
+        if min_walk_length is not None:
+            optional_params.append(('min', min_walk_length))
+        optional_params.append(('max', max_walk_length))
+        super().__init__(
+            base_name='closed_walks',
+            graph_data=graph_data,
+            label_path=label_path,
+            max_labels=max_labels,
+            optional_parameters=optional_params,
+            save_times=save_times
+        )
+        self.min_walk_length = min_walk_length if min_walk_length is not None else 2
+        self.max_walk_length = max_walk_length
+        if self.min_walk_length < 1:
+            raise ValueError("min_walk_length must be at least 1")
+        if self.max_walk_length < self.min_walk_length:
+            raise ValueError("max_walk_length must be at least min_walk_length")
+
+    def generate(self) -> List[List[int]]:
+        """
+        Compute closed walk count profiles for all nodes.
+
+        Returns
+        -------
+        List[List[int]]
+            List of compressed profile labels, one list per graph.
+        """
+        import numpy as np
+        if self.graph_data.nx_graphs is None:
+            self.graph_data.create_nx_graphs(directed=False)
+
+        # Step 1: collect the closed walk count profile of each node
+        graph_profiles = []
+        for graph in self.graph_data.nx_graphs:
+            adjacency = nx.to_numpy_array(graph, dtype=np.int64)
+            power = adjacency
+            diagonals = []
+            for length in range(2, self.max_walk_length + 1):
+                power = power @ adjacency
+                if length >= self.min_walk_length:
+                    diagonals.append(power.diagonal())
+            if self.min_walk_length == 1:
+                diagonals.insert(0, adjacency.diagonal())
+            # profile per node in graph.nodes() order (the order of to_numpy_array)
+            graph_profiles.append([tuple(int(d[i]) for d in diagonals) for i in range(len(graph.nodes()))])
+
+        # Step 2: compress the profiles to consecutive integer ids over the dataset
+        unique_profiles = sorted({profile for profiles in graph_profiles for profile in profiles})
+        profile_to_label = {profile: i for i, profile in enumerate(unique_profiles)}
+        return [[profile_to_label[profile] for profile in profiles] for profiles in graph_profiles]
 
 
 def save_labels_to_file(file:Path, dataset_name:str, label_name:str, graph_node_labels:Optional[Union[List[List[int]], torch.Tensor]], max_labels:None):
@@ -1422,6 +1530,70 @@ def save_betweenness_centrality_labels(graph_data: GraphDataset, label_path: Opt
 
         labeling = BetweennessCentralityNodeLabeling(
             graph_data, label_path, max_labels, num_bins, save_times
+        )
+        save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
+        if save_times is not None:
+            try:
+                with open(save_times, 'a') as f:
+                    f.write(f"{graph_data.name}, {l}, {time.time() - start_time}\n")
+            except:
+                raise ValueError("No save time path given")
+    else:
+        print(f"File {file} already exists. Skipping.")
+    return file
+
+
+def save_closed_walk_labels(graph_data: GraphDataset, min_walk_length: Optional[int] = None, max_walk_length: int = 6,
+                            max_labels: Optional[int] = None, label_path: Optional[Path] = None,
+                            save_times: Optional[Path] = None) -> str:
+    """
+    Generate and save closed walk count node labels.
+
+    Nodes are labeled by their profile of closed walk counts
+    ((A^l)_ii for l = min_walk_length, ..., max_walk_length), compressed to
+    consecutive integer ids over the whole dataset.
+
+    Parameters
+    ----------
+    graph_data : GraphDataset
+        Graph dataset to label.
+    min_walk_length : int, optional
+        Smallest walk length included in the profile (default: 2).
+    max_walk_length : int
+        Largest walk length k included in the profile (default: 6).
+    max_labels : int, optional
+        Maximum number of distinct labels to retain.
+    label_path : Path, optional
+        Directory where labels will be saved.
+    save_times : Path, optional
+        Path to file for logging generation times.
+
+    Returns
+    -------
+    str
+        Path to the saved .pt file.
+
+    See Also
+    --------
+    ClosedWalkNodeLabeling : Implementation details
+    """
+    l = 'closed_walks'
+    if min_walk_length is not None:
+        l = f'{l}_{min_walk_length}'
+    l = f'{l}_{max_walk_length}'
+    if max_labels is not None:
+        l = f'{l}_{max_labels}'
+    if label_path is None:
+        raise ValueError("No label path given")
+    else:
+        file = label_path.joinpath(f"{graph_data.name}_labels_{l}.pt")
+    if not file.exists():
+        print(f"Saving {l} labels for {graph_data.name} to {file}")
+        start_time = time.time()
+
+        labeling = ClosedWalkNodeLabeling(
+            graph_data, min_walk_length=min_walk_length, max_walk_length=max_walk_length,
+            max_labels=max_labels, label_path=label_path, save_times=save_times
         )
         save_labels_to_file(file, graph_data.name, l, labeling.generate(), max_labels)
         if save_times is not None:
