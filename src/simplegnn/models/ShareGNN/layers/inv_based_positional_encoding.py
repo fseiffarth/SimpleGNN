@@ -1,0 +1,164 @@
+import time
+
+import numpy as np
+import torch
+from torch import nn
+
+from simplegnn.datasets.graph_dataset import GraphDataset
+from simplegnn.framework.utils.parameters import Parameters
+from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, range_gather
+
+
+class InvariantBasedPositionalEncodingLayer(InvariantBasedLayer):
+    """
+    Invariant-based positional encoding layer of a ShareGNN.
+
+    Each head maps every node to an ID derived from one node invariant (e.g.
+    induced cycles, WL labels) and looks up ``num`` learned entries for that
+    ID — the same semantics as ``num`` on an aggregation head: independent
+    weights tied to the node's label value. A head therefore contributes
+    ``num`` features per node, and the layer outputs one vector per node
+    (the concatenation over heads). By default the embeddings are
+    concatenated onto the incoming node features (``concatenate_input:
+    True``), so the atom-type/input signal stays intact and a following
+    linear layer mixes them; with ``concatenate_input: False`` the
+    embeddings alone are returned (a pure node encoder).
+
+    YAML interface::
+
+        - { layer_type: invariant_based_positional_encoding,
+            heads: [
+              { num: 8, labels: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 10 } },
+              { num: 8, labels: { label_type: wl_labeled, depth: 0 } },
+            ],
+          }
+
+    **forward(x: torch.Tensor, pos) -> out: torch.Tensor**
+        - **x** is the input matrix of shape (N, F).
+        - **pos** is the index of the graph in the graph_data (or a list of
+          indices for the batched forward; x is then the row-wise
+          concatenation of those graphs' node features).
+        - **out** has shape (N, F + sum_h num_h) with
+          ``concatenate_input: True`` (the default), or (N, sum_h num_h)
+          without the input features.
+    """
+    def __init__(self, parameters: Parameters, layer: Layer, graph_data: GraphDataset):
+        layer.layer_dict['name'] = "Invariant Based Positional Encoding Layer"
+        super(InvariantBasedPositionalEncodingLayer, self).__init__(parameters, layer, graph_data)
+
+        self.concatenate_input = layer.layer_dict.get('concatenate_input', True)
+
+        self.n_node_labels = []  # number of unique node labels per head
+        self.node_label_descriptions = []  # node label descriptions per head
+        self.n_heads_per_label = []  # learned entries per label value (= features per node) per head
+
+        # Row layout of the flat Param_W for head h, node-ID i, entry k:
+        # offset_h + i * num_h + k. Per head we keep the int32 unique-inverse
+        # of the node labels (_pe_idx_{h}) plus the i-independent flat entry
+        # offsets (_pe_off_{h}, shape (num_h,)), so the forward gather is a
+        # single broadcasted index into Param_W.
+        offset = 0
+        for head_id, head in enumerate(layer.layer_heads):
+            desc = layer.get_source_string(head_id)
+            self.node_label_descriptions.append(desc)
+            n_labels = graph_data.node_labels[desc].num_unique_node_labels
+            self.n_node_labels.append(n_labels)
+            self.n_heads_per_label.append(head.num)
+
+            node_labels = graph_data.node_labels[desc].node_labels
+            _, indices = torch.unique(node_labels, dim=0, return_inverse=True, sorted=False)
+            # Non-persistent buffers: moved by net.to(device), kept out of state_dict
+            self.register_buffer(f'_pe_idx_{head_id}', indices.to(torch.int32), persistent=False)
+            self.register_buffer(f'_pe_off_{head_id}',
+                                 offset + torch.arange(head.num, dtype=torch.int64),
+                                 persistent=False)
+            offset += head.num * n_labels
+
+        self.weight_num = offset
+        self.pe_dim = int(np.sum(self.n_heads_per_label))
+        # get_model_layer sets the generic out_features/out_channels from the
+        # heads key; override them here (same pattern as the conv layer)
+        self.out_features = (self.in_features if self.concatenate_input else 0) + self.pe_dim
+        self.out_channels = 1
+
+        self.register_buffer('_pe_x_slices', self.graph_data.slices['x'].clone(), persistent=False)
+        # per-graph offsets as plain ints (Python slicing, no device syncs)
+        self._pe_slices = [int(x) for x in self.graph_data.slices['x']]
+
+        self.Param_W = self.init_weights(self.weight_num, init_type='positional_encoding')
+        # no bias: an embedding table is already a free parameter per ID
+        self.bias = False
+
+        self.forward_step_time = 0
+        self.profile_layers = self.para.run_config.config.get('profile_layers', False)
+
+    def init_weights(self, shape, init_type=None):
+        num_weights = np.prod(shape)
+        weights = nn.Parameter(torch.zeros(shape, dtype=self.precision), requires_grad=True)
+        weight_init = self.para.run_config.config.get('weight_initialization', None)
+        weight_initialization = None
+        if weight_init is not None:
+            weight_initialization = weight_init.get(init_type, None)
+        if weight_initialization is not None:
+            if weight_initialization.get('type', None) == 'uniform':
+                torch.nn.init.uniform_(weights, a=weight_initialization.get('min', 0.0), b=weight_initialization.get('max', 1.0))
+            elif weight_initialization.get('type', None) == 'normal':
+                torch.nn.init.normal_(weights, mean=weight_initialization.get('mean', 0.0), std=weight_initialization.get('std', 1.0))
+            elif weight_initialization.get('type', None) == 'constant':
+                torch.nn.init.constant_(weights, weight_initialization.get('value', 0.01))
+            elif weight_initialization.get('type', None) == 'lower_upper':
+                lower, upper = -(1.0 / np.sqrt(num_weights)), (1.0 / np.sqrt(num_weights))
+                weights = nn.Parameter(lower + torch.randn(shape, dtype=self.precision) * (upper - lower))
+            else:
+                raise ValueError(f"Weight initialization type {weight_initialization.get('type', None)} "
+                                 f"is not supported for positional encoding")
+        else:
+            # Unlike the conv/pooling layers, a constant fallback would make all
+            # embeddings identical (uninformative at init), so default to a
+            # small zero-mean normal instead.
+            torch.nn.init.normal_(weights, mean=0.0, std=0.1)
+        return weights
+
+    def _gather_embeddings(self, node_gather) -> torch.Tensor:
+        """
+        (N_sel, pe_dim) embedding block for the selected nodes.
+
+        node_gather is either a slice (contiguous per-graph node range) or an
+        int64 index tensor (concatenated batch node ranges) — a per-node op,
+        so the single-graph and batched paths share this gather.
+        """
+        head_embeddings = []
+        for head_id, num in enumerate(self.n_heads_per_label):
+            idx = getattr(self, f'_pe_idx_{head_id}')[node_gather].long()
+            flat = idx[:, None] * num + getattr(self, f'_pe_off_{head_id}')[None, :]
+            head_embeddings.append(self.Param_W[flat])
+        return torch.cat(head_embeddings, dim=1)
+
+    def forward(self, node_representation: torch.Tensor, batch_data: GraphDataset, *args, **kwargs):
+        pos = kwargs.get('pos', 0)
+        begin = time.time() if self.profile_layers else None
+        if node_representation.dim() != 2:
+            raise ValueError(f"Invariant based positional encoding expects 2D input (N, F), "
+                             f"got shape {tuple(node_representation.shape)}")
+        if is_batched_pos(pos):
+            positions = torch.as_tensor([int(p) for p in pos], dtype=torch.int64,
+                                        device=self._pe_x_slices.device)
+            node_gather, _ = range_gather(self._pe_x_slices, positions)
+        else:
+            node_gather = slice(self._pe_slices[pos], self._pe_slices[pos + 1])
+        embeddings = self._gather_embeddings(node_gather)
+        if self.concatenate_input:
+            out = torch.cat([node_representation, embeddings], dim=1)
+        else:
+            out = embeddings
+        out = self.activation(out)
+        if self.profile_layers:
+            self.forward_step_time += time.time() - begin
+        return out
+
+    def get_weights(self):
+        return self.Param_W.detach().cpu().numpy()
+
+    def get_bias(self):
+        return None

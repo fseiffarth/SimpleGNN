@@ -1,4 +1,6 @@
-# ZINC graph-regression experiment (migrated to the three-tier schema).
+# ZINC graph-regression test v2: network_ZINC_test.yml with an invariant-based
+# positional encoding as node encoder (replacing the input MLP) and a pre-norm
+# residual block on the convolution (specs/15).
 datasets:
   - {
       name: "ZINC",
@@ -9,9 +11,9 @@ datasets:
         data: "data/ZINC/",
         labels: "data/ZINC/labels/",
         properties: "data/ZINC/properties/",
-        results: "results/base_paper/regression/ZINC_test/",
+        results: "results/base_paper/regression/ZINC_test_v2/",
         models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v2.yml",
-        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v2.yml",
         splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
       }
   }

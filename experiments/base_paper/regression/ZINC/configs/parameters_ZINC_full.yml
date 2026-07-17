@@ -2,7 +2,7 @@
 device: cpu
 share_gnn_forward: { batched: True }
 mode: experiments
-precision: float
+precision: double
 
 optimizer:
   - Adam
@@ -31,7 +31,7 @@ early_stopping:
 
 csv_flush_interval: 1
 
-scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.00001 }
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.0001 }
 
 training_data_sampling: { type: 'default' }
 

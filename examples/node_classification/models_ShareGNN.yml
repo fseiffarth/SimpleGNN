@@ -1,15 +1,21 @@
 # ShareGNN model for node classification on Cora.
-# Input dropout + one invariant-based message passing layer (weight sharing by
-# degree labels and shortest-path distances up to 2) + dropout + linear readout
-# to the 7 classes. No aggregation layer: node tasks keep one output row per
-# node. The convolution starts as a uniform neighborhood aggregator (constant
-# weight initialization, see parameters.yml) and learns per-(degree, degree,
-# distance) deviations from there.
+# One invariant-based message passing layer with symmetric degree
+# normalization (weight sharing by degree labels and shortest-path distances
+# up to 2) + dropout + linear readout to the 7 classes. No aggregation layer:
+# node tasks keep one output row per node.
+#
+# With `degree_normalization: symmetric`, constant weight initialization and
+# `convolution_grad: False` (see parameters.yml) the convolution is exactly a
+# fixed SGC-style propagation D^-1/2 P D^-1/2 over the distance<=2 pattern P —
+# on Cora this reaches ~78% validation accuracy. Setting
+# `convolution_grad: True` makes the per-(degree, degree, distance) weights
+# learnable again; then reduce/remove weight_decay, because the normalized
+# weights receive ~deg-times smaller gradients and plain decay dominates.
 models:
-  - - { layer_type: dropout, p: 0.5 }
-    - { layer_type: invariant_based_convolution,
+  - - { layer_type: invariant_based_convolution,
         activation: torch.nn.Identity(),
         bias: True,
+        degree_normalization: symmetric,
         heads: [
           { num: 2,
             bias: True,

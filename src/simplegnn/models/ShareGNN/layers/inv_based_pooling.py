@@ -136,6 +136,16 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
                 elif weight_initialization.get('type', None) == 'he':
                     std = np.sqrt(2.0 / num_weights)
                     weights = nn.Parameter(torch.randn(num_weights, dtype=self.precision) * std)
+                elif weight_initialization.get('type', None) == 'mean_aggregation':
+                    # Fan-in-scaled normal WITH a nonzero (mean-aggregation) prior.
+                    # Defaults (gain=1.0, mean_ratio=-0.5) reproduce the old
+                    # 'lower_upper' init: mean=-1/sqrt(n), std=2/sqrt(n). Uses
+                    # in-place normal_ so it respects the (num_heads, in_features)
+                    # bias shape. See specs/14-zinc-weight-initialization.md.
+                    gain = weight_initialization.get('gain', 1.0)
+                    mean_ratio = weight_initialization.get('mean_ratio', -0.5)
+                    std = gain * 2.0 / np.sqrt(num_weights)
+                    torch.nn.init.normal_(weights, mean=mean_ratio * std, std=std)
             else:
                 torch.nn.init.constant_(weights, 0.01)
         else:

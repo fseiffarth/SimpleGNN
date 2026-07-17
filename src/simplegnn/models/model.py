@@ -41,6 +41,7 @@ from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
 from simplegnn.models.ShareGNN.layers.inv_based_pooling import InvariantBasedAggregationLayer
+from simplegnn.models.ShareGNN.layers.inv_based_positional_encoding import InvariantBasedPositionalEncodingLayer
 from simplegnn.models.layers.mpnn_classical.gat_conv import GATConv
 from simplegnn.models.layers.mpnn_classical.gatv2_conv import GATv2Conv
 from simplegnn.models.layers.mpnn_classical.gcn_conv import GCNConv
@@ -440,7 +441,7 @@ class GraphModel(torch.nn.Module):
         if 'heads' in layer_args:
             # Total number of heads (sum over the head groups), matching how
             # FrameworkLayer counts them — len(heads) would only count groups.
-            layer_args['num_heads'] = sum(head['num'] for head in layer_args['heads'])
+            layer_args['num_heads'] = sum(head.get('num', 1) for head in layer_args['heads'])
         elif layer.layer_type == LayerTypes.LINEAR.value and layer_args.get('mode') in (
                 'channel_wise', 'aggr_channels', 'factorized'):
             # A linear layer has no 'heads' key, so without this its num_heads
@@ -469,6 +470,11 @@ class GraphModel(torch.nn.Module):
             # .to(dtype) instead of .type(dtype): .type() would also cast the
             # int64 index buffers (weight_distribution), breaking torch.take
             return InvariantBasedMessagePassingLayer(layer=layer, parameters=self.para, graph_data=self.graph_data).to(self.precision).requires_grad_(self.convolution_grad)
+
+        elif layer.layer_type == LayerTypes.INVARIANT_BASED_POSITIONAL_ENCODING.value:
+            # Trainable by default: the embedding tables are the whole point of
+            # the layer, so no convolution/aggregation grad switch applies.
+            return InvariantBasedPositionalEncodingLayer(layer=layer, parameters=self.para, graph_data=self.graph_data).to(self.precision)
 
         elif layer.layer_type == LayerTypes.INVARIANT_BASED_AGGREGATION.value:
             self.aggregation_out_dim = layer_args.get('out_dim', self.out_dim)

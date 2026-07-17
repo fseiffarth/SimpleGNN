@@ -62,6 +62,8 @@ from simplegnn.datasets.graph_dataset import GraphDataset, GraphData, CustomBatc
 from simplegnn.framework.utils.data_sampling import curriculum_sampling
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.model import GraphModel
+from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
+from simplegnn.models.ShareGNN.layers.inv_based_pooling import InvariantBasedAggregationLayer
 from simplegnn.utils.utils import get_k_lowest_nonzero_indices, valid_pruning_configuration, is_pruning
 from simplegnn.utils.timer import TimeClass
 
@@ -595,6 +597,65 @@ class ModelConfiguration:
         else:
             raise ValueError(f"Loss function {self.para.run_config.loss} not implemented")
 
+    def apply_l1_proximal(self):
+        """
+        Proximal L1 (soft-thresholding) on invariant-layer ``Param_W``.
+
+        Called immediately after ``optimizer.step()``. A plain L1 term added to
+        the loss does not produce clean sparsity under Adam/AdamW (the constant
+        subgradient gets rescaled per coordinate by the adaptive denominator), so
+        instead we take the explicit proximal step
+
+            ``w <- sign(w) * relu(|w| - lr * lambda)``
+
+        which drives uninformative rule weights to *exactly* 0 (learned rule
+        selection, the data-driven cousin of ``rule_occurrence_threshold``). The
+        threshold is scaled by the current learning rate so it stays consistent
+        as the scheduler decays ``lr``; the effective per-step magnitude shrink
+        is therefore ``lr * lambda``.
+
+        Notes
+        -----
+        Configuration (both keys optional; 0 / absent = off for that group):
+
+        ```yaml
+        l1_regularization: { convolution: 0.01, aggregation: 0.01 }
+        ```
+
+        - ``convolution`` -> lambda for InvariantBasedMessagePassingLayer.Param_W
+        - ``aggregation``  -> lambda for InvariantBasedAggregationLayer.Param_W
+
+        Calibrating lambda: a weight receiving no counteracting gradient loses
+        ``lr * lambda`` per step, i.e. ``steps_per_epoch * lr * lambda`` per epoch.
+        To zero unused ~1e-3 weights over roughly one epoch with ~80 batches at
+        ``lr=1e-3``: ``lambda ~ 1e-3 / (80 * 1e-3) ~ 0.01``. So a sensible sweep is
+        around {0.002, 0.01, 0.05}; ``lambda >= 1`` is far too aggressive (zeros a
+        0.003 weight in ~3 steps, before gradients can rescue useful rules).
+        Uses ``torch.no_grad`` and an in-place update so autograd is untouched.
+        """
+        l1_cfg = self.para.run_config.config.get('l1_regularization', None)
+        if not l1_cfg:
+            return
+        conv_lambda = float(l1_cfg.get('convolution', 0.0) or 0.0)
+        aggr_lambda = float(l1_cfg.get('aggregation', 0.0) or 0.0)
+        if conv_lambda <= 0.0 and aggr_lambda <= 0.0:
+            return
+
+        lr = self.optimizer.param_groups[0]['lr']
+        with torch.no_grad():
+            for layer in self.net.net_layers:
+                if isinstance(layer, InvariantBasedMessagePassingLayer):
+                    lam = conv_lambda
+                elif isinstance(layer, InvariantBasedAggregationLayer):
+                    lam = aggr_lambda
+                else:
+                    continue
+                if lam <= 0.0:
+                    continue
+                thresh = lr * lam
+                w = layer.Param_W
+                w.copy_(torch.sign(w) * torch.clamp(w.abs() - thresh, min=0.0))
+
     def set_optimizer(self):
         """
         Configure optimizer from configuration.
@@ -605,26 +666,42 @@ class ModelConfiguration:
         Notes
         -----
         Optimizer type and hyperparameters are read from
-        para.run_config.config['optimizer'].
+        para.run_config.optimizer, which may be either:
 
-        Supported optimizers: Adam, SGD, AdamW, RMSprop, etc.
+        - a string naming the optimizer, e.g. ``AdamW`` (weight decay then comes
+          from the separate top-level ``weight_decay`` key), or
+        - a dict ``{ type: AdamW, weight_decay: 0.01, ... }`` where every field
+          other than ``type`` is passed straight to the optimizer constructor
+          (e.g. ``weight_decay``, ``betas``, ``eps``, ``amsgrad``, ``momentum``).
+          Args given in the dict win over the top-level ``weight_decay`` key.
+
+        Supported optimizers: Adam, SGD, AdamW, RMSprop, Adadelta, Adagrad.
         """
-        if self.para.run_config.optimizer == 'Adam':
-            opt = optim.Adam
-        elif self.para.run_config.optimizer == 'AdamW':
-            opt = optim.AdamW
-        elif self.para.run_config.optimizer == 'SGD':
-            opt = optim.SGD
-        elif self.para.run_config.optimizer == 'RMSprop':
-            opt = optim.RMSprop
-        elif self.para.run_config.optimizer == 'Adadelta':
-            opt = optim.Adadelta
-        elif self.para.run_config.optimizer == 'Adagrad':
-            opt = optim.Adagrad
-        else:
-            opt = optim.Adam
+        opt_map = {'Adam': optim.Adam, 'AdamW': optim.AdamW, 'SGD': optim.SGD,
+                   'RMSprop': optim.RMSprop, 'Adadelta': optim.Adadelta,
+                   'Adagrad': optim.Adagrad}
 
-        self.optimizer = opt(self.net.parameters(), lr=self.para.learning_rate, weight_decay=self.para.run_config.weight_decay)
+        opt_spec = self.para.run_config.optimizer
+        if isinstance(opt_spec, dict):
+            opt_name = opt_spec.get('type', 'Adam')
+            extra_kwargs = {k: v for k, v in opt_spec.items() if k != 'type'}
+        else:
+            opt_name = opt_spec
+            extra_kwargs = {}
+
+        opt = opt_map.get(opt_name, optim.Adam)
+
+        kwargs = {'lr': self.para.learning_rate}
+        # top-level weight_decay is the fallback; an explicit value in the
+        # optimizer dict takes precedence.
+        if 'weight_decay' not in extra_kwargs:
+            kwargs['weight_decay'] = self.para.run_config.weight_decay
+        kwargs.update(extra_kwargs)
+
+        # keep run_config in sync so logging/metadata report the value actually used
+        self.para.run_config.weight_decay = kwargs.get('weight_decay', 0.0)
+
+        self.optimizer = opt(self.net.parameters(), **kwargs)
 
     def set_scheduler(self):
         """
@@ -1140,8 +1217,10 @@ class ModelConfiguration:
         dict
             Dictionary with the keys ``db``, ``config_id``, ``task``, ``device``,
             ``precision``, ``seed``, ``network_architecture``, the training
-            hyperparameters, a ``layers`` list, a ``named_parameters`` list and
-            ``total_trainable_parameters``.
+            hyperparameters, a ``main_config`` view (dataset identity and resolved
+            paths from the main YAML), a ``parameter_config`` view (training
+            settings from the hyperparameter YAML), a ``layers`` list, a
+            ``named_parameters`` list and ``total_trainable_parameters``.
 
         Notes
         -----
@@ -1169,6 +1248,31 @@ class ModelConfiguration:
             'layers': [],
             'named_parameters': [],
             'total_trainable_parameters': 0,
+        }
+
+        # Extract the merged experiment configuration into a main-config and a
+        # parameter-config view for the report. ``run_config.config`` is the full
+        # dict merged from the main, model and hyperparameter YAML files; the
+        # loaded ``splits`` payload is deliberately excluded (only its path, held
+        # under ``paths``, is kept) so the report stays small.
+        config = run_config.config
+        config_paths = config.get('paths', {}) or {}
+        info['main_config'] = {
+            'name': config.get('name'),
+            'source': config.get('source'),
+            'task': config.get('task', run_config.task),
+            'paths': {key: str(value) for key, value in config_paths.items()},
+        }
+        info['parameter_config'] = {
+            key: config.get(key)
+            for key in (
+                'precision', 'device', 'mode', 'optimizer', 'loss',
+                'learning_rate', 'batch_size', 'epochs', 'weight_decay', 'dropout',
+                'rule_occurrence_threshold', 'weight_initialization', 'scheduler',
+                'early_stopping', 'training_data_sampling', 'input_features',
+                'best_model',
+            )
+            if config.get(key) is not None
         }
 
         for layer in self.net.net_layers:
@@ -1199,14 +1303,31 @@ class ModelConfiguration:
                 pass
 
             try:
+                # Per-head-config weight parameter totals: weight_offset_description
+                # carries one entry per (replica × property value), each tagged with
+                # its originating head config, so summing 'weights' per 'head:' gives
+                # that channel's weight parameter count (replicas included).
+                weight_per_head = {}
+                for d in getattr(layer, 'weight_offset_description', [])[1:]:
+                    if isinstance(d, dict):
+                        weight_per_head[d['head:']] = weight_per_head.get(d['head:'], 0) + d['weights']
                 for i, n in enumerate(layer.n_properties):
+                    has_bias = layer.bias_list[i]
+                    # Bias params for the channel: in_features × unique bias labels,
+                    # once per replicated head (matches _build_distributions).
+                    bias_params = (layer.in_features * layer.n_bias_labels[i]
+                                   * layer.n_heads_per_label[i]) if has_bias else 0
+                    weight_params = weight_per_head.get(i, 0)
                     layer_info['property_channels'].append({
                         'source_label_type': layer.source_label_descriptions[i],
                         'n_source_labels': layer.n_source_labels[i],
                         'target_label_type': layer.target_label_descriptions[i],
                         'n_target_labels': layer.n_target_labels[i],
-                        'n_bias_labels': layer.n_bias_labels[i] if layer.bias_list[i] else None,
+                        'n_bias_labels': layer.n_bias_labels[i] if has_bias else None,
                         'n_properties': n,
+                        'weight_parameters': weight_params,
+                        'bias_parameters': bias_params,
+                        'trainable_parameters': weight_params + bias_params,
                     })
             except (AttributeError, IndexError):
                 pass
@@ -1363,6 +1484,56 @@ class ModelConfiguration:
             "",
             "</details>",
             "",
+        ]
+
+        def fmt_cfg(value):
+            if isinstance(value, (dict, list)):
+                # inline JSON, pipes escaped so the value stays inside its table cell
+                return f"`{json.dumps(value, default=str).replace('|', chr(92) + '|')}`"
+            return f"`{value}`"
+
+        main_cfg = info.get('main_config') or {}
+        if main_cfg:
+            lines += [
+                "## Main config",
+                "",
+                "*Dataset and paths resolved from the main YAML.*",
+                "",
+                "| | |",
+                "|---|---|",
+                f"| Dataset | `{main_cfg.get('name')}` |",
+                f"| Source | `{main_cfg.get('source')}` |",
+                f"| Task | `{main_cfg.get('task')}` |",
+                "",
+            ]
+            cfg_paths = main_cfg.get('paths') or {}
+            if cfg_paths:
+                lines += [
+                    "| Path | Location |",
+                    "|---|---|",
+                ]
+                for key, value in cfg_paths.items():
+                    lines.append(f"| {key} | `{value}` |")
+                lines.append("")
+
+        param_cfg = info.get('parameter_config') or {}
+        if param_cfg:
+            lines += [
+                "## Parameter config",
+                "",
+                "*Training settings from the hyperparameter YAML. List-valued entries "
+                "are the grid-search space; the values actually used for this run are in "
+                "**Training setup** above.*",
+                "",
+                "| Parameter | Value |",
+                "|---|---|",
+            ]
+            for key, value in param_cfg.items():
+                label = key.replace('_', ' ').capitalize()
+                lines.append(f"| {label} | {fmt_cfg(value)} |")
+            lines.append("")
+
+        lines += [
             "## Architecture",
             "",
             "| # | Layer | Class | Dimensions | Trainable parameters | Share |",
@@ -1408,15 +1579,17 @@ class ModelConfiguration:
             lines.append("")
             if layer['property_channels']:
                 lines += [
-                    "| Channel | Source labels | Target labels | Bias labels | Pairwise properties |",
-                    "|---:|---|---|---:|---:|",
+                    "| Channel | Source labels | Target labels | Bias labels | Pairwise properties | Trainable parameters |",
+                    "|---:|---|---|---:|---:|---:|",
                 ]
                 for c, channel in enumerate(layer['property_channels']):
                     bias = num(channel['n_bias_labels']) if channel['n_bias_labels'] is not None else "–"
+                    trainable = channel.get('trainable_parameters')
+                    trainable_cell = num(trainable) if trainable is not None else "–"
                     lines.append(f"| {c} | {num(channel['n_source_labels'])} "
                                  f"(`{channel['source_label_type']}`) | "
                                  f"{num(channel['n_target_labels'])} (`{channel['target_label_type']}`) | "
-                                 f"{bias} | {num(channel['n_properties'])} |")
+                                 f"{bias} | {num(channel['n_properties'])} | {trainable_cell} |")
                 lines.append("")
             if layer['node_label_channels']:
                 lines += [
@@ -1630,6 +1803,7 @@ class ModelConfiguration:
             timer.measure("backward")
             loss.backward()
             self.optimizer.step()
+            self.apply_l1_proximal()
             timer.measure("backward")
             timer.reset()
 
@@ -1719,6 +1893,7 @@ class ModelConfiguration:
             timer.measure("backward")
             loss.backward()
             self.optimizer.step()
+            self.apply_l1_proximal()
             # the weights changed: cached full-graph evaluation outputs are stale
             self._node_eval_outputs = None
             timer.measure("backward")

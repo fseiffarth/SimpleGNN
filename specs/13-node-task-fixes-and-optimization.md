@@ -90,19 +90,19 @@ leakage). The convolution weights start as a uniform aggregator
 (`constant 0.3`) and learn per-(degree, degree, distance) deviations.
 
 Reference results (CPU, seeds 42–44, best-model evaluation): 67.0% mean
-validation / 65.9% mean test accuracy.
-GCN-level accuracy (~81%) is not reached — the invariant convolution has no
-degree normalization and only 140 labeled nodes to fit its shared weights —
-but the benchmark exercises the whole node-task pipeline end-to-end.
+validation / 65.9% mean test accuracy with the original learned unnormalized
+convolution. With the degree normalization added later (specs/16) the example
+now ships a normalized frozen-convolution configuration reaching 78.3% mean
+validation / 78.1% mean test accuracy — close to GCN (~81%).
 
 Regression coverage: `tests/test_share_gnn_cora_node_classification.py`
 (integration; downloads Cora on first run, ~15s cached).
 
 ## Possible follow-ups
 
-- Degree-normalized aggregation (the `degree_matrix` option was removed as
-  broken; a proper D^-1/2 A D^-1/2 variant would likely close most of the gap
-  to GCN on citation networks).
+- ~~Degree-normalized aggregation~~ — implemented, see
+  specs/16-invariant-conv-degree-normalization.md (lifts Cora to ~78%
+  validation).
 - Batched multi-graph node tasks (currently node tasks assume graph 0).
 - `node_regression` benchmark (the path is implemented and unit-covered via
   the shared code, but no example exists).

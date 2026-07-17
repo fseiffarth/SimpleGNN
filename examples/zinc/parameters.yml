@@ -32,10 +32,13 @@ rule_occurrence_threshold: 2
 #     - value: constant value for the constant distribution
 #     - mean for the normal distribution
 #     - std: variance for the normal distribution
-weight_initialization: { convolution: {  type: 'lower_upper', value: -0.001 },
-                         convolution_bias: { type: 'lower_upper', value: 0.0},
-                         aggregation: {  type: 'lower_upper', value: -0.001 },
-                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+# mean_aggregation: fan-in-scaled normal with a nonzero mean-aggregation prior.
+# gain=1.0, mean_ratio=-0.5 reproduces the old 'lower_upper' init exactly.
+# Sweep `gain` to scale std, `mean_ratio` to tune the aggregation prior.
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: -0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: -0.5 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: -0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: -0.5 }}
 
 batch_size:
   - 128

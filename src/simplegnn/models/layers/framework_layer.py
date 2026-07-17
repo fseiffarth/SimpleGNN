@@ -244,7 +244,7 @@ class FrameworkLayer(torch.nn.Module, ABC):
         if 'heads' in layer_args:
             self.num_heads = 0
             for head in layer_args['heads']:
-                self.num_heads += head['num']
+                self.num_heads += head.get('num', 1)
 
 
         # Whether to use residual connections in this layer

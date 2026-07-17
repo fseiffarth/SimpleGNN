@@ -226,6 +226,28 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # All heads are folded into out_features (downstream layers see a flat
         # (N, F*H) feature dimension), so no separate channel dimension remains.
         self.out_channels = 1
+        # Transformer-style pre-norm block: out = x + Conv(LayerNorm(x)). Both
+        # keys default to off, so existing configs are bit-identical. The
+        # residual is needed even with self-loop-like configs: distance 0 is
+        # usually excluded from the property values, so a node's own feature
+        # never reaches its own output otherwise (see specs/15).
+        self.pre_layer_norm = layer.layer_dict.get('pre_layer_norm', False)
+        if self.pre_layer_norm:
+            self.pre_norm = nn.LayerNorm(self.in_features)
+        # Optional degree normalization of the aggregation (off by default).
+        # The "degree" of a node is the number of neighbors a head actually
+        # aggregates — the nonzero pattern of its weight matrix, so distance-k
+        # pairs count and a distance-0 self loop counts as well.
+        #   'row':       w[h,i,j] /= deg_h(i)            (mean aggregation)
+        #   'symmetric': w[h,i,j] /= sqrt(deg_h(i) * deg_h(j))   (GCN-style)
+        # The factors are weight-independent, so they are computed from the
+        # index structure and cached along with it.
+        self.degree_normalization = layer.layer_dict.get('degree_normalization', None)
+        if self.degree_normalization in (False, 'none'):
+            self.degree_normalization = None
+        if self.degree_normalization not in (None, 'row', 'symmetric'):
+            raise ValueError(f"degree_normalization must be 'row', 'symmetric' or omitted, "
+                             f"got '{self.degree_normalization}'")
         self.n_heads_per_label = [] # number of heads per node label description
 
         for h_id, head in enumerate(layer.layer_heads):
@@ -556,7 +578,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # them crashed in forward. Fail early instead of at forward time.
         if self.para.run_config.config.get('degree_matrix', False) or self.para.run_config.config.get('use_in_degrees', False):
             raise ValueError("The 'degree_matrix' and 'use_in_degrees' options are not supported: "
-                             "their implementation was incomplete (self.D / self.in_edges were never initialized).")
+                             "their implementation was incomplete (self.D / self.in_edges were never initialized). "
+                             "Use the per-layer option degree_normalization: 'row' | 'symmetric' on the "
+                             "invariant_based_convolution layer instead.")
 
         # Forward mode: 'sparse' builds a per-graph block COO matrix and uses
         # torch.sparse.mm; 'dense' keeps the original scatter into a dense
@@ -698,6 +722,26 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         params = torch.cat(parts_p)
         graph_slot = torch.cat(parts_g)
         return heads, ij[:, 0], ij[:, 1], params, graph_slot
+
+    def _degree_norm_scale(self, heads, node_i, node_j, total_nodes):
+        """
+        Per-nonzero degree normalization factors for assembled rows.
+
+        ``node_i``/``node_j`` are batch-global node ids (per-graph ids plus the
+        graph's node offset), so counts never mix across graphs or heads. The
+        degree of (head h, node n) is the number of nonzeros of h's weight
+        matrix in row (out-degree) resp. column (in-degree) n. Returns a
+        tensor aligned with the input rows; multiply it into the gathered
+        Param_W values. Weight-independent, so cacheable with the indices.
+        """
+        num_keys = total_nodes * self.num_heads
+        keys_i = node_i * self.num_heads + heads
+        counts_i = torch.bincount(keys_i, minlength=num_keys).clamp(min=1)
+        if self.degree_normalization == 'row':
+            return (1.0 / counts_i[keys_i].to(self.precision))
+        keys_j = node_j * self.num_heads + heads
+        counts_j = torch.bincount(keys_j, minlength=num_keys).clamp(min=1)
+        return 1.0 / torch.sqrt((counts_i[keys_i] * counts_j[keys_j]).to(self.precision))
 
     @staticmethod
     def _atomic_torch_save(data, path: Path) -> None:
@@ -1082,6 +1126,18 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 elif weight_initialization.get('type', None) == 'he':
                     std = np.sqrt(2.0 / num_weights)
                     weights = nn.Parameter(torch.randn(num_weights, dtype=self.precision) * std)
+                elif weight_initialization.get('type', None) == 'mean_aggregation':
+                    # Fan-in-scaled normal WITH a nonzero (mean-aggregation) prior.
+                    # A nonzero weight mean makes the invariant conv start as
+                    # coherent (scaled) mean-aggregation, which is a much stronger
+                    # ZINC init than zero-mean random projections. Defaults
+                    # (gain=1.0, mean_ratio=-0.5) reproduce the old 'lower_upper'
+                    # init exactly: mean=-1/sqrt(n), std=2/sqrt(n). See
+                    # specs/14-zinc-weight-initialization.md.
+                    gain = weight_initialization.get('gain', 1.0)
+                    mean_ratio = weight_initialization.get('mean_ratio', -0.5)
+                    std = gain * 2.0 / np.sqrt(num_weights)
+                    torch.nn.init.normal_(weights, mean=mean_ratio * std, std=std)
 
             else:
                 raise ValueError(f"Weight initialization type {init_type} is not supported")
@@ -1099,7 +1155,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         self.current_W = torch.zeros((self.num_heads, input_size, input_size), dtype=self.precision, device=self.Param_W.device)
         heads, i_local, j_local, params, _ = self._assemble_rows([pos])
         if heads.numel() != 0:
-            self.current_W[heads, i_local, j_local] = self.Param_W[params]
+            values = self.Param_W[params]
+            if self.degree_normalization is not None:
+                values = values * self._degree_norm_scale(heads, i_local, j_local, input_size)
+            self.current_W[heads, i_local, j_local] = values
         return
 
     def set_bias(self, pos) -> None:
@@ -1197,8 +1256,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             - Each entry current_W[h, i, j] = weight for head h, node i, neighbor j
         2. Perform message passing via einsum:
             - Standard: current_W @ node_representation
-            - With degree normalization: D @ current_W @ D @ x (if use_degree_matrix)
-            - With in-degree norm: current_W @ x scaled by in_edges (if use_in_degrees)
+            - With degree_normalization 'row': each weight divided by the
+              receiving node's aggregation count (mean aggregation)
+            - With degree_normalization 'symmetric': divided by
+              sqrt(out-count(i) * in-count(j)) (GCN-style)
         3. Add bias terms if enabled via set_bias(pos):
             - current_B: (H, N, F) bias for each head and node
         4. Permute and flatten: (H, N, F) → (N, F, H) → (N, H×F)
@@ -1230,6 +1291,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         if is_batched_pos(pos):
             return self._forward_batched(node_representation, pos)
         begin = time.time() if self.profile_layers else None
+        x_in = node_representation
+        if self.pre_layer_norm:
+            node_representation = self.pre_norm(node_representation)
         num_nodes = self._num_nodes_list[pos]
         if self.forward_mode == 'sparse':
             # Assemble the graph's rows, sort them into coalesced order and
@@ -1242,7 +1306,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             # graph) then pay only for the value gather and the sparse mm.
             cache = self._sparse_row_cache
             if cache is not None and cache[0] == pos and cache[1].device == node_representation.device:
-                indices, params_sorted = cache[1], cache[2]
+                indices, params_sorted, scale_sorted = cache[1], cache[2], cache[3]
             else:
                 heads, i_local, j_local, params, _ = self._assemble_rows([pos])
                 rows = heads * num_nodes + i_local
@@ -1251,8 +1315,13 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 order = torch.argsort(rows * num_nodes + j_local)
                 indices = torch.stack([rows, j_local])[:, order]
                 params_sorted = params[order]
-                self._sparse_row_cache = (pos, indices, params_sorted)
+                scale_sorted = None
+                if self.degree_normalization is not None:
+                    scale_sorted = self._degree_norm_scale(heads, i_local, j_local, num_nodes)[order]
+                self._sparse_row_cache = (pos, indices, params_sorted, scale_sorted)
             values = self.Param_W[params_sorted]
+            if scale_sorted is not None:
+                values = values * scale_sorted
             current_W = torch.sparse_coo_tensor(indices, values,
                                                 (self.num_heads * num_nodes, num_nodes),
                                                 is_coalesced=True)
@@ -1268,6 +1337,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # merge dimensions 1 and 2
         node_representation = node_representation.flatten(start_dim=1)
         node_representation = self.activation(node_representation)
+        if self.residual:
+            # feature-aligned with the (N, F*H) output layout (column f*H + h),
+            # NOT x.repeat(1, H) which would match the PyG h*F + f layout
+            node_representation = node_representation + x_in.repeat_interleave(self.num_heads, dim=1)
         if self.profile_layers:
             self.forward_step_time += time.time() - begin
         return node_representation
@@ -1319,6 +1392,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         (see _use_dense_batch) produce bit-identical results.
         """
         begin = time.time() if self.profile_layers else None
+        x_in = node_representation
+        if self.pre_layer_norm:
+            node_representation = self.pre_norm(node_representation)
         positions = [int(p) for p in positions]
         sizes = [self._num_nodes_list[p] for p in positions]
         node_offsets = [0]
@@ -1336,6 +1412,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # (N, H, F) -> (N, F, H) -> (N, F*H): same output layout as the
         # per-graph path's (H, N, F).permute(1, 2, 0).flatten(1)
         out = self.activation(out.permute(0, 2, 1).flatten(start_dim=1))
+        if self.residual:
+            out = out + x_in.repeat_interleave(self.num_heads, dim=1)
         if self.profile_layers:
             self.forward_step_time += time.time() - begin
         return out
@@ -1351,14 +1429,18 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         heads, i_local, j_local, params, graph_slot = self._assemble_rows(positions)
         # node-major rows: the block-diagonal COO row of graph g's cell is
         # (i + node_offset_g) * H + head, its column j + node_offset_g
-        rows = (i_local + offsets[graph_slot]) * num_heads + heads
-        cols = j_local + offsets[graph_slot]
+        node_i = i_local + offsets[graph_slot]
+        node_j = j_local + offsets[graph_slot]
+        rows = node_i * num_heads + heads
+        cols = node_j
         # cells are unique per graph, so sorting by the linear id gives a
         # valid coalesced ordering
         order = torch.argsort(rows * total_nodes + cols)
 
         # gathering from Param_W every forward keeps the graph differentiable
         values = self.Param_W[params[order]]
+        if self.degree_normalization is not None:
+            values = values * self._degree_norm_scale(heads, node_i, node_j, total_nodes)[order]
         current_W = torch.sparse_coo_tensor(torch.stack([rows, cols])[:, order], values,
                                             (total_nodes * num_heads, total_nodes),
                                             is_coalesced=True)
@@ -1385,7 +1467,12 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # gathering from Param_W every forward keeps the graph differentiable
         current_W = torch.zeros((batch_size, num_heads, max_nodes, max_nodes),
                                 dtype=self.precision, device=device)
-        current_W[graph_slot, heads, i_local, j_local] = self.Param_W[params]
+        values = self.Param_W[params]
+        if self.degree_normalization is not None:
+            offsets = torch.as_tensor(node_offsets[:-1], dtype=torch.int64, device=device)
+            values = values * self._degree_norm_scale(heads, i_local + offsets[graph_slot],
+                                                      j_local + offsets[graph_slot], total_nodes)
+        current_W[graph_slot, heads, i_local, j_local] = values
 
         # scatter the concatenated node features into the padded (B, N_max, F) layout
         node_slot, local_index = self._batched_node_index(sizes, node_offsets, device)

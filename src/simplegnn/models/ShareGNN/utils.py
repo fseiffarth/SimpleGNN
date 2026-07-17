@@ -137,7 +137,7 @@ class Layer:
         self.layer_dict = layer_dict
         self.layer_heads = []
         self.layer_id = layer_id
-        if self.layer_type in ['invariant_based_convolution', 'invariant_based_aggregation']:
+        if self.layer_type in ['invariant_based_convolution', 'invariant_based_aggregation', 'invariant_based_positional_encoding']:
             for c_id, head_entry in enumerate(layer_dict.get('heads', [])):
                 self.layer_heads.append(LayerHead(head_entry, c_id))
 

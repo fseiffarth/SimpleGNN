@@ -25,7 +25,8 @@ def layer_from_yml(layer_id, layer_yml, layers_per_architecture, network_archite
     layer_type = layer_yml['layer_type']
     if not _is_valid_layer_type(layer_type):
         raise ValueError(f"layer_type {layer_type} is not supported")
-    elif layer_type in [LayerTypes.INVARIANT_BASED_CONVOLUTION.value, LayerTypes.INVARIANT_BASED_AGGREGATION.value]:
+    elif layer_type in [LayerTypes.INVARIANT_BASED_CONVOLUTION.value, LayerTypes.INVARIANT_BASED_AGGREGATION.value,
+                        LayerTypes.INVARIANT_BASED_POSITIONAL_ENCODING.value]:
         layer_from_yml_invariant_based(layer_id, layer_yml, layers_per_architecture, network_architecture)
     else:
         if len(layers_per_architecture) <= layer_id:
@@ -262,6 +263,19 @@ def check_layer(i:int, layer: dict)->(bool, str):
                         elif layer['layer_type'] == 'invariant_based_aggregation':
                             if 'label_type' not in head['labels']:
                                 return False, f'Label type not defined in head {i}'
+    elif layer['layer_type'] == LayerTypes.INVARIANT_BASED_POSITIONAL_ENCODING.value:
+        if 'heads' not in layer:
+            return False, f'Heads not defined in layer {i}'
+        if not isinstance(layer['heads'], list):
+            return False, f'Heads must be a list in layer {i}'
+        for j, head in enumerate(layer['heads']):
+            if not isinstance(head, dict):
+                return False, f'Head must be a dictionary in layer {i}'
+            if 'labels' not in head:
+                return False, f'Labels not defined in head {j}'
+            if not isinstance(head['labels'], dict) or 'label_type' not in head['labels']:
+                return False, f'Label type not defined in head {j}'
+            # num is optional (default 1 = one learned entry per label value)
     else:
         return False, f'Layer type {layer["layer_type"]} not supported in layer {i}'
 

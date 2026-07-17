@@ -14,7 +14,7 @@ loss:
 batch_size:
   - 140
 learning_rate:
-  - 0.01
+  - 0.05
 weight_decay:
   - 0.0005
 epochs:
@@ -26,17 +26,20 @@ early_stopping:
   patience:
     50
 
-# row-normalized bag-of-words node attributes are the model input;
-# one_hot_train_labels additionally prepends the one-hot class of the
-# *training* nodes (uniform 1/num_classes rows for all other nodes), so the
-# message passing can propagate the known labels through the graph without
-# leaking validation/test targets
-input_features: { name: node_features, transformation: normalize_rows, one_hot_train_labels: True }
+# row-normalized bag-of-words node attributes are the model input
+input_features: { name: node_features, transformation: normalize_rows }
 
-# start the convolution as a uniform neighborhood aggregator; training learns
-# per-(degree, degree, distance) deviations from it
+# constant initialization + degree_normalization (see models_ShareGNN.yml)
+# makes the convolution start as a symmetric-normalized propagation
 weight_initialization:
-  convolution: { type: constant, value: 0.3 }
+  convolution: { type: constant, value: 1.0 }
   convolution_bias: { type: constant, value: 0.0 }
+
+# keep the convolution fixed at the normalized propagation and train only the
+# readout: with 140 labeled nodes this generalizes clearly better (~78% vs
+# ~64% validation accuracy). If set to True, drop weight_decay — the
+# normalized weights get ~deg-times smaller gradients, so plain decay
+# otherwise shrinks them to zero over training.
+convolution_grad: False
 
 save_best_model: True
