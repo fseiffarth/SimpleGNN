@@ -972,8 +972,10 @@ class GraphDataset(InMemoryDataset):
                         for i in range(data['y'].shape[1]):
                             data['y'][:, i] = (data['y'][:, i] - data['y'][:, i].min()) / (data['y'][:, i].max() - data['y'][:, i].min() + 1e-8)
                     elif output_features.get('normalization', 'standard') == 'minmax_zero':
+                        # map to [-1, 1]; the inverse in model_configuration
+                        # (inverse_transform_targets) assumes this range.
                         for i in range(data['y'].shape[1]):
-                            data['y'][:, i] = (data['y'][:, i] - data['y'][:, i].min()) / (data['y'][:, i].max() - data['y'][:, i].min() + 1e-8)
+                            data['y'][:, i] = 2.0 * (data['y'][:, i] - data['y'][:, i].min()) / (data['y'][:, i].max() - data['y'][:, i].min() + 1e-8) - 1.0
 
             return None
 

@@ -1,0 +1,23 @@
+# ZINC graph-regression test v4: architecture identical to test_v2 (invariant-based
+# positional-encoding node encoder + pre-norm residual convolution, specs/15), but
+# the cycle-based node labels (induced_cycles + simple_cycles, k=5-10) are replaced
+# by closed-walk labels — the diagonals of the adjacency powers, (A^k)_ii for
+# k=5-10. closed_walks has no induced/simple distinction, so each length contributes
+# one head instead of two (12 cycle heads -> 6 closed-walk heads per invariant
+# layer). All hyperparameters match test_v2.
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_test_v4/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v4.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v4.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

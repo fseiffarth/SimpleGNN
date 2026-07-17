@@ -527,26 +527,40 @@ class ModelConfiguration:
             else:
                 raise ValueError(f"Task {self.para.run_config.config['task']} not implemented")
 
+            # EpochLoss is the mean per-batch loss over the epoch. train_*_task
+            # accumulates a running sum in epoch_values.loss, so divide by the
+            # number of batches here to make it comparable to ValidationLoss.
+            if len(train_batches) > 0:
+                epoch_values.loss /= len(train_batches)
 
             # TODO Pruning
             if valid_pruning_configuration(self.para, epoch):
                 self.model_pruning(epoch)
 
-            # Step the scheduler
+            # Evaluate the results on validation and test set. On epochs where
+            # validation is skipped (validation_frequency > 1) carry the last
+            # computed validation/test metrics forward instead of writing zeros.
+            validation_frequency = self.para.run_config.config.get('validation_frequency', 1)
+            is_validation_epoch = (epoch + 1) % validation_frequency == 0 or epoch == self.para.n_epochs - 1
+            if is_validation_epoch and self.validate_data.size != 0:
+                epoch_values, validation_values, test_values = self.evaluate_results(epoch=epoch,train_values=epoch_values, validation_values=validation_values, test_values=test_values, evaluation_type='validation')
+                self._last_validation_values = validation_values
+            elif self.validate_data.size != 0 and self._last_validation_values is not None:
+                validation_values = self._last_validation_values
+            # check wheter there is a test split
+            if is_validation_epoch and self.test_data.size != 0:
+                epoch_values, validation_values, test_values = self.evaluate_results(epoch=epoch,train_values=epoch_values, validation_values=validation_values, test_values=test_values, evaluation_type='test')
+                self._last_test_values = test_values
+            elif self.test_data.size != 0 and self._last_test_values is not None:
+                test_values = self._last_test_values
+
+            # Step the scheduler AFTER validation, so ReduceLROnPlateau sees the
+            # actual validation loss (previously it stepped on a stale 0.0).
             if self.scheduler is not None:
                 if self.para.run_config.config['scheduler']['type'] == 'ReduceLROnPlateau':
                     self.scheduler.step(validation_values.loss)
                 else:
                     self.scheduler.step()
-
-            # Evaluate the results on training, validation and test set (only if specified in the config or for evaluation)
-            validation_frequency = self.para.run_config.config.get('validation_frequency', 1)
-            is_validation_epoch = (epoch + 1) % validation_frequency == 0 or epoch == self.para.n_epochs - 1
-            if is_validation_epoch and self.validate_data.size != 0:
-                epoch_values, validation_values, test_values = self.evaluate_results(epoch=epoch,train_values=epoch_values, validation_values=validation_values, test_values=test_values, evaluation_type='validation')
-            # check wheter there is a test split
-            if is_validation_epoch and self.test_data.size != 0:
-                epoch_values, validation_values, test_values = self.evaluate_results(epoch=epoch,train_values=epoch_values, validation_values=validation_values, test_values=test_values, evaluation_type='test')
 
             timer.measure("epoch")
             epoch_time = timer.get_flag_time("epoch")
@@ -614,7 +628,9 @@ class ModelConfiguration:
                 if with_loss:
                     self.set_loss_function()
                     loss = self.criterion(target_outputs, target_values).item()
-                print(f"Accuracy: {accuracy} %, Loss: {loss}")
+                    print(f"Accuracy: {accuracy} %, Loss: {loss}")
+                else:
+                    print(f"Accuracy: {accuracy} %")
             else:
                 if do_print:
                     print(f"Evaluation completed for graph regression task.")
@@ -1775,19 +1791,35 @@ class ModelConfiguration:
     def postprocess_writer(self, epoch, epoch_time, train_values: EvaluationValues, validation_values: EvaluationValues, test_values: EvaluationValues):
         time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.para.print_results:
-            # if class num is one print the mae and mse
+            # Console line reflects the configured loss (label) and the task's
+            # reported metric: MAE for regression, accuracy/AUC for classification.
+            loss_label = loss_display_name(self.para.run_config.loss)
+            prefix = f'run: {self.run_id} val step: {self.k_val} epoch: {epoch + 1}/{self.para.n_epochs}'
             if self.para.run_config.task in ('graph_regression', 'node_regression'):
                 print(
-                    f'run: {self.run_id} val step: {self.k_val} epoch: {epoch + 1}/{self.para.n_epochs} epoch loss: {train_values.loss} epoch acc: {train_values.accuracy} epoch mae: {train_values.mae} +- {train_values.mae_std} epoch time: {epoch_time}'
-                    f' validation acc: {validation_values.accuracy} validation loss: {validation_values.loss} validation mae: {validation_values.mae} +- {validation_values.mae_std}'
-                    f'test acc: {test_values.accuracy} test loss: {test_values.loss} test mae: {test_values.mae} +- {test_values.mae_std}'
-                    f'time: {epoch_time}')
+                    f'{prefix} | {loss_label} loss: {train_values.loss:.4f} | '
+                    f'train MAE: {train_values.mae:.4f} ± {train_values.mae_std:.4f} | '
+                    f'val MAE: {validation_values.mae:.4f} (loss {validation_values.loss:.4f}) | '
+                    f'test MAE: {test_values.mae:.4f} (loss {test_values.loss:.4f}) | '
+                    f'time: {epoch_time:.2f}s')
             else:
+                metric = 'AUC' if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc' else 'acc'
+                if metric == 'AUC':
+                    train_metric, val_metric, test_metric = (train_values.accuracy_roc_auc,
+                                                             validation_values.accuracy_roc_auc,
+                                                             test_values.accuracy_roc_auc)
+                    metric_fmt = '.4f'
+                else:
+                    train_metric, val_metric, test_metric = (train_values.accuracy,
+                                                             validation_values.accuracy,
+                                                             test_values.accuracy)
+                    metric_fmt = '.2f'
                 print(
-                    f'run: {self.run_id} val step: {self.k_val} epoch: {epoch + 1}/{self.para.n_epochs} epoch loss: {train_values.loss} epoch acc: {train_values.accuracy}'
-                    f' validation acc: {validation_values.accuracy} validation loss: {validation_values.loss}'
-                    f'test acc: {test_values.accuracy} test loss: {test_values.loss}'
-                    f'time: {epoch_time}')
+                    f'{prefix} | {loss_label} loss: {train_values.loss:.4f} | '
+                    f'train {metric}: {train_metric:{metric_fmt}} | '
+                    f'val {metric}: {val_metric:{metric_fmt}} (loss {validation_values.loss:.4f}) | '
+                    f'test {metric}: {test_metric:{metric_fmt}} (loss {test_values.loss:.4f}) | '
+                    f'time: {epoch_time:.2f}s')
 
         if self.para.run_config.task in ('graph_regression', 'node_regression'):
             res_str =   f"{self.para.db};{time};{self.run_id};{self.k_val};{self.seed};{epoch};{self.training_data.size};{self.validate_data.size};{self.test_data.size};" \
