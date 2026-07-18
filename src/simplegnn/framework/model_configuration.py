@@ -399,6 +399,15 @@ class ModelConfiguration:
         self.dtype = torch.float
         if self.para.run_config.config.get('precision', 'float') == 'double':
             self.dtype = torch.double
+        # deterministic: True trades throughput for bit-exact reproducibility across
+        # reruns of the same (seed, config) by pinning intra-op parallelism to 1
+        # thread (torch.sparse.mm/index_add_ reduction order is otherwise thread-
+        # schedule-dependent) and forcing deterministic kernels. Off by default -
+        # the ShareGNN sparse-mm path is built for multi-core throughput (specs/07,
+        # specs/08) and only needs this for debugging/verification runs.
+        if self.para.run_config.config.get('deterministic', False):
+            torch.set_num_threads(1)
+            torch.use_deterministic_algorithms(True)
 
     def train_configuration(self, pretrained_network=None):
         """
@@ -560,6 +569,10 @@ class ModelConfiguration:
             elif self.test_data.size != 0 and self._last_test_values is not None:
                 test_values = self._last_test_values
 
+            # Capture the LR actually used for this epoch's updates before the
+            # scheduler steps -- stepping may change it for the *next* epoch.
+            epoch_lr = self.optimizer.param_groups[0]['lr']
+
             # Step the scheduler AFTER validation, so ReduceLROnPlateau sees the
             # actual validation loss (previously it stepped on a stale 0.0).
             if self.scheduler is not None:
@@ -572,7 +585,7 @@ class ModelConfiguration:
             epoch_time = timer.get_flag_time("epoch")
 
             # Write the results to the results file
-            self.postprocess_writer(epoch, epoch_time, epoch_values, validation_values, test_values)
+            self.postprocess_writer(epoch, epoch_time, epoch_values, validation_values, test_values, epoch_lr)
 
 
     def evaluate_network(self, graph_ids, do_print=False, with_loss=False):
@@ -990,7 +1003,7 @@ class ModelConfiguration:
                 # so lr (and hence the L1 threshold lr*lambda) is high early and
                 # anneals to eta_min late: aggressive rule pruning first, gentle
                 # fine-tuning of the survivors after.
-                t_max = scheduler.get('T_max', self.para.run_config.config['epochs'])
+                t_max = scheduler.get('T_max', self.para.n_epochs)
                 self.scheduler = CosineAnnealingLR(self.optimizer, T_max=t_max, eta_min=scheduler.get('eta_min', 0))
 
 
@@ -1609,57 +1622,6 @@ class ModelConfiguration:
         return info
 
     @staticmethod
-    def write_network_txt(info: dict, final_path: Path):
-        """
-        Write the plain-text network summary (append mode, legacy format).
-
-        The first line (``Network architecture: [...]``) is parsed by
-        :mod:`simplegnn.framework.utils.evaluation` to build the plot legends, so the
-        format must stay stable. The file is opened in append mode, hence it collects
-        the summaries of all runs writing to the same configuration id.
-
-        Parameters
-        ----------
-        info : dict
-            Network description as returned by :meth:`collect_network_info`.
-        final_path : Path
-            Target ``*_Network.txt`` file.
-        """
-        with open(final_path, "a") as file_obj:
-            file_obj.write(f"Network architecture: {info['network_architecture']}\n"
-                           f"Optimizer: {info['optimizer']}\n"
-                           f"Loss function: {info['loss']}\n"
-                           f"Batch size: {info['batch_size']}\n"
-                           f"Balanced data: {info['balance_data']}\n"
-                           f"Number of epochs: {info['n_epochs']}\n")
-            for layer in info['layers']:
-                file_obj.write(f"\n")
-                file_obj.write(f"Layer: {layer['name']}\n")
-                file_obj.write(f"\n")
-                file_obj.write(f"Layer Trainable Parameters: {layer['trainable_parameters']}\n")
-                if layer['node_labels'] is not None:
-                    file_obj.write(f"Node labels: {layer['node_labels']}\n")
-                for i, channel in enumerate(layer['property_channels']):
-                    file_obj.write(f"Number of Source Labels (type: {channel['source_label_type']}) in channel {i}: {channel['n_source_labels']}\n")
-                    file_obj.write(f"Number of Target Labels (type: {channel['target_label_type']}) in channel {i}: {channel['n_target_labels']}\n")
-                    if channel['n_bias_labels'] is not None:
-                        file_obj.write(f"Number of Bias Labels in channel {i}: {channel['n_bias_labels']}\n")
-                    file_obj.write(f"Number of pairwise properties in channel {i}: {channel['n_properties']}\n")
-                    file_obj.write("\n")
-                for i, channel in enumerate(layer['node_label_channels']):
-                    file_obj.write(f"Number of Node Labels (type: {channel['node_label_type']}) in channel {i}: {channel['n_node_labels']}\n")
-                    file_obj.write("\n")
-                file_obj.write("Weight matrix learnable parameters: {}\n".format(layer['weight_parameters']))
-                file_obj.write("Bias learnable parameters: {}\n".format(layer['bias_parameters']))
-                if layer['edge_labels'] is not None:
-                    file_obj.write(f"Edge labels: {layer['edge_labels']}\n")
-            for param in info['named_parameters']:
-                file_obj.write(f"Layer: {param['name']} -> {param['trainable']}\n")
-
-            file_obj.write(f"\n")
-            file_obj.write(f"Total trainable parameters: {info['total_trainable_parameters']}\n")
-
-    @staticmethod
     def write_network_markdown(info: dict, final_path: Path):
         """
         Write the Markdown network report of the current model (overwrite mode).
@@ -1869,11 +1831,9 @@ class ModelConfiguration:
     def preprocess_writer(self)-> bool:
         if self.run_id == 0 and self.k_val == 0:
             # collect the net details (architecture, optimizer, learning rate, loss function, batch size,
-            # number of epochs, balanced data, dropout) and write them as plain text and as markdown
+            # number of epochs, balanced data, dropout) and write them as markdown
             network_info = self.collect_network_info()
             results_dir = self.results_path.joinpath(f'{self.para.db}/Results')
-            self.write_network_txt(network_info,
-                                   results_dir.joinpath(f'{self.para.db}_{self.para.config_id}_Network.txt'))
             self.write_network_markdown(network_info,
                                         results_dir.joinpath(f'{self.para.db}_{self.para.config_id}_Network.md'))
 
@@ -1886,14 +1846,14 @@ class ModelConfiguration:
         # header use semicolon as delimiter
         if self.para.run_config.task in ('graph_regression', 'node_regression'):
             header = f"Dataset;Time;RunNumber;ValidationNumber;Seed;Epoch;TrainingSize;ValidationSize;TestSize;EpochLoss ({self.para.run_config.loss});" \
-                     f"EpochAccuracy;EpochTime;EpochMAE;EpochMAEStd;ValidationLoss;ValidationAccuracy;ValidationMAE;ValidationMAEStd;TestLoss;TestAccuracy;TestMAE;TestMAEStd\n"
+                     f"EpochAccuracy;EpochTime;LearningRate;EpochMAE;EpochMAEStd;ValidationLoss;ValidationAccuracy;ValidationMAE;ValidationMAEStd;TestLoss;TestAccuracy;TestMAE;TestMAEStd\n"
         else:
             if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
                 header = f"Dataset;Time;RunNumber;ValidationNumber;Seed;Epoch;TrainingSize;ValidationSize;TestSize;EpochLoss ({self.para.run_config.loss});" \
-                         f"EpochAccuracy;EpochAUC;EpochTime;ValidationAccuracy;ValidationLoss;ValidationAUC;TestAccuracy;TestLoss;TestAUC\n"
+                         f"EpochAccuracy;EpochAUC;EpochTime;LearningRate;ValidationAccuracy;ValidationLoss;ValidationAUC;TestAccuracy;TestLoss;TestAUC\n"
             else:
                 header = f"Dataset;Time;RunNumber;ValidationNumber;Seed;Epoch;TrainingSize;ValidationSize;TestSize;EpochLoss  ({self.para.run_config.loss});EpochAccuracy;" \
-                         f"EpochTime;ValidationAccuracy;ValidationLoss;TestAccuracy;TestLoss\n"
+                         f"EpochTime;LearningRate;ValidationAccuracy;ValidationLoss;TestAccuracy;TestLoss\n"
 
         # Save file for results and add header if the file is new
         final_path = self.results_path.joinpath(f'{self.para.db}/Results/{file_name}')
@@ -1903,7 +1863,7 @@ class ModelConfiguration:
         return True
 
 
-    def postprocess_writer(self, epoch, epoch_time, train_values: EvaluationValues, validation_values: EvaluationValues, test_values: EvaluationValues):
+    def postprocess_writer(self, epoch, epoch_time, train_values: EvaluationValues, validation_values: EvaluationValues, test_values: EvaluationValues, epoch_lr):
         time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.para.print_results:
             # Console line reflects the configured loss (label) and the task's
@@ -1938,18 +1898,18 @@ class ModelConfiguration:
 
         if self.para.run_config.task in ('graph_regression', 'node_regression'):
             res_str =   f"{self.para.db};{time};{self.run_id};{self.k_val};{self.seed};{epoch};{self.training_data.size};{self.validate_data.size};{self.test_data.size};" \
-                        f"{train_values.loss};{train_values.accuracy};{epoch_time};{train_values.mae};{train_values.mae_std};" \
+                        f"{train_values.loss};{train_values.accuracy};{epoch_time};{epoch_lr};{train_values.mae};{train_values.mae_std};" \
                         f"{validation_values.loss};{validation_values.accuracy};{validation_values.mae};{validation_values.mae_std};" \
                         f"{test_values.loss};{test_values.accuracy};{test_values.mae};{test_values.mae_std}\n"
         else:
             if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
                 res_str =   f"{self.para.db};{time};{self.run_id};{self.k_val};{self.seed};{epoch};{self.training_data.size};{self.validate_data.size};{self.test_data.size};" \
-                            f"{train_values.loss};{train_values.accuracy};{train_values.accuracy_roc_auc};{epoch_time};" \
+                            f"{train_values.loss};{train_values.accuracy};{train_values.accuracy_roc_auc};{epoch_time};{epoch_lr};" \
                             f"{validation_values.accuracy};{validation_values.loss};{validation_values.accuracy_roc_auc};" \
                             f"{test_values.accuracy};{test_values.loss};{test_values.accuracy_roc_auc}\n"
             else:
                 res_str =   f"{self.para.db};{time};{self.run_id};{self.k_val};{self.seed};{epoch};{self.training_data.size};{self.validate_data.size};{self.test_data.size};" \
-                            f"{train_values.loss};{train_values.accuracy};{epoch_time};" \
+                            f"{train_values.loss};{train_values.accuracy};{epoch_time};{epoch_lr};" \
                             f"{validation_values.accuracy};{validation_values.loss};" \
                             f"{test_values.accuracy};{test_values.loss}\n"
 
@@ -2204,7 +2164,7 @@ class ModelConfiguration:
         # divide the whole training data into batches
         if self.para.run_config.config.get('training_data_sampling', None) is None or self.para.run_config.config[
             'training_data_sampling'].get('type', None) == 'default':
-            shuffling_seed = seeds[epoch][self.k_val] * self.run_id + self.seed
+            shuffling_seed = seeds[epoch][self.k_val] + self.run_id * seeds.size + self.seed
             np.random.seed(shuffling_seed)
             np.random.shuffle(self.training_data)
             self.para.run_config.batch_size = min(self.para.run_config.batch_size, len(self.training_data))
@@ -2213,7 +2173,7 @@ class ModelConfiguration:
 
         # sample the batches from the training data uniformly
         elif self.para.run_config.config['training_data_sampling'].get('type', None) == 'random':
-            shuffling_seed = seeds[epoch][self.k_val] * self.run_id + self.seed
+            shuffling_seed = seeds[epoch][self.k_val] + self.run_id * seeds.size + self.seed
             np.random.seed(shuffling_seed)
             np.random.shuffle(self.training_data)
             self.para.run_config.batch_size = min(self.para.run_config.batch_size, len(self.training_data))
@@ -2241,14 +2201,14 @@ class ModelConfiguration:
                                                                      balancing[i]), replace=True))
             # concatenate the random indices
             random_indices = np.concatenate(random_indices_per_class)
-            shuffling_seed = seeds[epoch][self.k_val] * self.run_id + self.seed
+            shuffling_seed = seeds[epoch][self.k_val] + self.run_id * seeds.size + self.seed
             np.random.seed(shuffling_seed)
             np.random.shuffle(random_indices)
             train_batches = np.array_split(random_indices, self.training_data.size // self.para.run_config.batch_size)
 
         # undersampling the majority class
         elif self.para.run_config.config['training_data_sampling'].get('type', None) == 'undersampling':
-            shuffling_seed = seeds[epoch][self.k_val] * self.run_id + self.seed
+            shuffling_seed = seeds[epoch][self.k_val] + self.run_id * seeds.size + self.seed
             np.random.seed(shuffling_seed)
             # get the class distribution of the training data
             unique_classes, class_indices, class_counts = torch.unique(self.graph_data.y[self.training_data],
@@ -2304,7 +2264,7 @@ class ModelConfiguration:
                                                     'exclusive', True),
                                                 use_edges=True)
         else:
-            shuffling_seed = seeds[epoch][self.k_val] * self.run_id + self.seed
+            shuffling_seed = seeds[epoch][self.k_val] + self.run_id * seeds.size + self.seed
             np.random.seed(shuffling_seed)
             np.random.shuffle(self.training_data)
             self.para.run_config.batch_size = min(self.para.run_config.batch_size, len(self.training_data))

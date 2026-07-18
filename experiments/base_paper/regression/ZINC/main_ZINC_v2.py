@@ -44,7 +44,7 @@ def main_ZINC_v2(variant='small', num_threads=-1, config_id=None):
     experiment.evaluate_results()
     if config_id is None:
         # only re-run the best configuration when the full grid was searched
-        experiment.run_best_configuration(num_threads=num_threads)
+        experiment.run_best_configuration(num_threads=1)
         experiment.evaluate_results(evaluate_best_model=True)
 
 

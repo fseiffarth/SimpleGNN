@@ -26,9 +26,9 @@ MAIN_CONFIGS = {
 def main_ZINC(num_threads=-1, version=1):
     experiment = FrameworkMain(MAIN_CONFIGS[version])
     experiment.preprocessing(num_threads=1)
-    experiment.run_configurations(num_threads=num_threads)
+    experiment.run_configurations(num_threads=1)
     experiment.evaluate_results()
-    experiment.run_best_configuration(num_threads=num_threads)
+    experiment.run_best_configuration(num_threads=1)
     experiment.evaluate_results(evaluate_best_model=True)
 
 

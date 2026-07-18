@@ -77,6 +77,73 @@ Configurations are validated against mandatory parameter sets by `src/simplegnn/
 - **Paper reproduction** (`experiments/base_paper/`): see [Reproducing the paper experiments](#reproducing-the-paper-experiments) below.
 - **Tests**: `pytest tests -q` (full suite) or `pytest tests/test_imports_and_loader_api.py -q` (fast import/API smoke test).
 
+## Transfer Learning with ShareGNN
+
+ShareGNN supports hash-keyed transfer learning: a model pretrained on one dataset can warm-start
+training on a different dataset, even though the two were preprocessed independently and have
+unrelated raw label ids. This works because every node/edge label is given a **canonical hash**
+derived from its structural signature (e.g. a WL color's neighborhood identity, a cycle-count
+profile) rather than from its dataset-relative integer id — so the same structure hashes to the
+same value in any dataset. Standard `linear`/`layer_norm`/`batch_norm` layers still transfer by
+name and shape, as usual.
+
+**Requirements**:
+- Both datasets must be preprocessed with label file format v2 (the current default — regenerate
+  labels by deleting the relevant `labels/<dataset>/` directory if you have old v1 files).
+- Only architectures built from **canonical** label types transfer their invariant weights.
+  Canonical types include `wl`/`wl_labeled` seeded from a canonical base, `induced_cycles`,
+  `closed_walks`, `degree`, and shortest-path `distances`. Non-canonical types — `primary` (TU
+  datasets enumerate atom types dataset-relatively, unless `primary_labels_canonical: True` is set
+  for a known-shared coding) and `betweenness_centrality` (percentile bins are dataset-relative) —
+  are skipped by the transfer engine unless `invariant_transfer.allow_non_canonical: True`.
+- The pretraining and finetuning model configs should share the same invariant-layer architecture
+  (same heads, same label/property types) so weight slots line up head-by-head, and both should use
+  `input_features: {name: constant, value: 1.0}` so the standard `linear` layers shape-match too.
+
+**Workflow**:
+
+1. **Pretrain** with `save_best_model: True` and `save_transfer_keys: True` in the hyperparameter
+   config. This writes, alongside each `model_*.pt` checkpoint, a `model_*.keys.pt` sidecar that
+   names every invariant weight slot by its canonical `(src_hash, tgt_hash, property)` key.
+2. **(Optional) measure overlap** between the source and target label vocabularies before
+   finetuning — a large mismatch means little will actually transfer. See
+   `examples/transfer_learning/measure_overlap.py`.
+3. **Finetune** by adding a `transfer:` block to the target dataset's hyperparameter config:
+
+   ```yaml
+   transfer:
+     source:
+       results_path: results/pretrain/ShareGNN_NCI1/   # results dir of the pretraining run
+       dataset: NCI1                                    # source dataset name
+       select: best                                     # best | {config_id, run_id, validation_id}
+     strategy: finetune                                 # finetune | linear_probe
+     head:
+       reinit: always                                   # the task-specific head always gets a fresh init
+     invariant_transfer:
+       match: hashes                                    # hashes | none (reinit all invariant layers)
+       on_missing: reinit                                # reinit | zero, for slots with no source match
+       allow_non_canonical: False
+       min_overlap_warn: 0.10
+     freeze: []                                          # optional state-dict prefix globs to freeze
+   ```
+
+   Standard layers are copied by name+shape (except the head, which is re-initialized); invariant
+   layers are remapped slot-by-slot via the canonical hash join between source and target
+   vocabularies. Unmatched slots keep their fresh initialization (or are zeroed, with
+   `on_missing: zero`). A per-run transfer report (matched/total slot counts, coverage) is written
+   next to the run's results and printed at runtime.
+
+**Full worked example**: `examples/transfer_learning/` pretrains ShareGNN on NCI1 and finetunes on
+DHFR (both TUDatasets, auto-downloaded):
+
+```bash
+python examples/transfer_learning/main.py            # full run
+python examples/transfer_learning/main.py --fast     # smoke test (1 epoch, 1 fold)
+```
+
+See `specs/18-canonical-hash-transfer-implementation.md` for the full design (canonical hashing
+scheme, checkpoint sidecar format, remap engine).
+
 ## Reproducing the paper experiments
 
 All paper experiments live in `experiments/base_paper/` and are launched with the shell scripts in that directory. Each script activates `venv/`, sets `PYTHONPATH`, changes to the repository root, and runs the full pipeline (preprocessing → grid search → validation-based model selection → best-config re-run → test evaluation). **Always run them from the repository root.**

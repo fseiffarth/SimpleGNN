@@ -9,9 +9,9 @@ from simplegnn.framework.core import FrameworkMain
 def main_ZINC(num_threads=-1):
     experiment = FrameworkMain(Path('experiments/base_paper/regression/ZINC/configs/main_config_ZINC.yml'))
     experiment.preprocessing(num_threads=1)
-    experiment.run_configurations(num_threads=num_threads)
+    experiment.run_configurations(num_threads=1)
     experiment.evaluate_results()
-    experiment.run_best_configuration(num_threads=num_threads)
+    experiment.run_best_configuration(num_threads=1)
     experiment.evaluate_results(evaluate_best_model=True)
 
 
