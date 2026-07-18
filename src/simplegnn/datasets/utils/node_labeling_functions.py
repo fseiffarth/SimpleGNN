@@ -3,7 +3,8 @@ from typing import List, Optional
 import networkx as nx
 import numpy as np
 
-from simplegnn.datasets.utils.label_hashing import HASH_SCHEMA_VERSION, RESERVED_INVALID, stable_hash
+from simplegnn.datasets.utils.label_hashing import HASH_SCHEMA_VERSION, RESERVED_CAPPED, RESERVED_INVALID, \
+    stable_hash
 
 def standard_node_labeling(graphs: List[nx.Graph]):
     """
@@ -148,8 +149,17 @@ def _canonical_wl_hashes(edge_src, edge_dst, round_colors, seed_hashes, rounds):
         canon = np.empty(uq.shape[0], dtype=np.int64)
         for c, v in zip(uq, first_index):
             neighbors = src_s[start[v]:start[v] + deg[v]]
-            multiset = tuple(sorted(int(h) for h in node_hash_prev[neighbors]))
-            canon[c] = stable_hash(int(node_hash_prev[v]), multiset)
+            involved = [int(node_hash_prev[v])] + [int(h) for h in node_hash_prev[neighbors]]
+            # a reserved hash (capped "other" bucket / invalid base label) has
+            # dataset-relative content: any class built from one stays reserved
+            # so the transfer join excludes it instead of matching it wrongly
+            if RESERVED_INVALID in involved:
+                canon[c] = RESERVED_INVALID
+            elif RESERVED_CAPPED in involved:
+                canon[c] = RESERVED_CAPPED
+            else:
+                multiset = tuple(sorted(involved[1:]))
+                canon[c] = stable_hash(involved[0], multiset)
     return canon
 
 

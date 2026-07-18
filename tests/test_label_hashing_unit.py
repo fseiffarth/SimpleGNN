@@ -328,3 +328,43 @@ def test_degree_hashes_transfer_between_disjoint_datasets(tmp_path):
     hash_a = int(loaded_a.label_hashes[int(loaded_a.node_labels[0])])
     hash_b = int(loaded_b.label_hashes[int(loaded_b.node_labels[4])])
     assert hash_a == hash_b == stable_hash(HASH_SCHEMA_VERSION, "degree", (), 3)
+
+
+# --------------------------------------------- reserved-component propagation
+def test_combined_reserved_component_stays_reserved():
+    hashes_a = torch.tensor([100, RESERVED_CAPPED], dtype=torch.int64)
+    hashes_b = torch.tensor([200, RESERVED_INVALID], dtype=torch.int64)
+    meta = {"schema": HASH_SCHEMA_VERSION, "canonical": True, "kind": "k", "params": (), "capped": True}
+    a = NodeLabels("db", "a", torch.tensor([[0, 0], [1, 1], [0, 0], [0, 0]]), hashes_a, dict(meta))
+    b = NodeLabels("db", "b", torch.tensor([[0, 0], [0, 0], [1, 1], [0, 0]]), hashes_b, dict(meta))
+
+    combined = combine_node_labels([a, b])
+
+    # node 1 combines the capped bucket of a: content is dataset-relative
+    assert int(combined.label_hashes[int(combined.node_labels[1])]) == RESERVED_CAPPED
+    # node 2 combines a reserved-invalid slot of b: invalid dominates
+    assert int(combined.label_hashes[int(combined.node_labels[2])]) == RESERVED_INVALID
+    # node 3 combines two ordinary hashes and stays a real combined hash
+    assert int(combined.label_hashes[int(combined.node_labels[3])]) == stable_hash(
+        HASH_SCHEMA_VERSION, "combined", (), (100, 200))
+
+
+def test_wl_reserved_base_seed_propagates_through_hash_chain():
+    graph = nx.path_graph(6)
+    base = NodeLabels(
+        "db", "base",
+        torch.tensor([[1, 1]] + [[0, 0]] * 5),
+        torch.tensor([500, RESERVED_CAPPED], dtype=torch.int64),
+        {"schema": HASH_SCHEMA_VERSION, "canonical": True, "kind": "k", "params": (), "capped": True},
+    )
+
+    labels, _, _, signatures = weisfeiler_lehman_node_labeling(
+        [graph], depth=1, labeled=True, base_labels={"labels": base}, return_hashes=True)
+
+    node_hashes = [signatures[label] for label in labels[0]]
+    # depth 1 => 2 hash rounds: nodes within 2 hops of the capped node are tainted
+    assert node_hashes[0] == RESERVED_CAPPED
+    assert node_hashes[1] == RESERVED_CAPPED
+    assert node_hashes[2] == RESERVED_CAPPED
+    # the far end of the path never sees the reserved seed and hashes normally
+    assert node_hashes[5] not in (RESERVED_CAPPED, RESERVED_INVALID)

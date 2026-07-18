@@ -449,7 +449,24 @@ def _head_usable(head: dict, allow_non_canonical: bool, prefix: str,
             f"(dataset-relative); skipped (set invariant_transfer.allow_non_canonical: True "
             f"to match them anyway)")
         return False
+    if not _property_canonical(head) and not allow_non_canonical:
+        report.warn(
+            f"{prefix} head {head.get('head_id')}: {side.lower()} property "
+            f"'{head.get('property')}' has dataset-relative keys; skipped (set "
+            f"invariant_transfer.allow_non_canonical: True to match them anyway)")
+        return False
     return True
+
+
+def _property_canonical(head: dict) -> bool:
+    """Whether the head's property keys are dataset-independent.
+
+    Sidecars written before the flag existed derive it from the property
+    description instead of assuming canonicality."""
+    flag = head.get('property_canonical')
+    if flag is not None:
+        return bool(flag)
+    return not str(head.get('property', '')).startswith('edge_label_distances')
 
 
 def _match_conv_layer(prefix: str, layer_keys: dict, source_layer_keys: dict,

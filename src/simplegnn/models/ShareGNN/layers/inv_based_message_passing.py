@@ -1246,6 +1246,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 'num_replicas': int(self.n_heads_per_label[head_id]),
                 'has_hashes': source_nl.label_hashes is not None and target_nl.label_hashes is not None,
                 'canonical': bool(source_nl.has_canonical_hashes and target_nl.has_canonical_hashes),
+                # edge_label_distances keys embed raw edge-label values, which are
+                # dataset-relative unless both datasets share the edge-label coding
+                'property_canonical': not str(self.property_descriptions[head_id]).startswith('edge_label_distances'),
                 'keys': keys,
             })
 

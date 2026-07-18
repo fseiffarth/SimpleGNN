@@ -160,8 +160,17 @@ def combine_node_labels(labels: List[NodeLabels]):
             if has_artificial and row == artificial_label:
                 combined_hashes[row] = RESERVED_INVALID
             else:
-                combined_hashes[row] = stable_hash(HASH_SCHEMA_VERSION, 'combined', (),
-                                                   (int(hashes_a[id_a]), int(hashes_b[id_b])))
+                hash_a, hash_b = int(hashes_a[id_a]), int(hashes_b[id_b])
+                # a reserved component (capped "other" bucket / invalid slot) has
+                # dataset-relative content, so the derived hash must stay reserved
+                # instead of committing to a normal-looking but non-canonical value
+                if RESERVED_INVALID in (hash_a, hash_b):
+                    combined_hashes[row] = RESERVED_INVALID
+                elif RESERVED_CAPPED in (hash_a, hash_b):
+                    combined_hashes[row] = RESERVED_CAPPED
+                else:
+                    combined_hashes[row] = stable_hash(HASH_SCHEMA_VERSION, 'combined', (),
+                                                       (hash_a, hash_b))
         label_hashes = combined_hashes[sorted_indices]
         hash_meta = {'schema': HASH_SCHEMA_VERSION,
                      'canonical': all(l.has_canonical_hashes for l in labels),

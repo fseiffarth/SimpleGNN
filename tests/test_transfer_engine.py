@@ -480,3 +480,26 @@ def test_transfer_strategy_linear_probe_and_freeze(share_gnn_setup):
     for param in net_c.net_layers[linear_ids[0]].parameters():
         assert not param.requires_grad
     assert _conv(net_c).Param_W.requires_grad
+
+
+def test_non_canonical_property_keys_gate_head():
+    from simplegnn.framework.utils.transfer import TransferReport, _head_usable
+
+    head = {'head_id': 0, 'has_hashes': True, 'canonical': True,
+            'property': 'edge_label_distances_cutoff_3', 'property_canonical': False}
+    report = TransferReport()
+    assert not _head_usable(head, False, 'net_layers.0', report, 'Target')
+    assert any('dataset-relative keys' in w for w in report.warnings)
+    # allow_non_canonical opts back in
+    assert _head_usable(head, True, 'net_layers.0', report, 'Target')
+
+    # sidecars written before the flag existed derive it from the description
+    legacy = {'head_id': 0, 'has_hashes': True, 'canonical': True,
+              'property': 'edge_label_distances'}
+    assert not _head_usable(legacy, False, 'net_layers.0', TransferReport(), 'Source')
+    plain = {'head_id': 0, 'has_hashes': True, 'canonical': True,
+             'property': 'distances'}
+    assert _head_usable(plain, False, 'net_layers.0', TransferReport(), 'Source')
+    # bias/pooling heads carry no property entry and are unaffected
+    bias = {'head_id': 0, 'has_hashes': True, 'canonical': True, 'bias_label': 'wl_0'}
+    assert _head_usable(bias, False, 'net_layers.0', TransferReport(), 'Source')
