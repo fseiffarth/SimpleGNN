@@ -539,7 +539,9 @@ def training_and_preprocessing_time(share_gnn_type=''):
 
         path_real_world = f'results/base_paper/classification/RealWorld/{share_gnn_type}'
         path_synthetic = f'results/base_paper/classification/Synthetic/{share_gnn_type}'
-        for path, datasets in [[path_real_world, datasets_real_world], [path_synthetic, dataset_synthetic]]:
+        data_path_real_world = 'data/TUDatasets'
+        data_path_synthetic = 'data/Synthetic'
+        for path, data_path, datasets in [[path_real_world, data_path_real_world, datasets_real_world], [path_synthetic, data_path_synthetic, dataset_synthetic]]:
             if Path(path).exists():
                 # get number of parameters
                 for dataset in datasets:
@@ -586,24 +588,32 @@ def training_and_preprocessing_time(share_gnn_type=''):
                     results[dataset]['std_epoch_time'] = std_epoch_time
 
                 # get preprocessing time for distances
-                with open(Path(path).joinpath('generation_times_properties.txt'), 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line.startswith('|'):
-                            continue
-                        cells = [c.strip() for c in line.strip('|').split('|')]
-                        if len(cells) != 3 or cells[0] == 'Dataset' or set(cells[2]) <= set('-'):
-                            continue
-                        dataset, _ , time = cells
-                        results[dataset]['preprocessing_time'] = float(time)
+                for dataset in datasets:
+                    times_file = Path(data_path).joinpath('properties').joinpath(dataset).joinpath('generation_times_properties.txt')
+                    if not times_file.exists():
+                        continue
+                    with open(times_file, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line.startswith('|'):
+                                continue
+                            cells = [c.strip() for c in line.strip('|').split('|')]
+                            if len(cells) != 3 or cells[0] == 'Dataset' or set(cells[2]) <= set('-'):
+                                continue
+                            dataset, _ , time = cells
+                            results[dataset]['preprocessing_time'] = float(time)
 
 
 
                 # get preprocessing time for features
                 if share_gnn_type == '':
                     preprocessing_times = dict()
-                    with open(Path(path).joinpath('generation_times_labels.txt'), 'r') as f:
-                        for line in f:
+                    for ds in datasets:
+                        times_file = Path(data_path).joinpath('labels').joinpath(ds).joinpath('generation_times_labels.txt')
+                        if not times_file.exists():
+                            continue
+                        with open(times_file, 'r') as f:
+                          for line in f:
                             line = line.strip()
                             if not line.startswith('|'):
                                 continue

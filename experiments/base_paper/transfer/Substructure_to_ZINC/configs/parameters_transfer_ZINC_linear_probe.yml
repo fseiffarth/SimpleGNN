@@ -1,0 +1,56 @@
+# Hyperparameters for the ZINC finetuning run of the Substructure -> ZINC
+# hash-keyed transfer experiment (spec 18): train on synthetic, zero-shot on
+# real-world. "Zero-shot"-style evaluation: strategy: linear_probe freezes
+# every invariant-layer slot that received a transferred weight (spec 18
+# B3.5) and trains only the freshly initialized regression head -- the
+# closest thing to zero-shot the framework supports, since the "multi" 6-dim
+# substructure-count head cannot be reused for ZINC's 1-dim regression target
+# and must be reinitialized regardless.
+device: cpu
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: float
+
+optimizer:
+  - Adam
+loss:
+  - MAE
+
+batch_size:
+  - 32
+learning_rate:
+  - 0.001
+epochs:
+  - 200
+
+early_stopping:
+  enabled: False
+  patience: 50
+
+csv_flush_interval: 1
+
+training_data_sampling: { type: 'default' }
+
+# must stay 'constant' (matching parameters_transfer_Substructure_pretrain.yml)
+# so the aggr_channels/aggr_features linears shape-match for transfer.
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+save_best_model: True
+save_transfer_keys: True
+
+# hash-keyed transfer from the SubstructureBenchmark ("multi") pretraining run
+# (spec 18 B4 schema).
+transfer:
+  source:
+    results_path: results/base_paper/transfer/Substructure_to_ZINC/pretrain/   # pretraining results dir
+    dataset: multi                              # db name of the source checkpoint
+    select: best                                # best | {config_id: 0, run_id: 0, validation_id: 0}
+  strategy: linear_probe                        # freeze every transferred invariant slot
+  head:
+    reinit: always                              # multi-count head -> ZINC regression: always reinit
+  invariant_transfer:
+    match: hashes                                # hashes | none
+    on_missing: reinit                           # unmatched slots keep their fresh init
+    allow_non_canonical: False                   # never match dataset-relative labelings
+    min_overlap_warn: 0.10
+  freeze: []                                     # linear_probe already freezes transferred invariant slots

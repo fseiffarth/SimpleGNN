@@ -1,8 +1,7 @@
-# ZINC graph-regression experiment (migrated to the three-tier schema).
-# NOTE: the original paper config (main_config_ZINC_full.yml) referenced
-# network_ZINC.yml, not network_ZINC_full.yml. We keep that mapping for faithful
-# reproduction; network_ZINC_full.yml was already unused and is left migrated but
-# orphaned. Switch the `models:` path below if the _full network is intended.
+# ZINC-full graph-regression experiment: the test v2 setup (invariant-based
+# positional encoding as node encoder + pre-norm residual convolution block,
+# specs/15) applied to the full ZINC dataset. network/parameters are copies of
+# the *_test_v2 configs with the LR floor lowered to 1e-6.
 datasets:
   - {
       name: "ZINC-full",
@@ -14,7 +13,7 @@ datasets:
         labels: "data/ZINC/labels/",
         properties: "data/ZINC/properties/",
         results: "results/base_paper/regression/ZINC-full/",
-        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test.yml",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_full.yml",
         hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_full.yml",
         splits: "src/simplegnn/datasets/splits/fixed/ZINC-full_splits.json",
       }

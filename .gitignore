@@ -211,7 +211,9 @@ __marimo__/
 results.csv
 *.csv
 data/
+Data/
 results/
+randomgraph/
 
 # Auto Claude data directory
 .auto-claude/

@@ -45,6 +45,7 @@ models.model.GraphModel : PyTorch model class
 """
 import datetime
 import json
+import math
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,7 +57,7 @@ import sklearn
 import torch
 from torch import optim, nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR
+from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR, LambdaLR
 
 from simplegnn.datasets.graph_dataset import GraphDataset, GraphData, CustomBatchLoader
 from simplegnn.framework.utils.data_sampling import curriculum_sampling
@@ -64,6 +65,7 @@ from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.model import GraphModel
 from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
 from simplegnn.models.ShareGNN.layers.inv_based_pooling import InvariantBasedAggregationLayer
+from simplegnn.models.ShareGNN.layers.inv_based_positional_encoding import InvariantBasedPositionalEncodingLayer
 from simplegnn.utils.utils import get_k_lowest_nonzero_indices, valid_pruning_configuration, is_pruning
 from simplegnn.utils.timer import TimeClass
 
@@ -405,6 +407,18 @@ class ModelConfiguration:
         # schedule-dependent) and forcing deterministic kernels. Off by default -
         # the ShareGNN sparse-mm path is built for multi-core throughput (specs/07,
         # specs/08) and only needs this for debugging/verification runs.
+        # torch_threads: explicit cap on PyTorch's intra-op thread pool for a
+        # single serial run (run_configurations only forces OMP_NUM_THREADS=1
+        # when parallelizing across MULTIPLE joblib workers; a lone job
+        # otherwise defaults to all logical cores). On many-small-op ShareGNN
+        # workloads (small graphs, small batches) that default is actively
+        # harmful — measured on ZINC-full: 52 ms/batch at 8 threads vs.
+        # 2,727 ms/batch at 24 threads on a 12-core/24-thread CPU, because
+        # thread-pool synchronization overhead swamps the tiny per-op compute.
+        # Off (no-op) unless set, so existing configs/behavior are unchanged.
+        torch_threads = self.para.run_config.config.get('torch_threads', None)
+        if torch_threads is not None:
+            torch.set_num_threads(int(torch_threads))
         if self.para.run_config.config.get('deterministic', False):
             torch.set_num_threads(1)
             torch.use_deterministic_algorithms(True)
@@ -449,7 +463,10 @@ class ModelConfiguration:
         **Early Stopping:**
 
         Training stops early if best validation metric hasn't improved for
-        para.early_stopping_patience epochs (if configured).
+        early_stopping.patience epochs, or if the optimizer's learning rate
+        has decayed to or below early_stopping.lr_threshold (if configured).
+        Both criteria require early_stopping.enabled: True. See
+        early_stopping() for details.
 
         **Best Model Tracking:**
 
@@ -868,14 +885,21 @@ class ModelConfiguration:
 
         Notes
         -----
-        Configuration (both keys optional; 0 / absent = off for that group):
+        Configuration (all keys optional; 0 / absent = off for that group):
 
         ```yaml
-        l1_regularization: { convolution: 0.01, aggregation: 0.01 }
+        l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
         ```
 
         - ``convolution`` -> lambda for InvariantBasedMessagePassingLayer.Param_W
         - ``aggregation``  -> lambda for InvariantBasedAggregationLayer.Param_W
+        - ``encoding``     -> lambda for InvariantBasedPositionalEncodingLayer.Param_W
+
+        ``encoding`` prunes embedding-table entries rather than message-passing
+        rules, so it is not "the data-driven cousin of ``rule_occurrence_threshold``"
+        in the same sense as ``convolution``/``aggregation`` -- it is the network's
+        input embedding, so an overly aggressive lambda can zero out capacity before
+        it has learned anything useful. Tune it separately from the other two.
 
         Calibrating lambda: a weight receiving no counteracting gradient loses
         ``lr * lambda`` per step, i.e. ``steps_per_epoch * lr * lambda`` per epoch.
@@ -890,7 +914,8 @@ class ModelConfiguration:
             return
         conv_lambda = float(l1_cfg.get('convolution', 0.0) or 0.0)
         aggr_lambda = float(l1_cfg.get('aggregation', 0.0) or 0.0)
-        if conv_lambda <= 0.0 and aggr_lambda <= 0.0:
+        enc_lambda = float(l1_cfg.get('encoding', 0.0) or 0.0)
+        if conv_lambda <= 0.0 and aggr_lambda <= 0.0 and enc_lambda <= 0.0:
             return
 
         lr = self.optimizer.param_groups[0]['lr']
@@ -900,13 +925,18 @@ class ModelConfiguration:
                     lam = conv_lambda
                 elif isinstance(layer, InvariantBasedAggregationLayer):
                     lam = aggr_lambda
+                elif isinstance(layer, InvariantBasedPositionalEncodingLayer):
+                    lam = enc_lambda
                 else:
                     continue
                 if lam <= 0.0:
                     continue
                 thresh = lr * lam
                 w = layer.Param_W
-                w.copy_(torch.sign(w) * torch.clamp(w.abs() - thresh, min=0.0))
+                # softshrink(w, thresh) == sign(w) * relu(|w| - thresh): same
+                # proximal update as one fused op instead of 4 (~17x faster,
+                # bit-identical — verified against the old expression)
+                w.copy_(F.softshrink(w, thresh))
 
     def set_optimizer(self):
         """
@@ -975,7 +1005,8 @@ class ModelConfiguration:
         Scheduler type and parameters are read from
         para.run_config.config['scheduler'] if present.
 
-        Supported schedulers: StepLR, ReduceLROnPlateau, CosineAnnealingLR.
+        Supported schedulers: StepLR, ReduceLROnPlateau, CosineAnnealingLR,
+        CosineWarmup.
 
         ReduceLROnPlateau requires validation loss as input during
         scheduler.step() calls.
@@ -1005,13 +1036,59 @@ class ModelConfiguration:
                 # fine-tuning of the survivors after.
                 t_max = scheduler.get('T_max', self.para.n_epochs)
                 self.scheduler = CosineAnnealingLR(self.optimizer, T_max=t_max, eta_min=scheduler.get('eta_min', 0))
+            elif scheduler_type == 'CosineWarmup':
+                # GRIT/GraphGPS 'cosine_with_warmup': linear warmup from ~0 to the
+                # base lr over num_warmup_epochs, then a half-cosine decay to 0 over
+                # the remaining (max_epoch - num_warmup_epochs) epochs. Exact port of
+                # HuggingFace get_cosine_schedule_with_warmup (num_cycles=0.5), which
+                # is what GRIT/GPS's 'cosine_with_warmup' scheduler wraps -- see
+                # graphgps/optimizer/extra_optimizers.py. Steps once per epoch via
+                # the else-branch below, matching GRIT's epoch-stepped schedule.
+                num_warmup_epochs = scheduler.get('num_warmup_epochs', 10)
+                max_epoch = scheduler.get('max_epoch', self.para.n_epochs)
+
+                def lr_lambda(current_epoch, num_warmup_epochs=num_warmup_epochs, max_epoch=max_epoch):
+                    if current_epoch < num_warmup_epochs:
+                        return max(1e-6, float(current_epoch) / float(max(1, num_warmup_epochs)))
+                    progress = float(current_epoch - num_warmup_epochs) / float(max(1, max_epoch - num_warmup_epochs))
+                    return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+                self.scheduler = LambdaLR(self.optimizer, lr_lambda)
 
 
     def early_stopping(self, epoch):
-        if self.para.run_config.config.get('early_stopping', {'enabled': False})['enabled']:
-            if epoch - self.best_epoch["epoch"] > self.para.run_config.config['early_stopping']['patience']:
+        """
+        Check whether training should stop before ``para.n_epochs``.
+
+        Both gated by ``early_stopping.enabled`` in
+        ``para.run_config.config``; ``enabled: False`` (the default) disables
+        both criteria regardless of what else is set:
+
+        - **Patience-based**: stop if the best validation epoch is more than
+          ``patience`` epochs in the past.
+        - **LR-based** (``lr_threshold`` set): stop once the optimizer's
+          current learning rate drops to or below ``lr_threshold``. This
+          mirrors the Dwivedi et al. "Benchmarking GNNs" ZINC protocol, where
+          training with ``ReduceLROnPlateau`` stops once the scheduler has
+          annealed the LR down to its floor rather than running out the full
+          epoch budget. Optional -- omit ``lr_threshold`` to keep only the
+          patience-based criterion.
+        """
+        es_config = self.para.run_config.config.get('early_stopping', {'enabled': False})
+        if not es_config.get('enabled', False):
+            return False
+        if epoch - self.best_epoch["epoch"] > es_config['patience']:
+            if self.para.print_results:
+                print(f"Early stopping at epoch {epoch}: no validation improvement in "
+                      f"{es_config['patience']} epochs")
+            return True
+        lr_threshold = es_config.get('lr_threshold', None)
+        if lr_threshold is not None:
+            current_lr = self.optimizer.param_groups[0]['lr']
+            if current_lr <= lr_threshold:
                 if self.para.print_results:
-                    print(f"Early stopping at epoch {epoch}")
+                    print(f"Early stopping at epoch {epoch}: learning rate {current_lr} "
+                          f"<= lr_threshold {lr_threshold}")
                 return True
         return False
 
@@ -1521,7 +1598,7 @@ class ModelConfiguration:
                 'learning_rate', 'batch_size', 'epochs', 'weight_decay', 'dropout',
                 'rule_occurrence_threshold', 'weight_initialization', 'scheduler',
                 'early_stopping', 'training_data_sampling', 'input_features',
-                'best_model',
+                'best_model', 'l1_regularization',
             )
             if config.get(key) is not None
         }

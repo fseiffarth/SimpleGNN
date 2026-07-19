@@ -423,7 +423,10 @@ class GraphCount(InMemoryDataset):
         super().__init__(root=root, **kwargs)
 
         _pt = dict(zip(["train", "val", "test"], self.processed_paths))
-        self.data, self.slices = torch.load(_pt[split])
+        # weights_only=False: same PyTorch 2.6+ default-behavior break as process()
+        # above -- these processed caches store PyG Data/DataEdgeAttr objects, not
+        # just tensors.
+        self.data, self.slices = torch.load(_pt[split], weights_only=False)
 
         index = self.task_index[task]
         if index != -1:
@@ -444,7 +447,10 @@ class GraphCount(InMemoryDataset):
     def process(self):
 
         _pt, = self.raw_file_names
-        raw = torch.load(f"{self.root}/{_pt}")
+        # weights_only=False: this raw file stores plain numpy arrays (adjacency
+        # matrices), not just tensors, so PyTorch 2.6+'s default weights_only=True
+        # unpickler rejects it (numpy.core.multiarray._reconstruct not allowlisted).
+        raw = torch.load(f"{self.root}/{_pt}", weights_only=False)
 
         def to(graph):
 

@@ -1,0 +1,57 @@
+# Hyperparameters for the SubstructureBenchmark ("multi") pretraining run of
+# the Substructure -> TU hash-keyed transfer experiment (spec 18): train on
+# synthetic, zero-shot on real-world. Same training recipe as
+# experiments/base_paper/transfer/ZINC_to_TU/configs/
+# parameters_transfer_ZINC_pretrain.yml (AdamW/MAE/mean_aggregation init,
+# matched to the shared ripped-ZINC-v2 architecture) plus save_transfer_keys,
+# which writes the `.keys.pt` sidecar the TU finetuning runs transfer from.
+# "multi" (6-dim: triangle/tri_tail/star/cycle4/cycle5/cycle6 counts) is used
+# as the richest single pretraining task among the 7 SubstructureBenchmark
+# targets.
+device: cpu
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: double
+
+optimizer:
+  - { type: 'AdamW', weight_decay: 0.00001 }
+
+loss:
+  - MAE
+
+rule_occurrence_threshold: 1
+
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.001
+epochs:
+  - 500
+
+early_stopping:
+  enabled: True
+  patience: 500
+  lr_threshold: 0.00001
+
+csv_flush_interval: 1
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default' }
+
+# concatenate_input: false on the positional-encoding layer discards the raw
+# constant node feature -> must stay 'constant' both here and in every TU
+# finetuning config so the shape-matched intermediate linears line up.
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+save_best_model: True
+# Emits the .keys.pt sidecar the TU finetuning runs' transfer: block reads.
+save_transfer_keys: True

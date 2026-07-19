@@ -1,39 +1,110 @@
-# Hyperparameters for ZINC (migrated from old monolithic main config).
+# Hyperparameters for ZINC-full (network_ZINC_full.yml): copy of
+# parameters_ZINC_test_v2.yml with the LR floor lowered to 1e-6 (min_lr and the
+# matching early-stopping lr_threshold).
 device: cpu
-share_gnn_forward: { batched: True }
+# precompute_rows: materializes the (head, i, j, param_idx) row cache for the
+# whole dataset once at construction instead of reassembling it every batch
+# (~7.45 ms/batch measured on the conv layer, ~14% of batch time). Needs
+# ~35.3 GiB for this network's conv layer (2,371,647,955 rows x 16 bytes);
+# precompute_rows_max_bytes is set to 40 GiB to cover that with headroom.
+# Also gated by a runtime RAM check (40% of available RAM, see
+# _check_memory_budget / the precompute_rows fits-check in
+# inv_based_message_passing.py) -- if available RAM is too low when this
+# actually runs, construction raises MemoryError instead of silently
+# skipping (precompute_rows: True, unlike 'auto', asks for a hard guarantee).
+# Drop to precompute_rows: 'auto' (or remove both keys) to fall back to the
+# safe, always-fits per-batch reconstruction.
+share_gnn_forward: { batched: True, precompute_rows: true, precompute_rows_max_bytes: 42949672960 }
 mode: experiments
-precision: double
+precision: float
 
+# Caps PyTorch's intra-op thread pool for this (single, serial) run.
+# run_configurations()/run_best_configuration() only force OMP_NUM_THREADS=1
+# when parallelizing across MULTIPLE joblib workers; a lone job otherwise
+# defaults to all logical cores, which is actively harmful here: ShareGNN's
+# many-small-op batched forward (small molecules, batch_size 32) is dominated
+# by thread-pool synchronization overhead once thread count grows past the
+# available parallel work. Measured on this dataset/machine (12-core/24-thread
+# CPU): 52 ms/batch at 8 threads vs. 2,727 ms/batch at 24 threads (52x). Tune
+# per machine if it differs; NOT grid-searchable (read directly, like
+# rule_occurrence_threshold below).
+torch_threads: 8
+
+# optimizer entries may be a bare name ('AdamW') or a dict with extra args
+# passed straight to the constructor. weight_decay here is the fast lever
+# against the invariant-layer overfitting. Listing several dicts grid-searches
+# the decay. fused=True fuses the per-parameter-tensor update into one kernel
+# call instead of one-per-tensor (~19 tensors here) -- measured ~45% faster
+# optimizer.step() on CPU with this model's parameter shapes, bit-identical
+# update rule.
 optimizer:
-  - Adam
+  - { type: 'AdamW', weight_decay: 0.00001, fused: true }
 
 loss:
   - MAE
 
-# rule_occurrence_threshold: how often a rule must occur to be used in the network
-rule_occurrence_threshold: 10
+# rule_occurrence_threshold: how often a rule must occur to be used in the network.
+# NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
+# scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
+# against overfitting: it deletes rare-rule parameters instead of shrinking them.
+rule_occurrence_threshold: 1
 
-weight_initialization: { convolution: { type: 'lower_upper', value: -0.001 },
-                         convolution_bias: { type: 'lower_upper', value: 0.0 },
-                         aggregation: { type: 'lower_upper', value: -0.001 },
-                         aggregation_bias: { type: 'lower_upper', value: 0.0 } }
+# l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
+# invariant-layer Param_W. Drives uninformative rule weights to exactly 0 (learned
+# rule selection) -> sparser than weight_decay, which only shrinks. Per-group
+# lambda; 0 = off. An unused weight loses lr*lambda per step (~steps_per_epoch*
+# lr*lambda per epoch); to zero ~1e-3 weights over ~1 epoch, lambda ~ 0.01.
+# Sweep around {0.002, 0.01, 0.05}; lambda>=1 is far too aggressive. NOT grid-
+# searchable (read directly, like rule_occurrence_threshold) -> edit per run.
+# encoding prunes the positional-encoding embedding table (network input), not a
+# message-passing rule, so it is riskier than convolution/aggregation -- an
+# aggressive lambda can zero out embedding capacity before it learns anything
+# useful. Matched to the same 0.01 here as a starting point; tune separately.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+
+# mean_aggregation: fan-in-scaled normal with a nonzero mean-aggregation prior.
+# gain=1.0, mean_ratio=-0.5 reproduces the old 'lower_upper' init exactly
+# (conv: std=0.0032, mean=-0.0016 ; aggr: std=0.0053, mean=-0.0027).
+# Sweep `gain` to scale (gain=2 -> 2x std), `mean_ratio` for the aggregation prior.
+# positional_encoding: init of the invariant-based encoder embedding tables
+# (supports uniform/normal/constant/lower_upper; falls back to normal(0, 0.1)
+# if the entry is removed).
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
 
 batch_size:
   - 128
 learning_rate:
   - 0.001
 epochs:
-  - 150
+  - 500
 
 early_stopping:
-  enabled: False
-  patience: 25
+  enabled: True
+  patience: 500
+  # Dwivedi et al. "Benchmarking GNNs" ZINC protocol: stop once
+  # ReduceLROnPlateau has annealed the LR down to its floor rather than
+  # running out the full epoch budget. Only takes effect once `enabled` is
+  # True (same flag as patience); matches scheduler.min_lr below.
+  lr_threshold: 0.000001
 
 csv_flush_interval: 1
 
-scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.0001 }
+# ReduceLROnPlateau with factor=0.5/patience=10: matches the Dwivedi et al.
+# "Benchmarking GNNs" protocol (the ZINC split/task this config follows),
+# for comparability against literature baselines. Previously tuned to
+# factor=0.8/patience=5 to spread halvings across a 500-epoch run instead of
+# front-loading them (see git history); CosineAnnealingLR was also tried here.
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.000001 }
 
 training_data_sampling: { type: 'default' }
 
-input_features: { name: node_labels, transformation: 'one_hot' }
+# The first layer is an invariant_based_positional_encoding with
+# concatenate_input: false, so the model's input node features are DISCARDED —
+# each node's feature vector comes from the learned per-invariant embedding, not
+# the one-hot atom type. Feed a constant instead (value discarded downstream).
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
 best_model: True

@@ -63,13 +63,19 @@ def write_distance_properties(graph_data:GraphDataset, cutoff=None, out_path: Pa
                 pair_chunks.setdefault(key, []).append(pairs)
                 counts.setdefault(key, np.zeros(num_graphs, dtype=np.int64))[graph_id] = len(pairs)
 
+        print(f"Finalizing distance properties for {graph_data.name} ({num_graphs} graphs)...")
         valid_properties, final_dict, slices_dict = _finalize_property_dicts(pair_chunks, counts)
 
         # save list of dictionaries to a pickle file
         pickle_data = pickle.dumps((valid_properties, final_dict, slices_dict))
-        # compress with gzip
+        print(f"Compressing and writing {len(pickle_data) / 1e6:.1f} MB of distance properties to {out}...")
+        # compress with gzip. compresslevel=4 (default is 9): level 9 is
+        # extremely slow on the large all-pairs distance blobs this produces
+        # (~100x slower than level 4 for only a marginal size reduction, see
+        # git history) and silently blocked here with no progress output.
         with open(out, 'wb') as f:
-            f.write(gzip.compress(pickle_data))
+            f.write(gzip.compress(pickle_data, compresslevel=4))
+        print(f"Done writing distance properties for {graph_data.name}.")
 
         #fs.torch_save(
         #    (valid_properties, properties_dict), str(out)
@@ -136,9 +142,13 @@ def write_distance_circle_properties(graph_data:GraphDataset, label_path, db_nam
         # save list of dictionaries to a pickle file
         pickle_data = pickle.dumps(final_properties)
 
-        # compress with gzip
+        print(f"Compressing and writing {len(pickle_data) / 1e6:.1f} MB of circle distance properties to {out}...")
+        # compress with gzip. compresslevel=4 (default is 9): level 9 is
+        # extremely slow on large blobs for a marginal size reduction, see
+        # write_distance_properties above for the benchmark.
         with open(out, 'wb') as f:
-            f.write(gzip.compress(pickle_data))
+            f.write(gzip.compress(pickle_data, compresslevel=4))
+        print(f"Done writing circle distance properties for {db_name}.")
         v_properties = [convert_to_list(x) for x in valid_properties]
         circle_properties = [convert_to_list(x) for x in valid_properties if x[1] == 1 and x[2] == 1]
         no_circle_properties = [convert_to_list(x) for x in valid_properties if x[1] == 0 and x[2] == 0]
@@ -244,13 +254,18 @@ def write_distance_edge_properties(graph_data:GraphDataset, out_path:Path = Path
                 pair_chunks.setdefault(key, []).append(np.asarray(pairs, dtype=np.int64))
                 counts.setdefault(key, np.zeros(num_graphs, dtype=np.int64))[graph_id] = len(pairs)
 
+        print(f"Finalizing edge label distance properties for {graph_data.name} ({num_graphs} graphs)...")
         valid_properties, final_dict, slices_dict = _finalize_property_dicts(pair_chunks, counts)
 
         # save list of dictionaries to a pickle file
         pickle_data = pickle.dumps((valid_properties, final_dict, slices_dict))
-        # compress with gzip
+        print(f"Compressing and writing {len(pickle_data) / 1e6:.1f} MB of edge label distance properties to {out}...")
+        # compress with gzip. compresslevel=4 (default is 9): level 9 is
+        # extremely slow on large blobs for a marginal size reduction, see
+        # write_distance_properties above for the benchmark.
         with open(out, 'wb') as f:
-            f.write(gzip.compress(pickle_data))
+            f.write(gzip.compress(pickle_data, compresslevel=4))
+        print(f"Done writing edge label distance properties for {graph_data.name}.")
 
         #fs.torch_save(
         #    (valid_properties, properties_dict), str(out)

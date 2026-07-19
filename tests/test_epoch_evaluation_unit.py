@@ -24,6 +24,7 @@ from simplegnn.framework.model_configuration import (
     loss_display_name,
     pooled_abs_error_stats,
     inverse_transform_targets,
+    ModelConfiguration,
 )
 
 
@@ -185,3 +186,57 @@ def test_pooled_running_accumulator_equals_full_pooled_stats():
     ref_mae, ref_std = pooled_abs_error_stats(torch.cat([batch_a, batch_b]))
     assert mae == pytest.approx(ref_mae)
     assert std == pytest.approx(ref_std, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# early_stopping: patience-based and LR-threshold-based (Dwivedi et al.
+# "Benchmarking GNNs" ZINC protocol) criteria
+# ---------------------------------------------------------------------------
+
+def _bare_model_configuration(early_stopping_cfg, lr):
+    from types import SimpleNamespace
+
+    config = ModelConfiguration.__new__(ModelConfiguration)
+    config.para = SimpleNamespace(
+        run_config=SimpleNamespace(config={'early_stopping': early_stopping_cfg}),
+        print_results=False,
+    )
+    config.best_epoch = {"epoch": 0}
+    config.optimizer = SimpleNamespace(param_groups=[{'lr': lr}])
+    return config
+
+
+def test_early_stopping_disabled_by_default():
+    config = _bare_model_configuration({'enabled': False}, lr=0.001)
+    assert config.early_stopping(epoch=1000) is False
+
+
+def test_early_stopping_patience_triggers_when_enabled():
+    config = _bare_model_configuration({'enabled': True, 'patience': 10}, lr=0.001)
+    assert config.early_stopping(epoch=5) is False
+    assert config.early_stopping(epoch=11) is True
+
+
+def test_early_stopping_lr_threshold_ignored_when_disabled():
+    # enabled: False disables lr_threshold too, even though the LR is already
+    # at/below the threshold.
+    config = _bare_model_configuration(
+        {'enabled': False, 'patience': 10, 'lr_threshold': 1e-5}, lr=1e-5)
+    assert config.early_stopping(epoch=1) is False
+
+
+def test_early_stopping_lr_threshold_triggers_when_enabled():
+    config = _bare_model_configuration(
+        {'enabled': True, 'patience': 1000, 'lr_threshold': 1e-5}, lr=1e-5)
+    assert config.early_stopping(epoch=1) is True
+
+
+def test_early_stopping_lr_threshold_not_yet_reached():
+    config = _bare_model_configuration(
+        {'enabled': True, 'patience': 1000, 'lr_threshold': 1e-5}, lr=1e-4)
+    assert config.early_stopping(epoch=1) is False
+
+
+def test_early_stopping_lr_threshold_absent_is_noop():
+    config = _bare_model_configuration({'enabled': True, 'patience': 1000}, lr=1e-9)
+    assert config.early_stopping(epoch=1) is False

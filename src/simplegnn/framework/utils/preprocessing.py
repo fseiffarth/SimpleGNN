@@ -143,9 +143,9 @@ class Preprocessing:
         Labels and properties directories are only created if specified in the
         configuration (paths['labels'] and paths['properties']).
 
-        Two timing log files are created in the results directory:
-        - generation_times_labels.txt
-        - generation_times_properties.txt
+        Timing log files are created in the per-dataset subfolder of those directories:
+        - <labels>/<dataset_name>/generation_times_labels.txt
+        - <properties>/<dataset_name>/generation_times_properties.txt
         """
         # create config folders if they do not exist
         self.experiment_configuration['paths']['data'].mkdir(exist_ok=True, parents=True)
@@ -162,25 +162,23 @@ class Preprocessing:
         else:
             self.experiment_configuration['paths']['splits'].mkdir(exist_ok=True, parents=True)
         # create folders labels, properties, splits only if they are not None
+        # and create the generation time log files in the per-dataset subfolder
         if self.experiment_configuration['paths'].get('labels', None) is not None:
-            self.experiment_configuration['paths']['labels'].mkdir(exist_ok=True, parents=True)
+            labels_path = self.experiment_configuration['paths']['labels'].joinpath(self.db_name)
+            labels_path.mkdir(exist_ok=True, parents=True)
+            self.generation_times_labels_path = labels_path.joinpath('generation_times_labels.txt')
+            if not self.generation_times_labels_path.exists():
+                with open(self.generation_times_labels_path, 'a') as f:
+                    f.write('| Dataset | Label | Time (s) |\n')
+                    f.write('| --- | --- | --- |\n')
         if self.experiment_configuration['paths'].get('properties', None) is not None:
-            self.experiment_configuration['paths']['properties'].mkdir(exist_ok=True, parents=True)
-
-
-
-
-        # if not exists create the generation_times_labels.txt and generation_times_properties.txt in the Results folder
-        if not Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_labels.txt').exists():
-            with open(Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_labels.txt'), 'a') as f:
-                f.write('| Dataset | Label | Time (s) |\n')
-                f.write('| --- | --- | --- |\n')
-        if not Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_properties.txt').exists():
-            with open(Path(self.experiment_configuration['paths']['results']).joinpath('generation_times_properties.txt'), 'a') as f:
-                f.write('| Dataset | Property | Time (s) |\n')
-                f.write('| --- | --- | --- |\n')
-        self.generation_times_labels_path = self.experiment_configuration['paths']['results'].joinpath('generation_times_labels.txt')
-        self.generation_times_properties_path = self.experiment_configuration['paths']['results'].joinpath('generation_times_properties.txt')
+            properties_path = self.experiment_configuration['paths']['properties'].joinpath(self.db_name)
+            properties_path.mkdir(exist_ok=True, parents=True)
+            self.generation_times_properties_path = properties_path.joinpath('generation_times_properties.txt')
+            if not self.generation_times_properties_path.exists():
+                with open(self.generation_times_properties_path, 'a') as f:
+                    f.write('| Dataset | Property | Time (s) |\n')
+                    f.write('| --- | --- | --- |\n')
 
     def generate_data(self, dataset, data_generation_type, data_generation_args):
         """

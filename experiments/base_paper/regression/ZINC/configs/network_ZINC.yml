@@ -19,87 +19,73 @@ models:
     - num: 2
       labels:
         label_type:
-        - induced_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 5
-        min_cycle_length: 5
+        min_walk_length: 1
+        max_walk_length: 1
     - num: 2
       labels:
         label_type:
-        - induced_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 6
-        min_cycle_length: 6
+        min_walk_length: 2
+        max_walk_length: 2
     - num: 2
       labels:
         label_type:
-        - induced_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 7
-        min_cycle_length: 7
+        min_walk_length: 3
+        max_walk_length: 3
     - num: 2
       labels:
         label_type:
-        - induced_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 8
-        min_cycle_length: 8
+        min_walk_length: 4
+        max_walk_length: 4
     - num: 2
       labels:
         label_type:
-        - induced_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 9
-        min_cycle_length: 9
+        min_walk_length: 5
+        max_walk_length: 5
     - num: 2
       labels:
         label_type:
-        - induced_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 10
-        min_cycle_length: 10
+        min_walk_length: 6
+        max_walk_length: 6
     - num: 2
       labels:
         label_type:
-        - simple_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 5
-        min_cycle_length: 5
+        min_walk_length: 7
+        max_walk_length: 7
     - num: 2
       labels:
         label_type:
-        - simple_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 6
-        min_cycle_length: 6
+        min_walk_length: 8
+        max_walk_length: 8
     - num: 2
       labels:
         label_type:
-        - simple_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 7
-        min_cycle_length: 7
+        min_walk_length: 9
+        max_walk_length: 9
     - num: 2
       labels:
         label_type:
-        - simple_cycles
+        - closed_walks
         - primary
-        max_cycle_length: 8
-        min_cycle_length: 8
-    - num: 2
-      labels:
-        label_type:
-        - simple_cycles
-        - primary
-        max_cycle_length: 9
-        min_cycle_length: 9
-    - num: 2
-      labels:
-        label_type:
-        - simple_cycles
-        - primary
-        max_cycle_length: 10
-        min_cycle_length: 10
+        min_walk_length: 10
+        max_walk_length: 10
     - num: 2
       labels:
         label_type: primary

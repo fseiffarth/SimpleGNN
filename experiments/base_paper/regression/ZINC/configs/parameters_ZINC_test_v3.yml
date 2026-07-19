@@ -1,7 +1,13 @@
 # Hyperparameters for ZINC test v3 (network_ZINC_test_v3.yml): identical to
-# parameters_ZINC_test_v2.yml EXCEPT rule_occurrence_threshold: 1 (no count-based
-# rule pruning). Strategy: keep every rule and let the proximal L1 do loss-driven
-# selection instead of frequency-based pruning (specs/15).
+# parameters_ZINC_test_v2.yml EXCEPT the scheduler, which is swapped for GRIT's
+# exact 'cosine_with_warmup' LR strategy (arxiv.org/abs/2305.17589, official
+# config configs/GRIT/zinc-GRIT-RRWP.yaml): linear warmup over 50 epochs then a
+# half-cosine decay to 0 over the remaining epochs of a 2000-epoch budget.
+# epochs is kept at 500 (not GRIT's 2000) -- the cosine curve is normalized by
+# scheduler.max_epoch (still 2000 below), so this run only ever covers the first
+# quarter of GRIT's LR trajectory: fast warmup then lr staying high (never
+# reaching the fine-tuning tail near 0). Intentional tradeoff to keep the run
+# at 500 epochs; not a literal reproduction of GRIT's full schedule.
 device: cpu
 share_gnn_forward: { batched: True }
 mode: experiments
@@ -10,20 +16,17 @@ precision: float
 # optimizer entries may be a bare name ('AdamW') or a dict with extra args
 # passed straight to the constructor. weight_decay here is the fast lever
 # against the invariant-layer overfitting. Listing several dicts grid-searches
-# the decay.
+# the decay. 0.00001 also matches GRIT's own weight_decay (1e-5).
 optimizer:
-  - { type: 'AdamW', weight_decay: 0.001 }
+  - { type: 'AdamW', weight_decay: 0.00001 }
 
 loss:
   - MAE
 
 # rule_occurrence_threshold: how often a rule must occur to be used in the network.
 # NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
-# scalar and edit per run. v3 sets it to 1: NO count-based pruning -> every rule
-# (incl. singletons seen in one graph) gets a weight, and the proximal L1 below
-# does the pruning on loss/gradient signal instead of frequency. This keeps a
-# rare-but-discriminative rule if it earns its weight; count-based pruning (>=2)
-# would drop it blind.
+# scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
+# against overfitting: it deletes rare-rule parameters instead of shrinking them.
 rule_occurrence_threshold: 1
 
 # l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
@@ -33,7 +36,11 @@ rule_occurrence_threshold: 1
 # lr*lambda per epoch); to zero ~1e-3 weights over ~1 epoch, lambda ~ 0.01.
 # Sweep around {0.002, 0.01, 0.05}; lambda>=1 is far too aggressive. NOT grid-
 # searchable (read directly, like rule_occurrence_threshold) -> edit per run.
-l1_regularization: { convolution: 0.01, aggregation: 0.01 }
+# encoding prunes the positional-encoding embedding table (network input), not a
+# message-passing rule, so it is riskier than convolution/aggregation -- an
+# aggressive lambda can zero out embedding capacity before it learns anything
+# useful. Matched to the same 0.01 here as a starting point; tune separately.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
 
 # mean_aggregation: fan-in-scaled normal with a nonzero mean-aggregation prior.
 # gain=1.0, mean_ratio=-0.5 reproduces the old 'lower_upper' init exactly
@@ -43,13 +50,13 @@ l1_regularization: { convolution: 0.01, aggregation: 0.01 }
 # (supports uniform/normal/constant/lower_upper; falls back to normal(0, 0.1)
 # if the entry is removed).
 weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
-                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
                          aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
-                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
                          positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
 
 batch_size:
-  - 128
+  - 32
 learning_rate:
   - 0.001
 epochs:
@@ -57,16 +64,16 @@ epochs:
 
 early_stopping:
   enabled: False
-  patience: 25
+  patience: 100
 
 csv_flush_interval: 1
 
-# v3 scheduler: single cosine decay from lr=1e-3 to eta_min over all 500 epochs.
-# Because the proximal-L1 threshold is lr*lambda, cosine-annealing lr also anneals
-# the pruning strength: high early (aggressive, loss-driven rule selection while
-# the network is plastic) -> gentle late (fine-tune the surviving rules without
-# eroding them). T_max defaults to `epochs` if omitted.
-scheduler: { type: 'CosineAnnealingLR', T_max: 500, eta_min: 0.00001 }
+# GRIT's exact 'cosine_with_warmup': lr ramps linearly from ~0 to the base
+# learning_rate (0.001) over num_warmup_epochs, then follows a half-cosine decay
+# to 0 over the remaining epochs up to max_epoch. Port of HuggingFace's
+# get_cosine_schedule_with_warmup (num_cycles=0.5), which is what GRIT/GraphGPS's
+# 'cosine_with_warmup' wraps -- see graphgps/optimizer/extra_optimizers.py.
+scheduler: { type: 'CosineWarmup', num_warmup_epochs: 50, max_epoch: 500 }
 
 training_data_sampling: { type: 'default' }
 

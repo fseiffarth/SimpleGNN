@@ -1,0 +1,23 @@
+# SubstructureBenchmark ("multi") pretraining run of the Substructure -> TU
+# hash-keyed transfer experiment (spec 18): train on synthetic, zero-shot on
+# real-world. save_best_model + save_transfer_keys in
+# parameters_transfer_Substructure_pretrain.yml produce the checkpoint and
+# .keys.pt sidecar that every TU finetuning run
+# (main_config_MUTAG_finetune.yml, main_config_NCI1_finetune.yml, ...)
+# transfers from.
+datasets:
+  - {
+      name: "multi",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/transfer/Substructure_to_TU/pretrain/",
+        models: "experiments/base_paper/transfer/Substructure_to_TU/configs/network_transfer_Substructure_pretrain.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_TU/configs/parameters_transfer_Substructure_pretrain.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/multi_splits.json",
+      }
+  }

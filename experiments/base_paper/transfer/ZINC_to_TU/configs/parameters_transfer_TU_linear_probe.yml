@@ -1,0 +1,57 @@
+# Hyperparameters shared by every TU finetuning run (MUTAG, NCI1, NCI109,
+# Mutagenicity, DHFR, ...) of the ZINC -> TU hash-keyed transfer experiment
+# (spec 18). "Zero-shot"-style evaluation: strategy: linear_probe freezes every
+# invariant-layer slot that received a transferred weight (spec 18 B3.5) and
+# trains only the freshly initialized classification head -- the closest thing
+# to zero-shot the framework supports, since ZINC's regression head (1 output)
+# cannot be reused for 2-class graph classification and must be reinitialized
+# regardless.
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+loss:
+  - CrossEntropyLoss
+
+batch_size:
+  - 32
+learning_rate:
+  - 0.01
+epochs:
+  - 100
+
+early_stopping:
+  enabled: False
+  patience: 50
+
+csv_flush_interval: 1
+
+training_data_sampling: { type: 'default' }
+
+# must stay 'constant' (matching parameters_transfer_ZINC_pretrain.yml) so the
+# aggr_channels/aggr_features linears shape-match for transfer.
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+save_best_model: True
+save_transfer_keys: True
+
+# hash-keyed transfer from the ZINC pretraining run (spec 18 B4 schema).
+# `dataset` under `source` is the pretraining run's db name (ZINC) -- fixed
+# across every TU target; only main_config_<target>_finetune.yml's own
+# `datasets[0].name` changes per run.
+transfer:
+  source:
+    results_path: results/base_paper/transfer/ZINC_to_TU/pretrain/   # ZINC pretraining results dir
+    dataset: ZINC
+    select: best                                # best | {config_id: 0, run_id: 0, validation_id: 0}
+  strategy: linear_probe                        # freeze every transferred invariant slot
+  head:
+    reinit: always                              # regression -> classification: always reinit
+  invariant_transfer:
+    match: hashes                                # hashes | none
+    on_missing: reinit                           # unmatched slots (poor ZINC<->TU overlap) keep fresh init
+    allow_non_canonical: False                   # never match dataset-relative labelings (primary etc.)
+    min_overlap_warn: 0.10
+  freeze: []                                     # linear_probe already freezes transferred invariant slots

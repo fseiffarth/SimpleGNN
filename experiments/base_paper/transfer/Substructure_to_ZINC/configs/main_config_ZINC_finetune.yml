@@ -1,0 +1,21 @@
+# ZINC finetuning run of the Substructure -> ZINC hash-keyed transfer
+# experiment (spec 18): train on synthetic, zero-shot on real-world.
+# Warm-started from the SubstructureBenchmark ("multi") pretraining checkpoint
+# via the transfer: block in parameters_transfer_ZINC_linear_probe.yml
+# (hash-keyed invariant transfer, strategy: linear_probe, head re-initialized).
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/transfer/Substructure_to_ZINC/finetune/",
+        models: "experiments/base_paper/transfer/Substructure_to_ZINC/configs/network_transfer_ZINC_finetune.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_ZINC/configs/parameters_transfer_ZINC_linear_probe.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

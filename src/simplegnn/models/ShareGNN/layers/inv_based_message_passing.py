@@ -670,12 +670,12 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 for h, meta in enumerate(self._cfg_meta))
             rows_bytes = total_rows * 16  # 4x int32 columns
             available = available_memory_bytes()
-            fits = rows_bytes <= max_bytes and (available is None or rows_bytes <= 0.25 * available)
+            fits = rows_bytes <= max_bytes and (available is None or rows_bytes <= 0.40 * available)
             if precompute is True and not fits:
                 raise MemoryError(
                     f"Layer {self.layer_id}: precompute_rows=True would materialize "
                     f"{rows_bytes / 2**30:.1f} GiB of assembled rows "
-                    f"(limit {max_bytes / 2**30:.1f} GiB / 25% of available RAM). "
+                    f"(limit {max_bytes / 2**30:.1f} GiB / 40% of available RAM). "
                     f"Raise precompute_rows_max_bytes or use precompute_rows: 'auto'/False.")
             if fits:
                 self._materialize_rows(total_rows)

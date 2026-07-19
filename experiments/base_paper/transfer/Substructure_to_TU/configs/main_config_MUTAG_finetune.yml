@@ -1,0 +1,23 @@
+# MUTAG finetuning run of the Substructure -> TU hash-keyed transfer
+# experiment (spec 18): train on synthetic, zero-shot on real-world.
+# Warm-started from the SubstructureBenchmark ("multi") pretraining checkpoint
+# via the transfer: block in parameters_transfer_TU_linear_probe.yml
+# (hash-keyed invariant transfer, strategy: linear_probe, head re-initialized).
+# Uses the same network_transfer_TU_finetune.yml as every other TU target so
+# the exported per-head weight keys line up head-by-head.
+datasets:
+  - {
+      name: "MUTAG",
+      source: "TUDataset",
+      task: "graph_classification",
+      validation_folds: 10,
+      paths: {
+        data: "data/TUDatasets/",
+        labels: "data/TUDatasets/labels/",
+        properties: "data/TUDatasets/properties/",
+        results: "results/base_paper/transfer/Substructure_to_TU/finetune/",
+        models: "experiments/base_paper/transfer/Substructure_to_TU/configs/network_transfer_TU_finetune.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_TU/configs/parameters_transfer_TU_linear_probe.yml",
+        splits: "src/simplegnn/datasets/splits/fair/MUTAG_splits.json",
+      }
+  }
