@@ -6,14 +6,29 @@ set -e
 # Note: To make this script executable, run:
 # chmod +x install.sh
 
-# --- Select a Python interpreter (prefer newest 3.13 -> 3.10) ---
+# --- Select a Python interpreter (prefer OS Python, newest 3.13 -> 3.10) ---
+python_supports_venv() {
+    "$1" -c "import venv, ensurepip" &> /dev/null
+}
+
 select_python() {
     for v in 3.13 3.12 3.11 3.10; do
-        if command -v "python$v" &> /dev/null; then
-            echo "python$v"
+        for dir in /usr/bin /bin /usr/local/bin; do
+            candidate="$dir/python$v"
+            if [ -x "$candidate" ] && python_supports_venv "$candidate"; then
+                echo "$candidate"
+                return 0
+            fi
+        done
+    done
+
+    for v in 3.13 3.12 3.11 3.10; do
+        if candidate=$(command -v "python$v" 2> /dev/null) && python_supports_venv "$candidate"; then
+            echo "$candidate"
             return 0
         fi
     done
+
     return 1
 }
 
@@ -65,9 +80,9 @@ else
     if PYTHON_CMD=$(select_python); then
         echo "Using $PYTHON_CMD..."
     else
-        echo "Error: None of Python 3.13, 3.12, 3.11, or 3.10 is installed."
+        echo "Error: None of Python 3.13, 3.12, 3.11, or 3.10 with venv support is installed."
         echo ""
-        echo "Please install Python 3.13, 3.12, 3.11, or 3.10 and try again."
+        echo "Please install Python 3.13, 3.12, 3.11, or 3.10 with venv support and try again."
         echo ""
         echo "Installation hints:"
         echo "- Ubuntu/Debian: sudo apt-get update && sudo apt-get install python3.13 python3.13-venv python3.13-dev"
