@@ -90,6 +90,7 @@ def test_transfer_config_list_is_validated_per_entry():
     ({"source": {"results_path": "r/", "dataset": "DB",
                  "select": {"bogus": 0}}}, "source.select"),
     ({"source": None}, "transfer.source"),
+    ({"random_init": "yes"}, "transfer.random_init"),
 ])
 def test_bad_transfer_config_raises(patch, match):
     cfg = valid_transfer_config()
@@ -101,6 +102,13 @@ def test_bad_transfer_config_raises(patch, match):
 def test_transfer_config_must_be_mapping():
     with pytest.raises(ValueError, match="mapping"):
         check_transfer_configuration("finetune")
+
+
+def test_transfer_config_random_init_passes():
+    cfg = valid_transfer_config()
+    cfg["strategy"] = "linear_probe"
+    cfg["random_init"] = True
+    check_transfer_configuration(cfg)
 
 
 def test_hyperparameter_check_validates_transfer_block(minimal_hyper_config):

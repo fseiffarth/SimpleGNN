@@ -11,6 +11,8 @@ datasets:
       source: "TUDataset",
       task: "graph_classification",
       validation_folds: 10,
+      num_workers: 4,  # cap joblib parallel processes; -1 (default) OOM'd here on 2026-07-21
+                        # (24 loky workers x several GB each on a 24-thread/122GB box)
       paths: {
         data: "data/TUDatasets/",
         labels: "data/TUDatasets/labels/",

@@ -196,6 +196,49 @@ def test_resolve_source_checkpoint(tmp_path):
         resolve_source_checkpoint(tmp_path, "DB", "bogus")
 
 
+def _write_run_csv(results_dir, run_id, accuracies, losses):
+    """Minimal per-epoch result CSV in the framework's ';'-separated format."""
+    path = results_dir / f"DB_Best_Configuration_000000_Results_run_id_{run_id}_validation_step_0.csv"
+    rows = ["Epoch;ValidationAccuracy;ValidationLoss"]
+    rows += [f"{epoch};{accuracy};{loss}"
+             for epoch, (accuracy, loss) in enumerate(zip(accuracies, losses))]
+    path.write_text("\n".join(rows) + "\n")
+
+
+def test_resolve_source_checkpoint_best_validation(tmp_path):
+    models = tmp_path / "DB" / "Models"
+    results = tmp_path / "DB" / "Results"
+    models.mkdir(parents=True)
+    results.mkdir(parents=True)
+    for run_id in range(3):
+        (models / f"model_Best_Configuration_000000_run_{run_id}_val_step_0.pt").touch()
+
+    # regression-style run: accuracy stays 0, the loss decides -> run 1 wins
+    _write_run_csv(results, 0, [0.0, 0.0], [0.5, 0.4])
+    _write_run_csv(results, 1, [0.0, 0.0], [0.5, 0.2])
+    _write_run_csv(results, 2, [0.0, 0.0], [0.9, 0.7])
+    assert resolve_source_checkpoint(tmp_path, "DB", "best_validation").name == \
+        "model_Best_Configuration_000000_run_1_val_step_0.pt"
+    # plain 'best' stays positional (run 0), which is what it always did
+    assert resolve_source_checkpoint(tmp_path, "DB", "best").name == \
+        "model_Best_Configuration_000000_run_0_val_step_0.pt"
+
+    # classification-style run: accuracy varies and decides -> run 2 wins
+    _write_run_csv(results, 0, [50.0, 60.0], [0.5, 0.4])
+    _write_run_csv(results, 1, [50.0, 61.0], [0.5, 0.2])
+    _write_run_csv(results, 2, [50.0, 72.0], [0.9, 0.7])
+    assert resolve_source_checkpoint(tmp_path, "DB", "best_validation").name == \
+        "model_Best_Configuration_000000_run_2_val_step_0.pt"
+
+
+def test_resolve_source_checkpoint_best_validation_without_results(tmp_path):
+    models = tmp_path / "DB" / "Models"
+    models.mkdir(parents=True)
+    (models / "model_Best_Configuration_000000_run_0_val_step_0.pt").touch()
+    with pytest.raises(FileNotFoundError, match="best_validation"):
+        resolve_source_checkpoint(tmp_path, "DB", "best_validation")
+
+
 def test_apply_transfer_rejects_bad_enums():
     module = torch.nn.Linear(2, 2)
     with pytest.raises(ValueError, match="match"):
@@ -480,6 +523,51 @@ def test_transfer_strategy_linear_probe_and_freeze(share_gnn_setup):
     for param in net_c.net_layers[linear_ids[0]].parameters():
         assert not param.requires_grad
     assert _conv(net_c).Param_W.requires_grad
+
+
+@pytest.mark.integration
+def test_apply_transfer_random_init_freezes_backbone_untouched(share_gnn_setup):
+    """random_init: true must leave every backbone layer at its own fresh
+    init (no weight copied from the source), while strategy: linear_probe
+    still freezes the whole backbone and leaves only the reinitialized head
+    trainable -- the untrained-backbone baseline."""
+    from simplegnn.models.model import GraphModel
+
+    graph_data, para = share_gnn_setup
+    net_a = GraphModel(graph_data=graph_data, para=para, seed=1, device="cpu")
+    with torch.no_grad():
+        for param in net_a.parameters():
+            torch.nn.init.normal_(param, std=0.5)
+    source_sd = {k: v.clone() for k, v in net_a.state_dict().items()}
+    source_keys = net_a.export_transfer_keys()
+
+    net_b = GraphModel(graph_data=graph_data, para=para, seed=2, device="cpu")
+    conv_before = _conv(net_b).Param_W.detach().clone()
+    pool_before = _pool(net_b).Param_W.detach().clone()
+    linear_ids = [i for i, l in enumerate(net_b.net_layers)
+                  if type(l).__name__ == "LinearLayer"]
+    first_linear_before = {k: v.clone()
+                           for k, v in net_b.net_layers[linear_ids[0]].state_dict().items()}
+
+    cfg = {"strategy": "linear_probe", "random_init": True,
+           "invariant_transfer": {"allow_non_canonical": True}}
+    report = apply_transfer(net_b, source_sd, source_keys, cfg)
+    frozen = apply_transfer_strategy(net_b, cfg, report)
+
+    # nothing was copied from net_a: every layer kept its own fresh init
+    torch.testing.assert_close(_conv(net_b).Param_W, conv_before, rtol=0, atol=0)
+    torch.testing.assert_close(_pool(net_b).Param_W, pool_before, rtol=0, atol=0)
+    for name, value in net_b.net_layers[linear_ids[0]].state_dict().items():
+        torch.testing.assert_close(value, first_linear_before[name], rtol=0, atol=0)
+    assert all(entry["matched"] == 0 for entry in report.layers)
+    assert all(entry["action"] in ("random_init", "head_reinit") for entry in report.layers)
+
+    # random_init still freezes the whole backbone, only the head trains
+    assert frozen
+    assert not _conv(net_b).Param_W.requires_grad
+    assert not _pool(net_b).Param_W.requires_grad
+    for param in net_b.net_layers[linear_ids[-1]].parameters():
+        assert param.requires_grad
 
 
 def test_non_canonical_property_keys_gate_head():

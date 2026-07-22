@@ -25,10 +25,12 @@ precision: float
 # many-small-op batched forward (small molecules, batch_size 32) is dominated
 # by thread-pool synchronization overhead once thread count grows past the
 # available parallel work. Measured on this dataset/machine (12-core/24-thread
-# CPU): 52 ms/batch at 8 threads vs. 2,727 ms/batch at 24 threads (52x). Tune
-# per machine if it differs; NOT grid-searchable (read directly, like
-# rule_occurrence_threshold below).
-torch_threads: 8
+# CPU): 52 ms/batch at 8 threads vs. 2,727 ms/batch at 24 threads (52x).
+# 'auto' adapts to the host as max(8, os.cpu_count() // 2) clamped to the core
+# count: 8 on smaller machines, more on big ones (16 on a 32-thread box), and
+# no oversubscription on few-core CPUs. Set a fixed integer to pin a specific
+# count. NOT grid-searchable (read directly, like rule_occurrence_threshold).
+torch_threads: auto
 
 # optimizer entries may be a bare name ('AdamW') or a dict with extra args
 # passed straight to the constructor. weight_decay here is the fast lever
@@ -38,7 +40,7 @@ torch_threads: 8
 # optimizer.step() on CPU with this model's parameter shapes, bit-identical
 # update rule.
 optimizer:
-  - { type: 'AdamW', weight_decay: 0.00001, fused: true }
+  - { type: 'AdamW', weight_decay: 0.0, fused: true }
 
 loss:
   - MAE
@@ -47,7 +49,7 @@ loss:
 # NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
 # scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
 # against overfitting: it deletes rare-rule parameters instead of shrinking them.
-rule_occurrence_threshold: 1
+rule_occurrence_threshold: 2
 
 # l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
 # invariant-layer Param_W. Drives uninformative rule weights to exactly 0 (learned
@@ -60,7 +62,7 @@ rule_occurrence_threshold: 1
 # message-passing rule, so it is riskier than convolution/aggregation -- an
 # aggressive lambda can zero out embedding capacity before it learns anything
 # useful. Matched to the same 0.01 here as a starting point; tune separately.
-l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+l1_regularization: { convolution: 0.0, aggregation: 0.0, encoding: 0.0 }
 
 # mean_aggregation: fan-in-scaled normal with a nonzero mean-aggregation prior.
 # gain=1.0, mean_ratio=-0.5 reproduces the old 'lower_upper' init exactly
@@ -78,7 +80,7 @@ weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mea
 batch_size:
   - 128
 learning_rate:
-  - 0.001
+  - 0.0001
 epochs:
   - 500
 
@@ -89,7 +91,7 @@ early_stopping:
   # ReduceLROnPlateau has annealed the LR down to its floor rather than
   # running out the full epoch budget. Only takes effect once `enabled` is
   # True (same flag as patience); matches scheduler.min_lr below.
-  lr_threshold: 0.000001
+  lr_threshold: 0.0000001
 
 csv_flush_interval: 1
 
@@ -98,7 +100,7 @@ csv_flush_interval: 1
 # for comparability against literature baselines. Previously tuned to
 # factor=0.8/patience=5 to spread halvings across a 500-epoch run instead of
 # front-loading them (see git history); CosineAnnealingLR was also tried here.
-scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.000001 }
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.0000001 }
 
 training_data_sampling: { type: 'default' }
 

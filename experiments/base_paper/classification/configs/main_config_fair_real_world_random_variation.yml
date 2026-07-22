@@ -2,11 +2,11 @@
 datasets:
   - { name: "IMDB-BINARY", source: "TUDataset", task: "graph_classification", validation_folds: 10,
       paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
-               results: "results/base_paper/classification/RealWorld/Random/", models: "experiments/base_paper/classification/configs/config_social.yml",
+               results: "results/base_paper/classification/RealWorld/Random/", models: "experiments/base_paper/classification/configs/config_social_binary.yml",
                hyperparameters: "experiments/base_paper/classification/configs/parameters_fair_random.yml", splits: "src/simplegnn/datasets/splits/fair/IMDB-BINARY_splits.json" } }
   - { name: "IMDB-MULTI", source: "TUDataset", task: "graph_classification", validation_folds: 10,
       paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
-               results: "results/base_paper/classification/RealWorld/Random/", models: "experiments/base_paper/classification/configs/config_social.yml",
+               results: "results/base_paper/classification/RealWorld/Random/", models: "experiments/base_paper/classification/configs/config_social_multi.yml",
                hyperparameters: "experiments/base_paper/classification/configs/parameters_fair_random.yml", splits: "src/simplegnn/datasets/splits/fair/IMDB-MULTI_splits.json" } }
   - { name: "NCI1", source: "TUDataset", task: "graph_classification", validation_folds: 10,
       paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",

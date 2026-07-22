@@ -29,7 +29,7 @@ MANDATORY_HYPERPARAMETERS_CONFIG_PARAMS = [
 # allowed keys and enum values of the `transfer:` block (spec 18 B4); the
 # schema is validated statically at config-load time so typos and bad enum
 # values fail before any preprocessing or training starts
-TRANSFER_CONFIG_KEYS = {'source', 'strategy', 'head', 'invariant_transfer', 'freeze'}
+TRANSFER_CONFIG_KEYS = {'source', 'strategy', 'head', 'invariant_transfer', 'freeze', 'random_init'}
 TRANSFER_SOURCE_KEYS = {'results_path', 'dataset', 'select'}
 TRANSFER_SOURCE_SELECT_KEYS = {'config_id', 'run_id', 'validation_id'}
 TRANSFER_HEAD_KEYS = {'reinit'}
@@ -291,13 +291,17 @@ def check_transfer_configuration(transfer_configuration):
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(
                     f'transfer.source.select.{key} must be an integer, got {value!r}.')
-    elif select not in (None, 'best', 'Best'):
+    elif select not in (None, 'best', 'Best', 'best_validation'):
         raise ValueError(
-            f"transfer.source.select must be 'best' or a mapping with "
+            f"transfer.source.select must be 'best', 'best_validation' or a mapping with "
             f"config_id/run_id/validation_id, got {select!r}.")
 
     _check_transfer_enum(transfer_configuration.get('strategy', 'finetune'),
                          TRANSFER_STRATEGY_VALUES, 'strategy')
+
+    random_init = transfer_configuration.get('random_init', False)
+    if not isinstance(random_init, bool):
+        raise ValueError(f'transfer.random_init must be a boolean, got {random_init!r}.')
 
     head = transfer_configuration.get('head', None) or {}
     if not isinstance(head, dict):

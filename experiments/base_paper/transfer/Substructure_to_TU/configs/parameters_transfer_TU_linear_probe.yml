@@ -44,7 +44,7 @@ transfer:
   source:
     results_path: results/base_paper/transfer/Substructure_to_TU/pretrain/   # pretraining results dir
     dataset: multi                              # db name of the source checkpoint
-    select: best                                # best | {config_id: 0, run_id: 0, validation_id: 0}
+    select: best_validation  # best (positional run 0) | best_validation | {config_id: 0, run_id: 0, validation_id: 0}
   strategy: linear_probe                        # freeze every transferred invariant slot
   head:
     reinit: always                              # multi-count head -> TU classification: always reinit

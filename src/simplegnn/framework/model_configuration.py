@@ -416,9 +416,23 @@ class ModelConfiguration:
         # 2,727 ms/batch at 24 threads on a 12-core/24-thread CPU, because
         # thread-pool synchronization overhead swamps the tiny per-op compute.
         # Off (no-op) unless set, so existing configs/behavior are unchanged.
+        # Accepts 'auto' / -1 to adapt to the host instead of pinning a fixed
+        # count: 'auto' uses half the logical cores (min 1). Full core count was
+        # measured catastrophic on this many-small-op workload (52 ms/batch at 8
+        # threads vs. 2,727 ms at 24 on a 24-thread CPU), so staying well below
+        # core count matters more than squeezing out the last threads; half is a
+        # simple, monotonic rule that grows with the machine (8 on 16-thread, 16
+        # on 32-thread) without oversubscribing. An explicit integer is instead
+        # clamped at the logical core count.
         torch_threads = self.para.run_config.config.get('torch_threads', None)
         if torch_threads is not None:
-            torch.set_num_threads(int(torch_threads))
+            cpu_count = os.cpu_count() or 1
+            if isinstance(torch_threads, str) and torch_threads.lower() == 'auto' \
+                    or torch_threads == -1:
+                torch_threads = max(1, cpu_count // 2)
+            else:
+                torch_threads = min(int(torch_threads), cpu_count)
+            torch.set_num_threads(torch_threads)
         if self.para.run_config.config.get('deterministic', False):
             torch.set_num_threads(1)
             torch.use_deterministic_algorithms(True)
@@ -1725,6 +1739,18 @@ class ModelConfiguration:
                 return features
             return f"{features} ({layer['in_channels']} → {layer['out_channels']} ch)"
 
+        def tensor_shape(channels, features):
+            # Matches the framework's (C, N, F) / (N, F) convention (see
+            # FrameworkLayer docstring); N (node count) is batch-dependent
+            # and shown symbolically.
+            if channels == 1:
+                return f"(N, {features})"
+            return f"({channels}, N, {features})"
+
+        def tensor_dim(layer):
+            return (f"{tensor_shape(layer['in_channels'], layer['in_features'])} → "
+                    f"{tensor_shape(layer['out_channels'], layer['out_features'])}")
+
         lines = [
             f"# Network report: {info['db']} · {info['config_id']}",
             "",
@@ -1813,15 +1839,15 @@ class ModelConfiguration:
         lines += [
             "## Architecture",
             "",
-            "| # | Layer | Class | Dimensions | Trainable parameters | Share |",
-            "|---:|---|---|---|---:|---:|",
+            "| # | Layer | Class | Dimensions | Tensor dimensions | Trainable parameters | Share |",
+            "|---:|---|---|---|---|---:|---:|",
         ]
         for i, layer in enumerate(info['layers']):
             share = 100 * layer['trainable_parameters'] / total if total else 0.0
             lines.append(f"| {i} | {layer['name']} | `{layer['class']}` | {dim(layer)} | "
-                         f"{num(layer['trainable_parameters'])} | {share:.1f} % |")
+                         f"{tensor_dim(layer)} | {num(layer['trainable_parameters'])} | {share:.1f} % |")
         lines += [
-            f"| | **Total** | | | **{num(total)}** | 100.0 % |",
+            f"| | **Total** | | | | **{num(total)}** | 100.0 % |",
             "",
             "```mermaid",
             "flowchart LR",
@@ -1845,6 +1871,7 @@ class ModelConfiguration:
                 "|---|---|",
                 f"| Class | `{layer['class']}` |",
                 f"| Dimensions | {dim(layer)} |",
+                f"| Tensor dimensions | {tensor_dim(layer)} |",
                 f"| Trainable parameters | {num(layer['trainable_parameters'])} |",
                 f"| Weight matrix parameters | {num(layer['weight_parameters'])} |",
                 f"| Bias parameters | {num(layer['bias_parameters'])} |",

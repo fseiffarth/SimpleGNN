@@ -2,11 +2,11 @@
 datasets:
   - { name: "IMDB-MULTI", source: "TUDataset", task: "graph_classification", validation_folds: 10,
       paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
-               results: "results/base_paper/classification/Sota/", models: "experiments/base_paper/classification/configs/config_social.yml",
+               results: "results/base_paper/classification/Sota/", models: "experiments/base_paper/classification/configs/config_social_multi.yml",
                hyperparameters: "experiments/base_paper/classification/configs/parameters_sota.yml", splits: "src/simplegnn/datasets/splits/standard/IMDB-MULTI_splits.json" } }
   - { name: "IMDB-BINARY", source: "TUDataset", task: "graph_classification", validation_folds: 10,
       paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",
-               results: "results/base_paper/classification/Sota/", models: "experiments/base_paper/classification/configs/config_social.yml",
+               results: "results/base_paper/classification/Sota/", models: "experiments/base_paper/classification/configs/config_social_binary.yml",
                hyperparameters: "experiments/base_paper/classification/configs/parameters_sota.yml", splits: "src/simplegnn/datasets/splits/standard/IMDB-BINARY_splits.json" } }
   - { name: "NCI1", source: "TUDataset", task: "graph_classification", validation_folds: 10,
       paths: { data: "data/TUDatasets/", labels: "data/TUDatasets/labels/", properties: "data/TUDatasets/properties/",

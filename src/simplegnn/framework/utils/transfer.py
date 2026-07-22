@@ -331,6 +331,60 @@ def sidecar_path_for(checkpoint_path: Union[str, Path]) -> Path:
     return Path(checkpoint_path).with_suffix('.keys.pt')
 
 
+def _validation_score(csv_path: Path):
+    """
+    (metric, higher_is_better) of one per-epoch result CSV at its best epoch.
+
+    Classification runs record ``ValidationAccuracy`` in percent; regression
+    runs leave it at 0 and carry the error in ``ValidationLoss``/
+    ``ValidationMAE``, so the column that actually varies decides the direction.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(csv_path, sep=';')
+    if df.empty:
+        return None
+    accuracy = df['ValidationAccuracy'] if 'ValidationAccuracy' in df.columns else None
+    if accuracy is not None and float(accuracy.abs().max()) > 0.0:
+        return float(accuracy.max()), True
+    return float(df['ValidationLoss'].min()), False
+
+
+def _best_validation_checkpoint(models_dir: Path, results_dir: Path) -> Path:
+    """
+    Checkpoint of the (config, run, validation step) with the best validation
+    score, mirroring how the framework selects a model within a run.
+    """
+    result_files = sorted(results_dir.glob('*_Best_Configuration_*_Results_run_id_*.csv')) or \
+        sorted(f for f in results_dir.glob('*_Configuration_*_Results_run_id_*.csv')
+               if 'Best_Configuration' not in f.name)
+    scored = []
+    for csv_path in result_files:
+        # <db>_[Best_]Configuration_<id>_Results_run_id_<r>_validation_step_<v>.csv
+        stem = csv_path.stem
+        best = '_Best_Configuration_' in stem
+        config_id = stem.split('Configuration_')[1].split('_')[0]
+        run_id = stem.split('run_id_')[1].split('_')[0]
+        validation_id = stem.split('validation_step_')[1]
+        prefix = 'model_Best_Configuration_' if best else 'model_Configuration_'
+        checkpoint = models_dir / f'{prefix}{config_id}_run_{run_id}_val_step_{validation_id}.pt'
+        if not checkpoint.exists():
+            continue
+        score = _validation_score(csv_path)
+        if score is not None:
+            scored.append((score[0], score[1], checkpoint))
+    if not scored:
+        raise FileNotFoundError(
+            f"transfer.source.select: 'best_validation' found no result CSV in {results_dir} "
+            f"with a matching checkpoint in {models_dir}.")
+    higher_is_better = scored[0][1]
+    best_score, _, checkpoint = (max if higher_is_better else min)(scored, key=lambda item: item[0])
+    print(f"transfer.source.select: 'best_validation' picked {checkpoint.name} "
+          f"(validation {'accuracy' if higher_is_better else 'loss'} {best_score:.4f} "
+          f"of {len(scored)} checkpoints)")
+    return checkpoint
+
+
 def resolve_source_checkpoint(results_path: Union[str, Path], dataset: str,
                               select: Union[str, dict, None] = 'best') -> Path:
     """
@@ -338,7 +392,10 @@ def resolve_source_checkpoint(results_path: Union[str, Path], dataset: str,
 
     ``select == 'best'`` (default) prefers the best-configuration re-run
     checkpoints (``model_Best_Configuration_*``, run 0 / validation step 0,
-    lowest config id), falling back to the grid-search checkpoints. A dict
+    lowest config id), falling back to the grid-search checkpoints — note that
+    this is positional: it takes run 0, not the run that scored best.
+    ``select == 'best_validation'`` instead compares the validation scores of
+    every checkpoint of the source run and takes the winner. A dict
     ``{config_id, run_id, validation_id}`` addresses one checkpoint exactly.
     """
     models_dir = Path(results_path).joinpath(dataset, 'Models')
@@ -363,6 +420,9 @@ def resolve_source_checkpoint(results_path: Union[str, Path], dataset: str,
             f"validation_id={validation_id} in {models_dir} "
             f"(tried {', '.join(c.name for c in candidates)})")
 
+    if select == 'best_validation':
+        return _best_validation_checkpoint(models_dir, Path(results_path).joinpath(dataset, 'Results'))
+
     if select in (None, 'best', 'Best'):
         for pattern in ('model_Best_Configuration_*_run_0_val_step_0.pt',
                         'model_Best_Configuration_*.pt',
@@ -378,8 +438,8 @@ def resolve_source_checkpoint(results_path: Union[str, Path], dataset: str,
         raise FileNotFoundError(f"No source checkpoints found in {models_dir}")
 
     raise ValueError(
-        f"transfer.source.select must be 'best' or a dict with config_id/run_id/"
-        f"validation_id, got {select!r}")
+        f"transfer.source.select must be 'best', 'best_validation' or a dict with "
+        f"config_id/run_id/validation_id, got {select!r}")
 
 
 @dataclass
@@ -615,6 +675,12 @@ def apply_transfer(target_net, source_state_dict: dict, source_keys: dict,
       of the exported ``(src_hash, tgt_hash, property_key)`` keys; unmatched
       slots keep their fresh init (``invariant_transfer.on_missing: reinit``)
       or are zeroed (``zero``). Reserved hashes never match.
+    - ``random_init: true`` skips every weight copy (standard *and*
+      invariant layers keep their fresh initialization) while still
+      resolving/validating the source checkpoint and sidecar and producing a
+      report — the "untrained backbone" counterpart of a real transfer run,
+      for use as a sanity-check baseline (paired with
+      ``strategy: linear_probe`` so only the head trains).
 
     ``cfg`` is the ``transfer:`` block of the hyperparameter config (the
     ``source``/``strategy``/``freeze`` keys are consumed by the callers, not
@@ -628,6 +694,7 @@ def apply_transfer(target_net, source_state_dict: dict, source_keys: dict,
     allow_non_canonical = bool(invariant_cfg.get('allow_non_canonical', False))
     min_overlap_warn = float(invariant_cfg.get('min_overlap_warn', 0.10))
     head_reinit = (cfg.get('head') or {}).get('reinit', 'always')
+    random_init = bool(cfg.get('random_init', False))
     if match not in ('hashes', 'none'):
         raise ValueError(f"invariant_transfer.match must be 'hashes' or 'none', got {match!r}")
     if on_missing not in ('reinit', 'zero'):
@@ -665,6 +732,11 @@ def apply_transfer(target_net, source_state_dict: dict, source_keys: dict,
                     top, layer_type, 'head_reinit', 0,
                     sum(target_sd[n].numel() for n in names), False))
                 continue
+            if random_init:
+                report.layers.append(_layer_entry(
+                    top, layer_type, 'random_init', 0,
+                    sum(target_sd[n].numel() for n in names), False))
+                continue
             copied = 0
             total = 0
             notes = []
@@ -691,6 +763,10 @@ def apply_transfer(target_net, source_state_dict: dict, source_keys: dict,
             layer_type = type(layer).__name__
             total_estimate = sum(target_sd[n].numel() for n in target_sd
                                  if n.startswith(prefix + '.'))
+            if random_init:
+                report.layers.append(_layer_entry(prefix, layer_type, 'random_init',
+                                                  0, total_estimate, False))
+                continue
             if match == 'none':
                 report.layers.append(_layer_entry(prefix, layer_type, 'reinit',
                                                   0, total_estimate, False))
@@ -743,7 +819,10 @@ def apply_transfer_strategy(target_net, cfg: Optional[dict], report: TransferRep
 
     - ``strategy: finetune`` (default): nothing frozen beyond ``freeze``.
     - ``strategy: linear_probe``: every layer that received transferred
-      weights is frozen; the (re-initialized) head stays trainable.
+      weights is frozen; the (re-initialized) head stays trainable. Under
+      ``random_init: true`` nothing is ever "transferred", so instead every
+      layer that isn't the (re-initialized) head is frozen at its random
+      init — the untrained-backbone baseline.
     - ``freeze``: state-dict prefix globs, e.g. ``['net_layers.0*']``.
 
     Freezing sets ``requires_grad = False``; ``set_optimizer`` builds its
@@ -755,7 +834,10 @@ def apply_transfer_strategy(target_net, cfg: Optional[dict], report: TransferRep
         raise ValueError(f"transfer.strategy must be 'finetune' or 'linear_probe', got {strategy!r}")
     patterns = [str(p) for p in (cfg.get('freeze') or [])]
     if strategy == 'linear_probe':
-        patterns += [entry['layer'] for entry in report.layers if entry['transferred']]
+        if cfg.get('random_init', False):
+            patterns += [entry['layer'] for entry in report.layers if entry['action'] != 'head_reinit']
+        else:
+            patterns += [entry['layer'] for entry in report.layers if entry['transferred']]
 
     frozen = []
     if patterns:

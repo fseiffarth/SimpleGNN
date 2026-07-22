@@ -13,6 +13,7 @@
 ## label-vocabulary overlap check (against
 ## examples/transfer_learning/measure_overlap.py) BEFORE spending a full
 ## pretraining run.
+import importlib.util
 from pathlib import Path
 
 import click
@@ -22,8 +23,26 @@ from simplegnn.framework.core import FrameworkMain
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIGS = Path('experiments/base_paper/transfer/Substructure_to_TU/configs')
 PRETRAIN_CONFIG = CONFIGS / 'main_config_Substructure_pretrain.yml'
+RESULTS = Path('results/base_paper/transfer/Substructure_to_TU')
 
 TU_TARGETS = ['MUTAG', 'NCI1', 'NCI109', 'Mutagenicity', 'DHFR']
+
+# arm name -> results subdirectory, in the order they appear in the report table
+ARMS = [('pretrained probe (transfer)', 'finetune'),
+        ('random-init probe', 'baseline_random_probe'),
+        ('trained from scratch', 'scratch')]
+
+REPORT_NOTES = [
+    'All three arms share `network_transfer_TU_finetune.yml`, the same splits and the same '
+    'hyperparameters; they differ only in where the backbone weights come from and what is frozen.',
+    '**pretrained probe**: backbone transferred hash-keyed from the SubstructureBenchmark '
+    '("multi") pretraining run and frozen; only the re-initialized classification head trains.',
+    '**random-init probe**: identical, but `transfer.random_init: true` -- the frozen backbone '
+    'keeps its random init, isolating what the *pretrained* weights add over a random projection '
+    'of the same invariants.',
+    '**trained from scratch**: no transfer block, whole backbone trained. Upper reference point; '
+    'the probes are the cheap arms, so read accuracy against the runtime columns.',
+]
 
 
 def _finetune_config(target):
@@ -43,6 +62,59 @@ def run_pretrain(num_threads=-1):
     experiment.evaluate_results()
     experiment.run_best_configuration(num_threads=num_threads)
     experiment.evaluate_results(evaluate_best_model=True)
+
+
+def _stage_config(target, suffix):
+    path = CONFIGS / f'main_config_{target}_{suffix}.yml'
+    if not path.exists():
+        raise click.BadParameter(
+            f"no {suffix} config for target {target!r} at {path}. "
+            f"Add a main_config_<name>_{suffix}.yml following the NCI1 pattern.")
+    return path
+
+
+def run_experiment(config_path, num_threads=-1):
+    experiment = FrameworkMain(config_path)
+    experiment.preprocessing(num_threads=1)
+    experiment.run_configurations(num_threads=num_threads)
+    experiment.evaluate_results()
+    experiment.run_best_configuration(num_threads=num_threads)
+    experiment.evaluate_results(evaluate_best_model=True)
+
+
+def run_baseline(target, num_threads=-1):
+    """Untrained backbone (random init, frozen), head-only training."""
+    run_experiment(_stage_config(target, 'baseline'), num_threads=num_threads)
+
+
+def run_scratch(target, num_threads=-1):
+    """Whole backbone trained from a fresh init, no transfer."""
+    run_experiment(_stage_config(target, 'scratch'), num_threads=num_threads)
+
+
+def _transfer_report_module():
+    """Load the shared report renderer (experiments/base_paper is not a package)."""
+    path = REPO_ROOT / 'experiments/base_paper/src/transfer_report.py'
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def write_report(target):
+    """
+    Render the cross-arm markdown report for ``target`` from whatever result
+    directories exist; arms that have not been run yet are listed as *not run*.
+    Called automatically at the end of every finetune/baseline/scratch stage.
+    """
+    transfer_report = _transfer_report_module()
+    return transfer_report.write_report(
+        title=f'Substructure -> {target} transfer report',
+        arm_specs=[(name, RESULTS / subdir / target) for name, subdir in ARMS],
+        output_path=RESULTS / f'report_{target}.md',
+        task='graph_classification',
+        pretrain_dir=(RESULTS / 'pretrain' / 'multi'),
+        notes=REPORT_NOTES)
 
 
 def run_finetune(target, num_threads=-1):
@@ -78,11 +150,16 @@ def run_overlap_report(target):
 
 @click.command()
 @click.option('--stage', default='all',
-              type=click.Choice(['overlap', 'pretrain', 'finetune', 'all']),
+              type=click.Choice(['overlap', 'pretrain', 'finetune', 'baseline', 'scratch',
+                                 'report', 'all']),
               help='overlap = spec 18 B0 go/no-go check only (needs preprocessing() already run on '
                    'both datasets); pretrain = SubstructureBenchmark only; finetune = TU target(s) '
-                   'only (needs an existing SubstructureBenchmark checkpoint); all = pretrain then '
-                   'finetune every target.')
+                   'only (needs an existing SubstructureBenchmark checkpoint); baseline = '
+                   'untrained-backbone probe (random init, frozen, head-only training) as the '
+                   'direct comparison point for the transfer runs; scratch = whole backbone '
+                   'trained from a fresh init, no transfer; report = only re-render the markdown '
+                   'report from existing results; all = pretrain then finetune every target. '
+                   'Every result-producing stage refreshes results/.../report_<target>.md.')
 @click.option('--target', default=None,
               type=click.Choice(TU_TARGETS),
               help=f'TU dataset to finetune/check (one of {TU_TARGETS}); required for '
@@ -99,10 +176,24 @@ def main(stage, target, num_threads):
     if stage in ('pretrain', 'all'):
         run_pretrain(num_threads=num_threads)
 
+    targets = [target] if target else TU_TARGETS
+
     if stage in ('finetune', 'all'):
-        targets = [target] if target else TU_TARGETS
         for t in targets:
             run_finetune(t, num_threads=num_threads)
+
+    if stage == 'baseline':
+        for t in targets:
+            run_baseline(t, num_threads=num_threads)
+
+    if stage == 'scratch':
+        for t in targets:
+            run_scratch(t, num_threads=num_threads)
+
+    # every stage that produced target results refreshes the markdown report
+    if stage in ('finetune', 'baseline', 'scratch', 'all', 'report'):
+        for t in targets:
+            write_report(t)
 
 
 if __name__ == '__main__':

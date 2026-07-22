@@ -42,9 +42,13 @@ save_transfer_keys: True
 # (spec 18 B4 schema).
 transfer:
   source:
-    results_path: results/base_paper/transfer/Substructure_to_ZINC/pretrain/   # pretraining results dir
+    # reuses the "multi" SubstructureBenchmark checkpoint pretrained for the
+    # Substructure -> TU experiment: the pretrain config there is byte-identical
+    # (same ripped-ZINC-v2 backbone, same hyperparameters) aside from paths, so
+    # there is no need to pretrain a second copy for ZINC.
+    results_path: results/base_paper/transfer/Substructure_to_TU/pretrain/   # pretraining results dir
     dataset: multi                              # db name of the source checkpoint
-    select: best                                # best | {config_id: 0, run_id: 0, validation_id: 0}
+    select: best_validation  # best (positional run 0) | best_validation | {config_id: 0, run_id: 0, validation_id: 0}
   strategy: linear_probe                        # freeze every transferred invariant slot
   head:
     reinit: always                              # multi-count head -> ZINC regression: always reinit
