@@ -1,0 +1,21 @@
+# NCI1 untrained-backbone baseline for the Substructure -> TU transfer
+# experiment (spec 18). Same dataset, splits, and network as
+# main_config_NCI1_finetune.yml; the hyperparameters
+# (parameters_TU_baseline_random_probe.yml) keep the backbone at its random
+# init and train only the classification head.
+datasets:
+  - {
+      name: "NCI1",
+      source: "TUDataset",
+      task: "graph_classification",
+      validation_folds: 10,
+      paths: {
+        data: "data/TUDatasets/",
+        labels: "data/TUDatasets/labels/",
+        properties: "data/TUDatasets/properties/",
+        results: "results/base_paper/transfer/Substructure_to_TU/baseline_random_probe/",
+        models: "experiments/base_paper/transfer/Substructure_to_TU/configs/network_transfer_TU_finetune.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_TU/configs/parameters_TU_baseline_random_probe.yml",
+        splits: "src/simplegnn/datasets/splits/fair/NCI1_splits.json",
+      }
+  }

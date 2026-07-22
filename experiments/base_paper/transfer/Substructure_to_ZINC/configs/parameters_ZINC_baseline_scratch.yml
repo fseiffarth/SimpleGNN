@@ -1,0 +1,36 @@
+# No-pretrain baseline for the Substructure -> ZINC transfer experiment
+# (spec 18). Byte-identical to parameters_transfer_ZINC_linear_probe.yml except
+# that the transfer: block is absent: the same backbone
+# (network_transfer_ZINC_finetune.yml) is trained from a fresh random init with
+# nothing frozen. This is the reference point the linear-probe transfer run is
+# compared against.
+device: cpu
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: float
+
+optimizer:
+  - Adam
+loss:
+  - MAE
+
+batch_size:
+  - 32
+learning_rate:
+  - 0.001
+epochs:
+  - 200
+
+early_stopping:
+  enabled: False
+  patience: 50
+
+csv_flush_interval: 1
+
+training_data_sampling: { type: 'default' }
+
+# kept identical to the transfer runs so the architectures match exactly.
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+save_best_model: True
+save_transfer_keys: False

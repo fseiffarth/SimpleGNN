@@ -1,0 +1,22 @@
+# ZINC untrained-backbone baseline for the Substructure -> ZINC transfer
+# experiment (spec 18). Same dataset, splits, and network as
+# main_config_ZINC_finetune.yml; the hyperparameters
+# (parameters_ZINC_baseline_random_probe.yml) keep the backbone at its random
+# init and train only the regression head.
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      num_workers: 4,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/transfer/Substructure_to_ZINC/baseline_random_probe/",
+        models: "experiments/base_paper/transfer/Substructure_to_ZINC/configs/network_transfer_ZINC_finetune.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_ZINC/configs/parameters_ZINC_baseline_random_probe.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

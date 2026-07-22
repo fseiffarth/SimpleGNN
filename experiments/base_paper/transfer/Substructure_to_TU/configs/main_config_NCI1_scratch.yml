@@ -1,0 +1,22 @@
+# NCI1 train-from-scratch reference for the Substructure -> TU transfer
+# experiment (spec 18). Same dataset, splits, and network as
+# main_config_NCI1_finetune.yml, but the hyperparameters
+# (parameters_TU_baseline_scratch.yml) carry no transfer: block, so the whole
+# backbone is trained from a fresh random init. Upper reference point for the
+# two probe runs (transfer linear probe and random-init probe).
+datasets:
+  - {
+      name: "NCI1",
+      source: "TUDataset",
+      task: "graph_classification",
+      validation_folds: 10,
+      paths: {
+        data: "data/TUDatasets/",
+        labels: "data/TUDatasets/labels/",
+        properties: "data/TUDatasets/properties/",
+        results: "results/base_paper/transfer/Substructure_to_TU/scratch/",
+        models: "experiments/base_paper/transfer/Substructure_to_TU/configs/network_transfer_TU_finetune.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_TU/configs/parameters_TU_baseline_scratch.yml",
+        splits: "src/simplegnn/datasets/splits/fair/NCI1_splits.json",
+      }
+  }

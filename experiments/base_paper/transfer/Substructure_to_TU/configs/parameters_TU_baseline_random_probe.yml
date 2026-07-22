@@ -1,0 +1,52 @@
+# Untrained-backbone baseline for the Substructure -> TU transfer experiment
+# (spec 18): the direct counterpart of
+# parameters_transfer_TU_linear_probe.yml. Identical in every respect except
+# `transfer.random_init: true`, which skips every weight copy -- the backbone
+# keeps its fresh random initialization and is frozen by
+# strategy: linear_probe, so only the re-initialized classification head
+# trains. Isolates "what the pretrained invariant weights are worth" from
+# "what a random projection of these invariants is worth".
+device: cpu
+mode: experiments
+precision: double
+
+optimizer:
+  - Adam
+loss:
+  - CrossEntropyLoss
+
+batch_size:
+  - 32
+learning_rate:
+  - 0.01
+epochs:
+  - 100
+
+early_stopping:
+  enabled: False
+  patience: 50
+
+csv_flush_interval: 1
+
+training_data_sampling: { type: 'default' }
+
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+save_best_model: True
+save_transfer_keys: True
+
+transfer:
+  random_init: True                              # <- the only difference vs. the transfer run
+  source:
+    results_path: results/base_paper/transfer/Substructure_to_TU/pretrain/
+    dataset: multi
+    select: best_validation
+  strategy: linear_probe                         # freeze the (randomly initialized) backbone
+  head:
+    reinit: always
+  invariant_transfer:
+    match: hashes
+    on_missing: reinit
+    allow_non_canonical: False
+    min_overlap_warn: 0.10
+  freeze: []

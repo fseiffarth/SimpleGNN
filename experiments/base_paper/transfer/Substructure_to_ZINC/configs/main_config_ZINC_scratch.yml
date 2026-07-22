@@ -1,0 +1,23 @@
+# ZINC train-from-scratch reference for the Substructure -> ZINC transfer
+# experiment (spec 18). Same dataset, splits, and network as
+# main_config_ZINC_finetune.yml, but the hyperparameters
+# (parameters_ZINC_baseline_scratch.yml) carry no transfer: block, so the
+# whole backbone is trained from a fresh random init. Upper reference point
+# for the two probe runs (transfer linear probe and random-init probe).
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      num_workers: 4,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/transfer/Substructure_to_ZINC/scratch/",
+        models: "experiments/base_paper/transfer/Substructure_to_ZINC/configs/network_transfer_ZINC_finetune.yml",
+        hyperparameters: "experiments/base_paper/transfer/Substructure_to_ZINC/configs/parameters_ZINC_baseline_scratch.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }
