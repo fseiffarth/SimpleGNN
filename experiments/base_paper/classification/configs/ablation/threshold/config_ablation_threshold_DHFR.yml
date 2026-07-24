@@ -24,7 +24,7 @@ models:
     activation: torch.nn.Tanh()
     bias: true
     heads:
-    - 1
+    - 2
     labels:
     - label_type:
       - simple_cycles
