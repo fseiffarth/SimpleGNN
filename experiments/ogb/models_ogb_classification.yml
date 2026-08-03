@@ -1,0 +1,159 @@
+# ShareGNN architecture for the single-task binary-classification `ogbg-mol*`
+# datasets (molhiv, molbace, molbbbp).
+#
+# Modelled on the ZINC molecular architecture (examples/zinc/models_ShareGNN.yml)
+# rather than the pre-refactor experiments/ogb/models_ShareGNN.yml, which still
+# uses the old schema (`networks:`, `convolution`, `output_features`) and a
+# distance range of 0..93 that no molecule in these datasets comes near.
+# Distances are capped at 10, which covers the graph diameter of essentially
+# every molecule in the mol* collection.
+#
+# Final layer emits 2 logits so the framework's CrossEntropyLoss + softmax AUC
+# path (see binary_roc_auc in framework/model_configuration.py) applies.
+models:
+  - - { layer_type: linear,
+        out_features: 16,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_convolution,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: primary },
+              tail: { label_type: primary },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3,4,5,6,7,8,9,10 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: primary },
+              tail: { label_type: primary },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: edge_label_distances, values: [ 1 ], cutoff: 1 },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: wl_labeled, depth: 0 },
+              tail: { label_type: wl_labeled, depth: 0 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3,4 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: wl_labeled_edges, depth: 0 },
+              tail: { label_type: wl_labeled_edges, depth: 0 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3,4 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: wl_labeled_edges, depth: 1 },
+              tail: { label_type: wl_labeled_edges, depth: 1 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2 ] },
+          },
+          # aromatic/aliphatic ring structure, the dominant signal in these
+          # scaffold-split molecular benchmarks
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 5 },
+              tail: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 5 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3,4,5,6,7,8,9,10 ] },
+          },
+          {
+            num: 2,
+            bias: True,
+            labels: {
+              head: { label_type: induced_cycles, min_cycle_length: 6, max_cycle_length: 6 },
+              tail: { label_type: induced_cycles, min_cycle_length: 6, max_cycle_length: 6 },
+              bias: { label_type: primary },
+            },
+            properties:
+              { name: distances, values: [ 1,2,3,4,5,6,7,8,9,10 ] },
+          },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 8,
+            bias: True,
+            labels: { label_type: primary },
+          },
+          {
+            num: 8,
+            bias: True,
+            labels: { label_type: wl_labeled, depth: 0 },
+          },
+          {
+            num: 8,
+            bias: True,
+            labels: { label_type: wl_labeled_edges, depth: 0 },
+          },
+          {
+            num: 8,
+            bias: True,
+            labels: { label_type: wl_labeled_edges, depth: 1 },
+          },
+          {
+            num: 8,
+            bias: True,
+            labels: { label_type: [ induced_cycles, primary ], min_cycle_length: 5, max_cycle_length: 5 },
+          },
+          {
+            num: 8,
+            bias: True,
+            labels: { label_type: [ induced_cycles, primary ], min_cycle_length: 6, max_cycle_length: 6 },
+          },
+        ],
+    }
+    - { layer_type: reshape }
+    - { layer_type: layer_norm }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }

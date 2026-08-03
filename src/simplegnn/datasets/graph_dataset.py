@@ -7,13 +7,13 @@ import numpy as np
 import torch
 import torch_geometric.data
 from torch_geometric.data import InMemoryDataset, Data
-from torch_geometric.datasets import ZINC, TUDataset, GNNBenchmarkDataset, LRGBDataset
+from torch_geometric.datasets import ZINC, TUDataset, GNNBenchmarkDataset
 
 from simplegnn.datasets.utils.EdgeLabels import EdgeLabels
 from simplegnn.datasets.utils.NodeLabels import NodeLabels
 from simplegnn.datasets.graph_dataset_preprocessing import ZINCGraphDataPreprocessing, QMGraphDataPreprocessing, \
     OGBGraphPropertyGraphDataPreprocessing, SubstructureBenchmarkPreprocessing, MergedGraphDataPreprocessing, \
-    TUDatasetPreprocessing
+    TUDatasetPreprocessing, LRGBGraphDataPreprocessing, BRECGraphDataPreprocessing
 from simplegnn.utils.utils import load_graphs
 from torch_geometric.io import fs
 from torch_geometric.utils.convert import to_networkx
@@ -248,6 +248,16 @@ class GraphDataset(InMemoryDataset):
             data['y'] = data['y'].long()
             # flatten y
             data['y'] = data['y'].view(-1)
+        elif self.task in ('graph_regression', 'node_regression'):
+            # Regression targets go straight into the loss against the model's
+            # own outputs, so they must carry the configured precision -- the
+            # x/node_attributes/edge_attributes cast further down does not reach
+            # them. Sources that hand back float32 targets (ZINC, and the
+            # single-task ogbg-mol* regressions) otherwise fail in backward with
+            # "Found dtype Float but expected Double" under `precision: double`.
+            # Cast before preprocess_share_gnn_data so the output normalization
+            # and the `original_y` copy it takes are in the same dtype.
+            data['y'] = data['y'].type(self.precision)
 
 
         if len(self) == 1:
@@ -501,16 +511,14 @@ class GraphDataset(InMemoryDataset):
                 self.slices = dataset.slices
                 self.data = dataset.data
                 pass
-            elif self.from_existing_data == 'Peptides':
-                dataset = torch_geometric.datasets.LRGBDataset(root='tmp/', name=self.name)
-                self.data = dataset.data
-                self.slices = dataset.slices
-                sizes = {
-                    'num_node_labels': dataset.num_node_features,
-                    'num_node_attributes': dataset.num_node_features,
-                    'num_edge_labels': dataset.num_edge_features,
-                    'num_edge_attributes': dataset.num_edge_features
-                }
+            elif self.from_existing_data == 'LRGB':
+                preprocessed_data = LRGBGraphDataPreprocessing(self.name)
+                self.data, self.slices, sizes = preprocessed_data.processed_dataset, preprocessed_data.slices, preprocessed_data.sizes
+                pass
+            elif self.from_existing_data == 'BREC':
+                preprocessed_data = BRECGraphDataPreprocessing(self.name)
+                self.data, self.slices, sizes = preprocessed_data.processed_dataset, preprocessed_data.slices, preprocessed_data.sizes
+                pass
         else:
             print('Cannot process the data')
 
@@ -965,17 +973,28 @@ class GraphDataset(InMemoryDataset):
             if isinstance(output_features, dict):
                 if output_features.get('normalization', None) is not None:
                     data['original_y'] = data['y'].clone()
+                    # Single-target datasets (the single-task ogbg-mol* regressions,
+                    # for instance) arrive with a 1-D y, which the per-column loops
+                    # below would index out of range. Work on a 2-D view so the
+                    # normalization is shape-agnostic, then restore the shape --
+                    # unsqueeze/squeeze share storage, so the in-place column
+                    # writes land in the original tensor either way.
+                    y = data['y']
+                    was_1d = y.dim() == 1
+                    if was_1d:
+                        y = y.unsqueeze(1)
                     if output_features.get('normalization', 'standard') == 'standard':
-                        for i in range(data['y'].shape[1]):
-                            data['y'][:, i] = (data['y'][:, i] - data['y'][:, i].mean()) / (data['y'][:, i].std() + 1e-8)
+                        for i in range(y.shape[1]):
+                            y[:, i] = (y[:, i] - y[:, i].mean()) / (y[:, i].std() + 1e-8)
                     elif output_features.get('normalization', 'standard') == 'minmax':
-                        for i in range(data['y'].shape[1]):
-                            data['y'][:, i] = (data['y'][:, i] - data['y'][:, i].min()) / (data['y'][:, i].max() - data['y'][:, i].min() + 1e-8)
+                        for i in range(y.shape[1]):
+                            y[:, i] = (y[:, i] - y[:, i].min()) / (y[:, i].max() - y[:, i].min() + 1e-8)
                     elif output_features.get('normalization', 'standard') == 'minmax_zero':
                         # map to [-1, 1]; the inverse in model_configuration
                         # (inverse_transform_targets) assumes this range.
-                        for i in range(data['y'].shape[1]):
-                            data['y'][:, i] = 2.0 * (data['y'][:, i] - data['y'][:, i].min()) / (data['y'][:, i].max() - data['y'][:, i].min() + 1e-8) - 1.0
+                        for i in range(y.shape[1]):
+                            y[:, i] = 2.0 * (y[:, i] - y[:, i].min()) / (y[:, i].max() - y[:, i].min() + 1e-8) - 1.0
+                    data['y'] = y.squeeze(1) if was_1d else y
 
             return None
 

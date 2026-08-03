@@ -1,0 +1,27 @@
+# BREC smoke-test config: the BREC-r4 variant keeps only 4 of each graph's 32
+# relabelings (6,400 graphs instead of 51,200), which cuts preprocessing cost
+# proportionally. Same architecture as main_config_brec.yml.
+#
+# Runs on this dataset are NOT citable BREC scores: with 4 relabelings the
+# Hotelling T-squared statistic has 4 samples for a 16-dimensional difference
+# vector, so its covariance is rank-deficient and the pseudo-inverse makes the
+# test far more permissive than the protocol's 32 relabelings.
+# See specs/21-brec-expressiveness-benchmark.md.
+datasets:
+  - {
+      name: "BREC-r4",
+      source: "BREC",
+      task: "graph_regression",
+      regression_targets: [0],
+      validation_folds: 1,
+      paths: {
+        data: "data/BREC/",
+        labels: "data/BREC/labels/",
+        properties: "data/BREC/properties/",
+        results: "results/brec/smoke/",
+        models: "experiments/brec/models_brec.yml",
+        hyperparameters: "experiments/brec/parameters_brec.yml",
+        # regenerate with `python -m simplegnn.utils.brec_splits --dataset BREC-r4`
+        splits: "src/simplegnn/datasets/splits/fixed/BREC-r4_splits.json",
+      }
+  }

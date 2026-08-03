@@ -6,9 +6,15 @@ import click
 from simplegnn.framework.core import FrameworkMain
 
 
-def main_counting(num_threads=-1):
+CONFIGS = {
+    'cycles': 'main_config_substructure_counting.yml',
+    'walks': 'main_config_substructure_counting_walks.yml',
+}
+
+
+def main_counting(num_threads=-1, variant='cycles'):
     experiment = FrameworkMain(
-        Path('experiments/base_paper/regression/substructure_counting/configs/main_config_substructure_counting.yml'))
+        Path('experiments/base_paper/regression/substructure_counting/configs') / CONFIGS[variant])
     experiment.preprocessing(num_threads=1)
     experiment.run_configurations(num_threads=num_threads)
     experiment.evaluate_results()
@@ -26,8 +32,10 @@ def main_counting(num_threads=-1):
 
 @click.command()
 @click.option('--num_threads', default=-1, help='Number of threads to use')
-def main(num_threads):
-    main_counting(num_threads)
+@click.option('--variant', default='cycles', type=click.Choice(sorted(CONFIGS)),
+              help='Network variant: cycle-count heads or closed-walk-count heads')
+def main(num_threads, variant):
+    main_counting(num_threads, variant)
 
 
 if __name__ == '__main__':

@@ -1,10 +1,14 @@
 import time
+from typing import Tuple
 
+import matplotlib
+import networkx as nx
 import numpy as np
 import torch
 from torch import nn
 
 from simplegnn.datasets.graph_dataset import GraphDataset
+from simplegnn.datasets.utils.graph_drawing import GraphDrawing, resolve_positions
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
 from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, range_gather
@@ -201,3 +205,102 @@ class InvariantBasedPositionalEncodingLayer(InvariantBasedLayer):
 
     def get_bias(self):
         return None
+
+    def get_graph_embedding_ids(self, graph_id, head=0) -> np.ndarray:
+        """Per-node embedding ID (the head's invariant class) of one graph."""
+        node_range = slice(self._pe_slices[graph_id], self._pe_slices[graph_id + 1])
+        return getattr(self, f'_pe_idx_{head}')[node_range].long().cpu().numpy()
+
+    def get_graph_weights(self, graph_id, head=0, entry=0) -> np.ndarray:
+        """Per-node embedding value of one graph for entry ``entry`` of ``head``.
+
+        Nodes that share the head's invariant class share one parameter, so
+        the returned vector repeats a value wherever the encoder cannot tell
+        two nodes apart.
+        """
+        num = self.n_heads_per_label[head]
+        ids = self.get_graph_embedding_ids(graph_id, head=head)
+        flat = ids * num + int(getattr(self, f'_pe_off_{head}')[entry])
+        return self.get_weights()[flat]
+
+    def draw(self, ax, graph_id, graph_drawing: Tuple[GraphDrawing, GraphDrawing], head=0, out_dimension=0,
+             with_graph=True, graph_only=False, color_by='weight', pos_path: str = ''):
+        """Draw one graph with the node encoding of the given head.
+
+        ``out_dimension`` selects which of the head's ``num`` learned entries
+        is drawn (the head contributes ``num`` features per node).
+
+        Modes:
+        - ``graph_only=True``: only the graph, nodes colored by their primary
+          node label (same reference drawing as the other invariant layers).
+        - ``color_by='weight'`` (default): node color and size encode the
+          learned embedding value of the selected entry.
+        - ``color_by='label'``: node color encodes the head's invariant class
+          ID, i.e. which nodes share an embedding, at constant node size.
+        """
+        if not 0 <= head < len(self.n_heads_per_label):
+            raise ValueError(f"head {head} is out of range for {len(self.n_heads_per_label)} heads")
+        num = self.n_heads_per_label[head]
+        if not 0 <= out_dimension < num:
+            raise ValueError(f"out_dimension {out_dimension} is out of range for head {head} with num={num}")
+        if color_by not in ('weight', 'label'):
+            raise ValueError(f"color_by must be 'weight' or 'label', got {color_by}")
+
+        graph = self.graph_data.create_nx_graph(graph_id, directed=False)
+        labels = self.graph_data.node_labels['primary']
+        node_offset = self._pe_slices[graph_id]
+
+        # the circle layout starts its walk at the node with primary label 0
+        root_node = None
+        if graph_drawing[0].draw_type == 'circle':
+            for node in graph.nodes():
+                if labels.node_labels[node_offset + node] == 0:
+                    root_node = node
+                    break
+        pos = resolve_positions(graph, graph_drawing[0].draw_type, pos_path=pos_path, root_node=root_node)
+
+        if graph_only:
+            edge_labels = {}
+            for (key1, key2, value) in graph.edges(data=True):
+                if "label" in value and len(value["label"]) > 1:
+                    edge_labels[(key1, key2)] = int(value["label"][0])
+                else:
+                    edge_labels[(key1, key2)] = ""
+            nx.draw_networkx_edges(graph, pos, ax=ax, edge_color=graph_drawing[0].edge_color,
+                                   width=graph_drawing[0].edge_width)
+            nx.draw_networkx_edge_labels(graph, pos=pos, edge_labels=edge_labels, ax=ax, font_size=8,
+                                         font_color='black')
+            cmap = graph_drawing[0].colormap
+            norm = matplotlib.colors.Normalize(vmin=0, vmax=labels.num_unique_node_labels)
+            node_colors = [cmap(norm(labels.node_labels[node_offset + node])) for node in graph.nodes()]
+            nx.draw_networkx_nodes(graph, pos=pos, ax=ax, node_color=node_colors,
+                                   node_size=graph_drawing[0].node_size)
+            return
+        if with_graph:
+            nx.draw_networkx_edges(graph, pos, ax=ax, edge_color=graph_drawing[1].edge_color,
+                                   width=graph_drawing[1].edge_width, alpha=graph_drawing[1].edge_alpha * 0.5)
+
+        node_list = list(graph.nodes())
+        cmap = graph_drawing[1].colormap
+        if color_by == 'label':
+            embedding_ids = self.get_graph_embedding_ids(graph_id, head=head)
+            norm = matplotlib.colors.Normalize(vmin=0, vmax=max(self.n_node_labels[head] - 1, 1))
+            node_colors = [cmap(norm(embedding_ids[node])) for node in node_list]
+            node_sizes = np.full(len(node_list), graph_drawing[1].node_size)
+        else:
+            node_weights = self.get_graph_weights(graph_id, head=head, entry=out_dimension)
+            weight_min = float(np.min(node_weights)) if node_weights.size else 0.0
+            weight_max = float(np.max(node_weights)) if node_weights.size else 0.0
+            weight_max_abs = max(abs(weight_min), abs(weight_max))
+            weight_range = weight_max - weight_min
+            if weight_range > 0:
+                normed_weight = (node_weights - weight_min) / weight_range
+            else:
+                normed_weight = np.full_like(node_weights, 0.5)
+            node_colors = cmap(normed_weight)[node_list]
+            if weight_max_abs > 0:
+                node_sizes = graph_drawing[1].node_size * np.abs(node_weights[node_list]) / weight_max_abs
+            else:
+                node_sizes = np.full(len(node_list), graph_drawing[1].node_size)
+        nx.draw_networkx_nodes(graph, pos=pos, ax=ax, nodelist=node_list, node_color=node_colors,
+                               node_size=list(node_sizes))

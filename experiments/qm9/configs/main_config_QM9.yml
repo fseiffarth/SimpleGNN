@@ -1,0 +1,24 @@
+# QM9 graph-regression experiment (ShareGNN multi-head), reconstructed from the
+# pre-refactor RuleGNN experiment `ReproduceExtended/configs/QM/main_config_QM.yml`
+# and migrated to the three-tier config schema. See specs/19-qm9-migration.md.
+datasets:
+  - {
+      name: "QM9",
+      source: "QM9",
+      task: "graph_regression",
+      # list of regression targets; if omitted, all 19 QM9 targets are used.
+      # 0 = mu (dipole moment), the target the original experiment trained on.
+      regression_targets: [0],
+      validation_folds: 1,
+      paths: {
+        data: "data/QM9/",
+        labels: "data/QM9/labels/",
+        properties: "data/QM9/properties/",
+        results: "results/qm9/",
+        models: "experiments/qm9/models_QM9.yml",
+        hyperparameters: "experiments/qm9/parameters_QM9.yml",
+        # single-fold 80/10/10 split, seed 42 — regenerate with
+        # `python -m simplegnn.utils.qm_splits --dataset QM9`
+        splits: "src/simplegnn/datasets/splits/fixed/QM9_splits.json",
+      }
+  }

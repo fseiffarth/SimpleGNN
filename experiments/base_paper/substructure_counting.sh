@@ -33,4 +33,5 @@ source "$ENV_DIR" || { echo "Failed to activate virtual environment"; exit 1; }
 echo "Virtual environment activated"
 
 # Run the experiment(s)
-python experiments/base_paper/regression/substructure_counting/main_substructure_counting.py --num_threads $NUM_THREADS
+python experiments/base_paper/regression/substructure_counting/main_substructure_counting.py --num_threads $NUM_THREADS --variant cycles
+python experiments/base_paper/regression/substructure_counting/main_substructure_counting.py --num_threads $NUM_THREADS --variant walks

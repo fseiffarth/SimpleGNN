@@ -1,0 +1,65 @@
+# Hyperparameters for the single-task binary-classification `ogbg-mol*`
+# experiments (molhiv, molbace, molbbbp).
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: double
+
+optimizer:
+  - Adam
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Two output logits + CrossEntropyLoss, so the AUC is taken over the softmax
+# positive-class probability (binary_roc_auc in framework/model_configuration.py).
+loss:
+  - CrossEntropyLoss
+
+# ogbg-molhiv is ~3.5% positive and molbace/molbbbp are also skewed. Per-batch
+# class weights keep the minority class in the gradient without discarding the
+# ~96% majority the way `training_data_sampling: {type: undersampling}` would.
+weighted_loss: True
+
+# how often a rule has to occur to get its own weight; read directly in the
+# layer (not in the grid loop) -> keep it a scalar
+rule_occurrence_threshold: 1
+
+# weight initialization for the invariant-based layers
+weight_initialization: { convolution: {  type: 'lower_upper', value: 0.1 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: 0.1 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.001
+epochs:
+  - 200
+
+early_stopping:
+  enabled:
+    True
+  patience:
+    30
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.9, patience: 10, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default'}
+
+# `all` + this transformation gives one-hot atom type concatenated with the
+# min-max-normalized remaining OGB atom features (see the same note in
+# experiments/qm9/parameters_QM9.yml: the transformation is only reachable when
+# `name` is 'all', graph_dataset.py:788/878).
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# evaluation_metric drives the per-epoch metric and best-epoch checkpointing;
+# evaluation_type drives the cross-configuration model selection in
+# framework/utils/evaluation.py. Both must be roc_auc to actually select on AUC
+# -- OGB scores these datasets on ROC-AUC, and accuracy is meaningless at a
+# 3.5% positive rate (predicting all-negative scores 96.5%).
+evaluation_metric: roc_auc
+evaluation_type: roc_auc
+
+best_model: True

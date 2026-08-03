@@ -1,0 +1,29 @@
+# BREC expressiveness benchmark (Wang & Zhang, 2023), ShareGNN.
+# See specs/21-brec-expressiveness-benchmark.md.
+#
+# This config is consumed by experiments/brec/main_brec.py, NOT by
+# FrameworkMain.run_configurations(): BREC's RPC protocol trains one siamese
+# model per graph pair and decides with a Hotelling T-squared test, so `task`,
+# the split file and most training hyperparameters exist only to satisfy the
+# framework's dataset pipeline (which is what generates the invariant labels
+# and properties). `task: graph_regression` with a dummy zero target is the
+# cheapest valid choice — the RPC objective is label-free.
+datasets:
+  - {
+      name: "BREC",
+      source: "BREC",
+      task: "graph_regression",
+      regression_targets: [0],
+      validation_folds: 1,
+      paths: {
+        data: "data/BREC/",
+        labels: "data/BREC/labels/",
+        properties: "data/BREC/properties/",
+        results: "results/brec/sharegnn/",
+        models: "experiments/brec/models_brec.yml",
+        hyperparameters: "experiments/brec/parameters_brec.yml",
+        # placeholder split (the RPC runner ignores it) — regenerate with
+        # `python -m simplegnn.utils.brec_splits --dataset BREC`
+        splits: "src/simplegnn/datasets/splits/fixed/BREC_splits.json",
+      }
+  }

@@ -1,0 +1,64 @@
+# Hyperparameters for the single-task regression `ogbg-mol*` experiments
+# (molesol, molfreesolv, mollipo). OGB scores all three on RMSE.
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: double
+
+optimizer:
+  - Adam
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# RMSE is the OGB leaderboard metric for these three. The framework reports MAE
+# per epoch regardless (model_configuration.py computes it independently of the
+# training loss), so the CSVs carry MAE alongside the RMSE training loss.
+loss:
+  - RMSE
+
+# how often a rule has to occur to get its own weight; read directly in the
+# layer (not in the grid loop) -> keep it a scalar
+rule_occurrence_threshold: 1
+
+# weight initialization for the invariant-based layers
+weight_initialization: { convolution: {  type: 'lower_upper', value: -0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: -0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.001
+epochs:
+  - 300
+
+early_stopping:
+  enabled:
+    True
+  patience:
+    40
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.9, patience: 10, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default'}
+
+# see the same note in experiments/qm9/parameters_QM9.yml
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# z-score the targets for training (their scales differ a lot across the three
+# datasets: logS, kcal/mol and logD) ...
+output_features: { normalization: 'standard' }
+# ... and undo it before the metrics, so the reported MAE/RMSE are in the
+# target's own units rather than in standard deviations.
+invert_outputs: { normalization: 'standard' }
+
+# Select configurations on validation loss. Stated explicitly because the
+# default ('accuracy') would read ValidationAccuracy, which is a constant 0 on
+# regression runs -- selection then only works by falling through to the
+# validation-loss tie-break, which is the same answer by accident rather than by
+# intent. Per-epoch MAE (in the target's own units) is in the Results CSVs.
+evaluation_type: loss
+
+best_model: True

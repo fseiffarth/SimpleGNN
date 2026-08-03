@@ -1,0 +1,57 @@
+# GIN negative control for the BREC expressiveness benchmark.
+# See specs/21-brec-expressiveness-benchmark.md.
+#
+# Every BREC pair is 1-WL-indistinguishable, so a message-passing GNN provably
+# cannot separate any of them and this config must score 0/400. It exists to
+# check the RPC harness for false positives: if the T-squared test "finds" a
+# difference here, it is numerical noise, and the reliability control on the
+# isomorphic pair should flag it.
+#
+# No `edge_dim` on the convolutions — BREC graphs have no edge features.
+# The final linear emits OUTPUT_DIM = 16 (the RPC embedding width).
+models:
+- - { layer_type: linear,
+      out_features: 64,
+      bias: True,
+      activation: torch.nn.LeakyReLU(),
+    }
+  - { layer_type: gin_convolution,
+      bias: True,
+      out_channels: 64,
+      activation: torch.nn.LeakyReLU(),
+      batch_norm: True,
+      residual: False,
+    }
+  - { layer_type: gin_convolution,
+      bias: True,
+      out_channels: 64,
+      activation: torch.nn.LeakyReLU(),
+      batch_norm: True,
+      residual: False,
+    }
+  - { layer_type: gin_convolution,
+      bias: True,
+      out_channels: 64,
+      activation: torch.nn.LeakyReLU(),
+      batch_norm: True,
+      residual: False,
+    }
+  - { layer_type: gin_convolution,
+      bias: True,
+      out_channels: 64,
+      activation: torch.nn.LeakyReLU(),
+      batch_norm: True,
+      residual: False,
+    }
+  - { layer_type: global_pooling,
+      mode: sum,
+    }
+  - { layer_type: linear,
+      out_features: 64,
+      bias: True,
+      activation: torch.nn.LeakyReLU(),
+    }
+  - { layer_type: linear,
+      out_features: 16,
+      bias: True,
+    }

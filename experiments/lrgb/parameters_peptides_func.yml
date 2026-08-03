@@ -1,0 +1,56 @@
+# Hyperparameters for the Peptides-func experiment. Modeled on
+# experiments/qm9/parameters_QM9.yml. See main_config_peptides_func.yml for
+# why loss=BCEWithLogitsLoss is paired with task=graph_regression.
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: double
+
+# optimizer: optimizer for the network
+optimizer:
+  - Adam
+
+# convolution_grad / aggregation_grad: turn learning on/off for the
+# invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# loss: loss function for the network — BCE for the 10 multi-label targets
+loss:
+  - BCEWithLogitsLoss
+
+# rule_occurrence_threshold: how often a rule has to occur to get its own weight.
+rule_occurrence_threshold: 1
+
+# weight initialization for the invariant-based layers
+weight_initialization: { convolution: {  type: 'lower_upper', value: -0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: -0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+
+# Peptides graphs (~150 nodes avg) are far larger than QM9's (<20 atoms);
+# start with a smaller batch size than QM9's 64 to bound memory during the
+# first runs — tune upward if training is stable and fast enough.
+batch_size:
+  - 32
+learning_rate:
+  - 0.001
+epochs:
+  - 200
+
+early_stopping:
+  enabled:
+    False
+  patience:
+    25
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.9, patience: 10, min_lr: 0.00001 }
+
+# how to sample the training data
+training_data_sampling: { type: 'default' }
+
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# No output_features/invert_outputs: BCEWithLogitsLoss trains directly on the
+# raw 0/1 multi-hot targets, not a normalized/z-scored version.
+
+best_model: True

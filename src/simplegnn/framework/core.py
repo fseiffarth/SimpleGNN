@@ -872,7 +872,7 @@ class FrameworkMain:
         )
         with torch.no_grad():
             for j, data_pos in enumerate(data, 0):
-                outputs[j] = net(graph_data[data_pos].x, data_pos)
+                outputs[j] = net(graph_data[data_pos], pos=data_pos)
             labels = graph_data.y[data]
             # calculate the errors between the outputs and the labels by getting the argmax of the outputs and the labels
             arg_max_outputs = torch.argmax(outputs, dim=1)
@@ -922,7 +922,7 @@ class FrameworkMain:
         Test split is loaded from splits file at:
         {paths['splits']}/splits.json
 
-        Evaluation uses test_data = splits[0][validation_id].
+        Evaluation uses test_data = splits['test'][validation_id].
 
         Evaluation is performed with torch.no_grad() for efficiency.
         """
@@ -930,7 +930,7 @@ class FrameworkMain:
         experiment_configuration = self.network_configurations[db_name][db_id]
         graph_data = preprocess_graph_data(experiment_configuration)
         split_data = load_splits(experiment_configuration['paths']['splits'])
-        test_data = np.asarray(split_data[0][validation_id], dtype=int)
+        test_data = np.asarray(split_data['test'][validation_id], dtype=int)
         outputs = torch.zeros((len(test_data), graph_data.num_classes), dtype=torch.double)
         net = load_model(
             experiment_configuration=experiment_configuration,
@@ -943,7 +943,7 @@ class FrameworkMain:
         )
         with torch.no_grad():
             for j, data_pos in enumerate(test_data, 0):
-                outputs[j] = net(graph_data[data_pos].x, data_pos)
+                outputs[j] = net(graph_data[data_pos], pos=data_pos)
             labels = graph_data.y[test_data]
             # calculate the errors between the outputs and the labels by getting the argmax of the outputs and the labels
             counter = 0

@@ -1,0 +1,26 @@
+# Peptides-struct graph-regression experiment (ShareGNN multi-head), Long
+# Range Graph Benchmark (Dwivedi et al., 2022). See
+# specs/20-lrgb-long-range-benchmark.md. Straightforward analogue of the QM9
+# experiment (specs/19-qm9-migration.md) — 11 continuous 3D-structure
+# targets, official pre-existing split (no random-split generation needed,
+# unlike QM9).
+datasets:
+  - {
+      name: "peptides-struct",
+      source: "LRGB",
+      task: "graph_regression",
+      # all 11 structural regression targets
+      regression_targets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      validation_folds: 1,
+      paths: {
+        data: "data/LRGB/",
+        labels: "data/LRGB/labels/",
+        properties: "data/LRGB/properties/",
+        results: "results/lrgb/",
+        models: "experiments/lrgb/models_peptides_struct.yml",
+        hyperparameters: "experiments/lrgb/parameters_peptides_struct.yml",
+        # official LRGB train/val/test split expressed as offsets — regenerate
+        # with `python -m simplegnn.utils.lrgb_splits --dataset peptides-struct`
+        splits: "src/simplegnn/datasets/splits/fixed/peptides-struct_splits.json",
+      }
+  }

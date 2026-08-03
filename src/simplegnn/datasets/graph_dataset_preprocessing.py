@@ -1,5 +1,7 @@
 # abstract class for graph data preprocessing
 import abc
+import urllib.request
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -7,7 +9,39 @@ from torch_geometric.data import InMemoryDataset, Data
 import torch
 import torch_geometric
 from ogb.graphproppred import PygGraphPropPredDataset
-from torch_geometric.datasets import ZINC, TUDataset
+from torch_geometric.datasets import ZINC, TUDataset, LRGBDataset
+
+
+def load_ogb_graphprop_dataset(name, root="/tmp"):
+    """
+    Load an OGB graph-property-prediction dataset under PyTorch 2.6+.
+
+    ``ogb`` (1.3.6, the latest release) calls ``torch.load(processed_path)``
+    without ``weights_only=False``. Since PyTorch 2.6 that argument defaults to
+    ``True``, so unpickling the cached PyG objects raises
+    ``UnpicklingError: Unsupported global: GLOBAL torch_geometric.data.data.DataEdgeAttr``
+    on every load after the one-off ``process()`` run. Allow-listing the three
+    PyG container classes that appear in those archives fixes the load without
+    turning the safety check off globally, which is the narrower fix compared to
+    monkey-patching ``torch.load``.
+
+    Parameters
+    ----------
+    name : str
+        OGB dataset name, e.g. ``'ogbg-molhiv'``.
+    root : str or Path
+        Download/cache root handed to ``PygGraphPropPredDataset``.
+
+    Returns
+    -------
+    ogb.graphproppred.PygGraphPropPredDataset
+        The requested dataset.
+    """
+    from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
+    from torch_geometric.data.storage import GlobalStorage
+
+    torch.serialization.add_safe_globals([DataEdgeAttr, DataTensorAttr, GlobalStorage])
+    return PygGraphPropPredDataset(name=name, root=str(root))
 
 
 class GraphDataPreprocessing(abc.ABC):
@@ -239,6 +273,53 @@ class ZINCGraphDataPreprocessing(GraphDataPreprocessing):
         return self.processed_dataset, self.slices, self.sizes
 
 
+def load_qm9_dataset(root):
+    """
+    Load torch-geometric's QM9 dataset, working around an rdkit/PyG interaction bug.
+
+    ``QM9.process()`` iterates the gdb9 SDF via ``tqdm(suppl)``. Constructing the
+    tqdm wrapper calls ``len(suppl)``, which switches rdkit's ``SDMolSupplier``
+    from streaming into random-access (indexed) mode. In that mode rdkit >= 2025.09
+    returns ``None`` for records 4804 and 120934, and PyG then crashes with
+    ``AttributeError: 'NoneType' object has no attribute 'GetNumAtoms'``. Iterating
+    the same file without ever calling ``len()`` parses all 133885 records fine.
+
+    Replacing the module-level ``tqdm`` with a pass-through for the duration of the
+    call keeps upstream's parsing logic untouched while avoiding the ``len()`` that
+    triggers the bug. Only the (one-off) processing run loses its progress bar;
+    subsequent loads read the cached ``processed/data_v3.pt`` and never reach here.
+
+    Also guards against a stale ``raw/qm9.zip``: PyG's ``download_url`` skips
+    downloading whenever a file already exists at that path, so a zip left behind
+    by an interrupted or failed earlier download (e.g. a flaky cluster network)
+    is treated as valid and extraction then fails with
+    ``zipfile.BadZipFile: File is not a zip file``. Removing an invalid cached
+    zip before handing off to PyG forces a fresh download instead.
+
+    Parameters
+    ----------
+    root : str or Path
+        Download/cache root handed to ``torch_geometric.datasets.QM9``.
+
+    Returns
+    -------
+    torch_geometric.datasets.QM9
+        The dataset with all 130831 characterized molecules.
+    """
+    import torch_geometric.datasets.qm9 as pyg_qm9
+
+    raw_zip_path = Path(root) / 'raw' / 'qm9.zip'
+    if raw_zip_path.exists() and not zipfile.is_zipfile(raw_zip_path):
+        raw_zip_path.unlink()
+
+    original_tqdm = pyg_qm9.tqdm
+    pyg_qm9.tqdm = lambda iterable, *args, **kwargs: iterable
+    try:
+        return torch_geometric.datasets.QM9(root=str(root))
+    finally:
+        pyg_qm9.tqdm = original_tqdm
+
+
 class QMGraphDataPreprocessing(GraphDataPreprocessing):
     def __init__(self, name, tmp_dir="/tmp"):
         super().__init__(name, tmp_dir)
@@ -254,7 +335,7 @@ class QMGraphDataPreprocessing(GraphDataPreprocessing):
         :return: Processed graph data.
         """
         if self.name in ['QM9', 'qm9', 'QM', 'qm']:
-            dataset = torch_geometric.datasets.QM9(root=self.tmp_dir)
+            dataset = load_qm9_dataset(self.tmp_dir)
         elif self.name in ['QM7', 'qm7', 'QM7b', 'qm7b']:
             dataset = torch_geometric.datasets.QM7b(root=self.tmp_dir)
         dataset_node_labels = dataset.data.z
@@ -290,7 +371,7 @@ class OGBGraphPropertyGraphDataPreprocessing(GraphDataPreprocessing):
         :param kwargs: Additional keyword arguments.
         :return: Processed graph data.
         """
-        dataset_ogb = PygGraphPropPredDataset(name=self.name, root=self.tmp_dir)
+        dataset_ogb = load_ogb_graphprop_dataset(self.name, root=self.tmp_dir)
         split_idx = dataset_ogb.get_idx_split()
         train_idx, valid_idx, test_idx = split_idx["train"], split_idx["valid"], split_idx["test"]
         self.processed_dataset = dataset_ogb.data
@@ -314,6 +395,275 @@ class OGBGraphPropertyGraphDataPreprocessing(GraphDataPreprocessing):
 
         return self.processed_dataset, self.slices, self.sizes
 
+class LRGBGraphDataPreprocessing(GraphDataPreprocessing):
+    """
+    Peptides-func / Peptides-struct from the Long Range Graph Benchmark
+    (Dwivedi et al., 2022), loaded via torch_geometric.datasets.LRGBDataset.
+
+    Feature layout verified against the installed PyG source
+    (torch_geometric/datasets/lrgb.py, LRGBDataset.process(), the
+    'peptides' branch): ``x`` is ``[num_nodes, 9]`` and ``edge_attr`` is
+    ``[num_edges, 3]``, built with OGB's atom_to_feature_vector /
+    bond_to_feature_vector -- the same column layout
+    OGBGraphPropertyGraphDataPreprocessing already assumes (column 0 is the
+    primary label, the remaining columns are attributes). ``y`` is left 2D:
+    ``[num_graphs, 10]`` for Peptides-func (10 independent binary labels)
+    or ``[num_graphs, 11]`` for Peptides-struct (11 regression targets) --
+    both tasks need every column downstream, unlike the single-label
+    classification path which flattens ``y``.
+
+    Like ZINC, LRGB ships an official train/val/test split (not a random
+    one), so this class loads all three splits separately and concatenates
+    them in train -> val -> test order; ``simplegnn.utils.lrgb_splits``
+    turns that same fixed order into the framework's split JSON via
+    contiguous offsets.
+    """
+    def __init__(self, name, tmp_dir="/tmp"):
+        super().__init__(name, tmp_dir)
+        self.preprocess()
+
+    def preprocess(self, *args, **kwargs):
+        """
+        Preprocess a Peptides-func / Peptides-struct dataset.
+
+        :param args: Additional positional arguments.
+        :param kwargs: Additional keyword arguments.
+        :return: Processed graph data.
+        """
+        lrgb_name = self.name.lower()
+        train_data = LRGBDataset(root=self.tmp_dir, name=lrgb_name, split='train')
+        validation_data = LRGBDataset(root=self.tmp_dir, name=lrgb_name, split='val')
+        test_data = LRGBDataset(root=self.tmp_dir, name=lrgb_name, split='test')
+
+        all_data = torch_geometric.data.InMemoryDataset.collate(
+            [train_data._data, validation_data._data, test_data._data])
+        self.processed_dataset = all_data[0]
+
+        # merge the slices (same pattern as ZINCGraphDataPreprocessing)
+        self.slices = dict()
+        for key in train_data.slices.keys():
+            validation_data.slices[key] = validation_data.slices[key] + train_data.slices[key][-1]
+            test_data.slices[key] = test_data.slices[key] + validation_data.slices[key][-1]
+            self.slices[key] = torch.cat(
+                (train_data.slices[key], validation_data.slices[key][1:], test_data.slices[key][1:]))
+
+        self.processed_dataset.primary_node_labels = self.processed_dataset.x[:, 0]
+        self.processed_dataset.node_attributes = self.processed_dataset.x[:, 1:9]
+        self.processed_dataset.primary_edge_labels = self.processed_dataset.edge_attr[:, 0]
+        self.processed_dataset.edge_attributes = self.processed_dataset.edge_attr[:, 1:3]
+
+        self.slices['primary_node_labels'] = self.slices['x']
+        self.slices['node_attributes'] = self.slices['x']
+        self.slices['primary_edge_labels'] = self.slices['edge_attr']
+        self.slices['edge_attributes'] = self.slices['edge_attr']
+
+        self.set_sizes()
+        return self.processed_dataset, self.slices, self.sizes
+
+
+BREC_NUM_PAIRS = 400
+BREC_NUM_RELABEL = 32
+# 400 evaluation pairs + 400 known-isomorphic reliability-control pairs
+BREC_NUM_IDS = 2 * BREC_NUM_PAIRS
+BREC_DATA_URL = 'https://raw.githubusercontent.com/GraphPKU/BREC/Release/BREC_data_all.zip'
+BREC_RAW_FILE = 'brec_v3.npy'
+# (category name, first pair id, last pair id + 1), as in test_BREC.py's part_dict
+BREC_PARTS = (
+    ('Basic', 0, 60),
+    ('Regular', 60, 160),
+    ('Extension', 160, 260),
+    ('CFI', 260, 360),
+    ('4-Vertex_Condition', 360, 380),
+    ('Distance_Regular', 380, 400),
+)
+
+
+def parse_brec_name(name: str) -> int:
+    """
+    Number of relabelings per graph encoded in a BREC dataset name.
+
+    ``'BREC'`` is the official variant (32 relabelings per graph, 51,200
+    graphs); ``'BREC-r<k>'`` keeps only the first *k* relabelings, which cuts
+    preprocessing cost proportionally for smoke runs.
+
+    Parameters
+    ----------
+    name : str
+        Dataset name, ``'BREC'`` or ``'BREC-r<k>'`` (case-insensitive).
+
+    Returns
+    -------
+    int
+        Relabelings per graph, in ``[1, 32]``.
+
+    Raises
+    ------
+    ValueError
+        If the name is not a recognized BREC variant, or *k* is out of range.
+    """
+    lowered = name.lower()
+    if lowered == 'brec':
+        return BREC_NUM_RELABEL
+    if lowered.startswith('brec-r'):
+        suffix = lowered[len('brec-r'):]
+        if suffix.isdigit():
+            num_relabel = int(suffix)
+            if 1 <= num_relabel <= BREC_NUM_RELABEL:
+                return num_relabel
+            raise ValueError(f"BREC relabeling count must be in [1, {BREC_NUM_RELABEL}], got {num_relabel}.")
+    raise ValueError(f"Unsupported BREC dataset name '{name}'. Use 'BREC' or 'BREC-r<k>' with k <= {BREC_NUM_RELABEL}.")
+
+
+def brec_graph_index(pair_id: int, relabel_id: int, side: int, num_relabel: int = BREC_NUM_RELABEL) -> int:
+    """
+    Position of a single BREC graph in the collated dataset.
+
+    The layout is the reference implementation's, with the relabeling count
+    parameterized: pair ids are contiguous blocks of ``2 * num_relabel``
+    graphs, and inside a block the two graphs of the pair alternate
+    (``A0 B0 A1 B1 ...``), which is what makes the reference's
+    ``pred[0::2]`` / ``pred[1::2]`` split correct.
+
+    Parameters
+    ----------
+    pair_id : int
+        Pair id in ``[0, 800)``. Ids ``[0, 400)`` are the evaluation pairs
+        (non-isomorphic); ids ``[400, 800)`` are the isomorphic
+        reliability-control pairs, where ``400 + i`` controls pair ``i``.
+    relabel_id : int
+        Relabeling index in ``[0, num_relabel)``.
+    side : int
+        ``0`` for the first graph of the pair, ``1`` for the second.
+    num_relabel : int, optional
+        Relabelings per graph in the dataset being addressed (default: 32).
+
+    Returns
+    -------
+    int
+        Index into the collated dataset.
+    """
+    return (pair_id * num_relabel + relabel_id) * 2 + side
+
+
+class BRECGraphDataPreprocessing(GraphDataPreprocessing):
+    """
+    BREC expressiveness benchmark (Wang & Zhang, 2023; arXiv:2304.07702).
+
+    400 non-isomorphic graph pairs in six categories (Basic, Regular,
+    Extension, CFI, 4-Vertex_Condition, Distance_Regular) plus 400 isomorphic
+    pairs used as the reliability control of the RPC evaluation. Each graph is
+    stored in 32 random relabelings, so the official dataset is
+    ``800 * 32 * 2 = 51,200`` graphs; see ``brec_graph_index`` for the layout,
+    which this class preserves exactly (the RPC runner addresses pairs by
+    index arithmetic, not by a stored pair id).
+
+    The raw data is the MIT-licensed ``brec_v3.npy`` from
+    ``GraphPKU/BREC@Release:BREC_data_all.zip`` -- an array of graph6 byte
+    strings, downloaded on first use into ``data/BREC/raw/``.
+
+    BREC graphs carry no node or edge labels, and giving them any (including
+    random features) would invalidate the benchmark. So ``x`` is a constant
+    ones column, ``primary_node_labels`` is all zeros, and there are no
+    node/edge attributes -- the same contract as
+    ``SubstructureBenchmarkPreprocessing``. ``y`` is a dummy zeros column,
+    present only because the framework's dataset pipeline requires one; the
+    RPC objective is label-free (see specs/21-brec-expressiveness-benchmark.md).
+    """
+
+    def __init__(self, name, tmp_dir="/tmp"):
+        super().__init__(name, tmp_dir)
+        self.num_relabel = parse_brec_name(name)
+        self.preprocess()
+
+    @staticmethod
+    def download_raw_data(raw_dir: Path) -> Path:
+        """
+        Ensure ``brec_v3.npy`` is present in ``raw_dir``, downloading it once.
+
+        Parameters
+        ----------
+        raw_dir : Path
+            Destination directory, e.g. ``data/BREC/raw/``.
+
+        Returns
+        -------
+        Path
+            Path of the raw ``.npy`` file.
+        """
+        raw_dir = Path(raw_dir)
+        raw_file = raw_dir / BREC_RAW_FILE
+        if raw_file.is_file():
+            return raw_file
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        archive = raw_dir / 'BREC_data_all.zip'
+        if not archive.is_file():
+            print(f'Downloading BREC raw data from {BREC_DATA_URL}')
+            urllib.request.urlretrieve(BREC_DATA_URL, archive)
+        with zipfile.ZipFile(archive) as zip_file:
+            # the archive also holds the 3-WL and no-4v variants; only the
+            # full v3 file is needed here
+            zip_file.extract(BREC_RAW_FILE, path=raw_dir)
+        return raw_file
+
+    def preprocess(self, *args, **kwargs):
+        """
+        Build the collated BREC dataset from the graph6 strings.
+
+        :param args: Additional positional arguments.
+        :param kwargs: Additional keyword arguments.
+        :return: Processed graph data.
+        """
+        import networkx as nx
+
+        raw_dir = Path(__file__).parent.parent.parent.parent / 'data' / 'BREC' / 'raw'
+        graph6_strings = np.load(str(self.download_raw_data(raw_dir)), allow_pickle=True)
+        expected = BREC_NUM_IDS * BREC_NUM_RELABEL * 2
+        if len(graph6_strings) != expected:
+            raise ValueError(f'Expected {expected} graphs in {BREC_RAW_FILE}, found {len(graph6_strings)}.')
+
+        data_list = []
+        for pair_id in range(BREC_NUM_IDS):
+            for relabel_id in range(self.num_relabel):
+                for side in (0, 1):
+                    # index into the *official* 32-relabeling layout; the
+                    # dataset being built uses self.num_relabel per graph
+                    raw_index = brec_graph_index(pair_id, relabel_id, side, BREC_NUM_RELABEL)
+                    graph = nx.from_graph6_bytes(graph6_strings[raw_index])
+                    data_list.append(self._to_data(graph))
+
+        self.processed_dataset, self.slices = InMemoryDataset.collate(data_list)
+
+        self.processed_dataset.primary_node_labels = torch.zeros(
+            self.processed_dataset.x.shape[0], dtype=torch.long)
+        self.processed_dataset.node_attributes = torch.Tensor()
+        self.processed_dataset.primary_edge_labels = torch.Tensor()
+        self.processed_dataset.edge_attributes = torch.Tensor()
+        self.slices['primary_node_labels'] = self.slices['x']
+
+        # unlabeled graphs: one (constant) node label, no attributes
+        self.sizes = {'num_edge_attributes': 0,
+                      'num_edge_labels': 0,
+                      'num_node_attributes': 0,
+                      'num_node_labels': 1,
+                      }
+        return self.processed_dataset, self.slices, self.sizes
+
+    @staticmethod
+    def _to_data(graph) -> Data:
+        """Convert one networkx graph into the framework's ``Data`` layout."""
+        num_nodes = graph.number_of_nodes()
+        edges = [(u, v) for u, v in graph.edges()]
+        if edges:
+            edge_index = torch.tensor([[u for u, _ in edges] + [v for _, v in edges],
+                                       [v for _, v in edges] + [u for u, _ in edges]], dtype=torch.long)
+        else:  # pragma: no cover - BREC has no edgeless graphs
+            edge_index = torch.zeros((2, 0), dtype=torch.long)
+        return Data(x=torch.ones((num_nodes, 1), dtype=torch.float),
+                    edge_index=edge_index,
+                    y=torch.zeros((1, 1), dtype=torch.float),
+                    num_nodes=num_nodes)
+
+
 class SubstructureBenchmarkPreprocessing(GraphDataPreprocessing):
     def __init__(self, name, tmp_dir="/tmp"):
         super().__init__(name, tmp_dir)
@@ -322,10 +672,9 @@ class SubstructureBenchmarkPreprocessing(GraphDataPreprocessing):
         """
         Preprocess the Substructure Benchmark dataset.
         """
-        # relative path to project root
-        root_path = Path(__file__).parent.parent.parent.parent
-        # root_path to string
-        root_path = str(root_path)
+        # shared raw source lives alongside the rest of this dataset's files
+        # (data/SubstructureBenchmark/raw/), not in a repo-root-level folder
+        root_path = str(Path(__file__).parent.parent.parent.parent / 'data' / 'SubstructureBenchmark')
         train_data = GraphCount(root=root_path, split="train", task=self.name)
         validation_data = GraphCount(root=root_path, split="val", task=self.name)
         test_data = GraphCount(root=root_path, split="test", task=self.name)
@@ -434,11 +783,7 @@ class GraphCount(InMemoryDataset):
 
     @property
     def raw_file_names(self):
-        return ["Data/GraphDatasets/SubstructureCountingBenchmark.pt"]
-
-    @property
-    def processed_dir(self):
-        return f"{self.root}/randomgraph"
+        return ["SubstructureCountingBenchmark.pt"]
 
     @property
     def processed_file_names(self):
@@ -450,7 +795,7 @@ class GraphCount(InMemoryDataset):
         # weights_only=False: this raw file stores plain numpy arrays (adjacency
         # matrices), not just tensors, so PyTorch 2.6+'s default weights_only=True
         # unpickler rejects it (numpy.core.multiarray._reconstruct not allowlisted).
-        raw = torch.load(f"{self.root}/{_pt}", weights_only=False)
+        raw = torch.load(f"{self.raw_dir}/{_pt}", weights_only=False)
 
         def to(graph):
 

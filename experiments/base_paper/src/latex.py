@@ -4,10 +4,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from simplegnn.framework.core import FrameworkMain
 from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
 from simplegnn.models.ShareGNN.layers.inv_based_pooling import InvariantBasedAggregationLayer
 from simplegnn.framework.run_configuration import get_run_configs
+
+from plot_common import TABLE_DIR, get_experiment, get_model
 
 
 def baseline_results(algorithm: str, datasets:list[str], path:str, sota:bool=False, first_column:str=''):
@@ -533,8 +534,8 @@ def training_and_preprocessing_time(share_gnn_type=''):
     appendix = ''
     if share_gnn_type != '':
         appendix = f'_{share_gnn_type}'
-    if Path(f'results/base_paper/classification/Latex/training_preprocessing_time{appendix}.json').exists():
-        results = json.load(open(f'results/base_paper/classification/Latex/training_preprocessing_time{appendix}.json', 'r'))
+    if Path(f'{TABLE_DIR}/training_preprocessing_time{appendix}.json').exists():
+        results = json.load(open(f'{TABLE_DIR}/training_preprocessing_time{appendix}.json', 'r'))
     else:
 
         path_real_world = f'results/base_paper/classification/RealWorld/{share_gnn_type}'
@@ -657,13 +658,13 @@ def training_and_preprocessing_time(share_gnn_type=''):
                         config_path = Path('experiments/base_paper/classification/configs/main_config_fair_synthetic_random_variation.yml')
                     else:
                         raise ValueError('share_gnn_type not recognized')
-                experiment = FrameworkMain(Path(config_path))
+                experiment = get_experiment(config_path)
                 experiment.preprocessing(num_threads=1)
 
 
                 for dataset in datasets:
                     print(f'Load model for Dataset: {dataset}')
-                    net = experiment.load_model(f'{dataset}', 0, 0, 0, best=True)
+                    net = get_model(config_path, f'{dataset}', config_id=0, run_id=0, validation_id=0, best=True)
                     print('Loading Finished')
                     label_strings = set()
                     for i, layer in enumerate(net.net_layers):
@@ -713,7 +714,7 @@ def training_and_preprocessing_time(share_gnn_type=''):
                         results[dataset]['preprocessing_time_labels'] = sum([preprocessing_times[dataset][label] for label in label_strings])
 
         # save results in file
-        with open(f'results/base_paper/classification/Latex/training_preprocessing_time{appendix}.json', 'w') as f:
+        with open(f'{TABLE_DIR}/training_preprocessing_time{appendix}.json', 'w') as f:
             json.dump(results, f)
 
 
@@ -733,7 +734,7 @@ def training_and_preprocessing_time(share_gnn_type=''):
     table_str += '\\bottomrule\n'
     table_str += '\\end{tabular}\n'
     # save table under best run properties table
-    with open(f'results/base_paper/classification/Latex/best_run_details_table{appendix}.txt', 'w') as f:
+    with open(f'{TABLE_DIR}/best_run_details_table{appendix}.txt', 'w') as f:
         f.write(table_str)
 
     if share_gnn_type == '':
@@ -751,17 +752,17 @@ def training_and_preprocessing_time(share_gnn_type=''):
         table_str += '\\bottomrule\n'
         table_str += '\\end{tabular}\n'
         # save table under best run properties table
-        with open('results/base_paper/classification/Latex/preprocessing_times.txt', 'w') as f:
+        with open(f'{TABLE_DIR}/preprocessing_times.txt', 'w') as f:
             f.write(table_str)
 
 
 
 def hyper_parameter_configurations():
     # check if json has been produced
-    json_files = ['results/base_paper/classification/Latex/molecule_convolution_configs.json',
-                    'results/base_paper/classification/Latex/molecule_aggregation_configs.json',
-                    'results/base_paper/classification/Latex/social_convolution_configs.json',
-                    'results/base_paper/classification/Latex/social_aggregation_configs.json']
+    json_files = [f'{TABLE_DIR}/molecule_convolution_configs.json',
+                    f'{TABLE_DIR}/molecule_aggregation_configs.json',
+                    f'{TABLE_DIR}/social_convolution_configs.json',
+                    f'{TABLE_DIR}/social_aggregation_configs.json']
     if all([Path(x).exists() for x in json_files]):
         pass
     else:
@@ -770,7 +771,7 @@ def hyper_parameter_configurations():
         # best label strings per dataset
         ## Real World Data
         config_path = Path('experiments/base_paper/classification/configs/main_config_fair_real_world.yml')
-        experiment = FrameworkMain(Path(config_path))
+        experiment = get_experiment(config_path)
         experiment.preprocessing(num_threads=1)
         run_configs_molecule = get_run_configs(experiment.network_configurations[molecule][0])
         run_configs_social = get_run_configs(experiment.network_configurations[social][0])
@@ -791,21 +792,21 @@ def hyper_parameter_configurations():
             aggregation_configs = sorted(list(aggregation_configs))
             # save the configurations in a file
             if run_configs == run_configs_molecule:
-                with open(f'results/base_paper/classification/Latex/molecule_convolution_configs.json', 'w') as f:
+                with open(f'{TABLE_DIR}/molecule_convolution_configs.json', 'w') as f:
                     json.dump(list(convolution_configs), f)
-                with open(f'results/base_paper/classification/Latex/molecule_aggregation_configs.json', 'w') as f:
+                with open(f'{TABLE_DIR}/molecule_aggregation_configs.json', 'w') as f:
                     json.dump(list(aggregation_configs), f)
             elif run_configs == run_configs_social:
-                with open(f'results/base_paper/classification/Latex/social_convolution_configs.json', 'w') as f:
+                with open(f'{TABLE_DIR}/social_convolution_configs.json', 'w') as f:
                     json.dump(list(convolution_configs), f)
-                with open(f'results/base_paper/classification/Latex/social_aggregation_configs.json', 'w') as f:
+                with open(f'{TABLE_DIR}/social_aggregation_configs.json', 'w') as f:
                     json.dump(list(aggregation_configs), f)
     molecule_convolution_configs = json.load(
-        open('results/base_paper/classification/Latex/molecule_convolution_configs.json', 'r'))
+        open(f'{TABLE_DIR}/molecule_convolution_configs.json', 'r'))
     molecule_aggregation_configs = json.load(
-        open('results/base_paper/classification/Latex/molecule_aggregation_configs.json', 'r'))
-    social_convolution_configs = json.load(open('results/base_paper/classification/Latex/social_convolution_configs.json', 'r'))
-    social_aggregation_configs = json.load(open('results/base_paper/classification/Latex/social_aggregation_configs.json', 'r'))
+        open(f'{TABLE_DIR}/molecule_aggregation_configs.json', 'r'))
+    social_convolution_configs = json.load(open(f'{TABLE_DIR}/social_convolution_configs.json', 'r'))
+    social_aggregation_configs = json.load(open(f'{TABLE_DIR}/social_aggregation_configs.json', 'r'))
 
     # create four tables: Molecules Encoder Invariants, Molecules Decoder Invariants, Social Encoder Invariants, Social Decoder Invariants
     for x, y, z in zip([molecule_convolution_configs, molecule_aggregation_configs, social_convolution_configs, social_aggregation_configs],
@@ -820,12 +821,12 @@ def hyper_parameter_configurations():
             table_string += f'{config} \\\\ \n'
         table_string += '\\bottomrule\n'
         table_string += '\\end{tabular}\n'
-        with open(f'results/base_paper/classification/Latex/{z}.txt', 'w') as f:
+        with open(f'{TABLE_DIR}/{z}.txt', 'w') as f:
             f.write(table_string)
 
 def main():
     # create Latex dir under Results
-    Path('results/base_paper/classification/Latex').mkdir(parents=True, exist_ok=True)
+    TABLE_DIR.mkdir(parents=True, exist_ok=True)
     hyper_parameter_configurations()
     training_and_preprocessing_time()
     training_and_preprocessing_time('Random')

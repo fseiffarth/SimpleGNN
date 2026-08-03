@@ -1,0 +1,130 @@
+# ShareGNN architecture for the BREC expressiveness benchmark.
+# See specs/21-brec-expressiveness-benchmark.md.
+#
+# Derived from the unlabeled-graph backbone in
+# experiments/base_paper/transfer/Substructure_to_TU/configs/network_transfer_Substructure_pretrain.yml
+# (no `primary` / `wl_labeled` / `wl_labeled_edges` heads exist for BREC — the
+# graphs carry no node or edge labels at all), with three BREC-specific changes:
+#
+# 1. `simple_cycles` heads are replaced by ONE `induced_cycles` label spanning
+#    lengths 3-6. Measured on the benchmark's densest graphs (the 20
+#    4-Vertex_Condition pairs: 63 nodes, average degree 30), enumerating simple
+#    cycles up to length 5 takes ~29 s/graph (2.16 M cycles) while chordless
+#    cycles up to length 6 take ~1.6 s/graph (309 k) — the former is not
+#    affordable over 51,200 graphs. Using a single min=3/max=6 label instead of
+#    one label per length also means one enumeration pass, and gives each node a
+#    richer signature (its count vector over all four lengths).
+# 2. The `distances` property is capped at 8 (the transfer backbone used 23).
+#    Measured diameters: <=5 for every category except CFI, which reaches 17.
+#    This is a disclosed limitation on the receptive field for the largest CFI
+#    graphs, not a claim of matching published BREC results.
+# 3. The final linear emits OUTPUT_DIM = 16, the embedding width the RPC
+#    protocol's T-squared test is defined on (test_BREC.py's OUTPUT_DIM).
+models:
+- - layer_type: invariant_based_positional_encoding
+    concatenate_input: false
+    heads:
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 1, max_walk_length: 1 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 2, max_walk_length: 2 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 3 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 4, max_walk_length: 4 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 5, max_walk_length: 5 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 6, max_walk_length: 6 }
+    - num: 2
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 2
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    # cycle-count-keyed message passing: the substructure information that
+    # 1-WL cannot see (all 400 pairs are 1-WL-indistinguishable)
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        tail: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    # distance-encoded WL heads at increasing depth
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 1 }
+        tail: { label_type: wl, depth: 1 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 2 }
+        tail: { label_type: wl, depth: 2 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 3 }
+        tail: { label_type: wl, depth: 3 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5] }
+    # closed-walk (spectral) heads
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+        tail: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 0 }
+        tail: { label_type: wl, depth: 0 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - num: 16
+      bias: true
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 1 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  # OUTPUT_DIM of the RPC protocol: the T-squared test is computed on these 16
+  # dimensions, so this width must stay 16
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 16
+    bias: true
+  - layer_type: reshape

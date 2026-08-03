@@ -17,8 +17,9 @@ models:
   - layer_type: invariant_based_aggregation
     activation: torch.nn.Tanh()
     bias: true
+    # one head per class (old schema: out_dim: 10) - CSL has 10 classes
     heads:
-    - 1
+    - 10
     labels:
     - label_type: simple_cycles
       max_cycle_length:

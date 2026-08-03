@@ -1768,6 +1768,16 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         heads, i_local, j_local, params, _ = self._assemble_rows([graph_id])
         return torch.stack([heads, i_local, j_local, params], dim=1)
 
+    def get_all_param_indices(self):
+        """param_idx column of the assembled rows for the whole dataset.
+
+        One batched `_assemble_rows` call; equivalent to concatenating
+        `get_graph_weights(g)[:, 3]` over all graphs but without the
+        per-graph Python loop.
+        """
+        _, _, _, params, _ = self._assemble_rows(list(range(len(self.graph_data))))
+        return params
+
     def get_bias(self):
         if self.bias:
             return self.Param_b.detach().cpu().numpy()

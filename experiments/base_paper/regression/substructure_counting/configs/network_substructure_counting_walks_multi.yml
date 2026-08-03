@@ -1,0 +1,155 @@
+# Walk-count variant of the cycle-count network: simple_cycles heads replaced by
+# closed_walks heads of the same lengths (3-6); wl head unchanged.
+models:
+- - layer_type: invariant_based_convolution
+    bias: false
+    activation: torch.nn.LeakyReLU()
+    heads:
+    - num: 1
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 3
+          max_walk_length: 3
+        tail:
+          label_type: closed_walks
+          min_walk_length: 3
+          max_walk_length: 3
+        bias:
+          label_type: closed_walks
+          min_walk_length: 3
+          max_walk_length: 3
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 1
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 4
+          max_walk_length: 4
+        tail:
+          label_type: closed_walks
+          min_walk_length: 4
+          max_walk_length: 4
+        bias:
+          label_type: closed_walks
+          min_walk_length: 4
+          max_walk_length: 4
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 1
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 5
+          max_walk_length: 5
+        tail:
+          label_type: closed_walks
+          min_walk_length: 5
+          max_walk_length: 5
+        bias:
+          label_type: closed_walks
+          min_walk_length: 5
+          max_walk_length: 5
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 1
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 6
+          max_walk_length: 6
+        tail:
+          label_type: closed_walks
+          min_walk_length: 6
+          max_walk_length: 6
+        bias:
+          label_type: closed_walks
+          min_walk_length: 6
+          max_walk_length: 6
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 1
+      bias: false
+      labels:
+        head:
+          label_type: wl
+          depth: 0
+        tail:
+          label_type: wl
+          depth: 0
+        bias:
+          label_type: wl
+          depth: 0
+      properties:
+        name: distances
+        values:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 10
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.LeakyReLU()
+    bias: true
+    heads:
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 3
+        max_walk_length: 3
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 4
+        max_walk_length: 4
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 5
+        max_walk_length: 5
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 6
+        max_walk_length: 6
+    - num: 10
+      bias: true
+      labels:
+        label_type: wl
+        depth: 0
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 6
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: reshape

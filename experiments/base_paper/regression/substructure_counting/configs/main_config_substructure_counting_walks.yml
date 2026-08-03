@@ -1,0 +1,108 @@
+# Walk-count variant of the substructure-counting experiment: same datasets,
+# but networks use closed_walks heads instead of simple_cycles heads.
+datasets:
+  - {
+      name: "multi",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks_multi.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/multi_splits.json",
+      }
+  }
+  - {
+      name: "tri_tail",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/tri_tail_splits.json",
+      }
+  }
+  - {
+      name: "star",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/star_splits.json",
+      }
+  }
+  - {
+      name: "cycle6",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/cycle6_splits.json",
+      }
+  }
+  - {
+      name: "triangle",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/triangle_splits.json",
+      }
+  }
+  - {
+      name: "cycle4",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/cycle4_splits.json",
+      }
+  }
+  - {
+      name: "cycle5",
+      source: "SubstructureBenchmark",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/SubstructureBenchmark/",
+        labels: "data/SubstructureBenchmark/labels/",
+        properties: "data/SubstructureBenchmark/properties/",
+        results: "results/base_paper/regression/substructure_counting_walks/",
+        models: "experiments/base_paper/regression/substructure_counting/configs/network_substructure_counting_walks.yml",
+        hyperparameters: "experiments/base_paper/regression/substructure_counting/configs/parameters_substructure_counting.yml",
+        splits: "src/simplegnn/datasets/splits/substructure_counting/cycle5_splits.json",
+      }
+  }

@@ -137,6 +137,53 @@ def pooled_abs_error_stats(abs_err) -> Tuple[float, float]:
     return mae, abs_err.std(unbiased=False).item()
 
 
+def binary_roc_auc(outputs, labels) -> float:
+    """
+    ROC-AUC of a binary classifier from its raw (unnormalized) network outputs.
+
+    The score fed to :func:`sklearn.metrics.roc_auc_score` is the positive-class
+    probability, not the hard ``argmax`` prediction. Ranking by hard 0/1 labels
+    collapses the ROC curve to a single operating point and turns the AUC into
+    balanced accuracy, which is not the metric OGB's ``rocauc`` leaderboards
+    (ogbg-molhiv and friends) are scored on.
+
+    Parameters
+    ----------
+    outputs : torch.Tensor
+        Network outputs of shape ``(N, C)``. ``C == 2`` is the binary case and
+        uses ``softmax(...)[:, 1]``; ``C == 1`` uses the raw logit (monotone in
+        the sigmoid probability, so the AUC is identical).
+    labels : torch.Tensor
+        Ground-truth labels, either class indices ``(N,)`` or one-hot ``(N, C)``.
+
+    Returns
+    -------
+    float
+        The ROC-AUC, or the neutral ``0.5`` when it is undefined because the
+        batch/split contains a single class. Single-class batches are common
+        when training on a skewed dataset such as ogbg-molhiv, so this is
+        checked up front rather than caught afterwards -- depending on the
+        sklearn version ``roc_auc_score`` either raises or returns ``NaN`` with
+        an ``UndefinedMetricWarning``, and a NaN would poison the running mean.
+    """
+    outputs = outputs.detach()
+    labels = labels.detach()
+    if labels.dim() > 1 and labels.shape[1] > 1:
+        labels = torch.argmax(labels, dim=1)
+    labels = labels.flatten()
+    if labels.numel() == 0 or torch.unique(labels).numel() < 2:
+        return 0.5
+    if outputs.dim() > 1 and outputs.shape[1] > 1:
+        scores = torch.softmax(outputs.float(), dim=1)[:, 1]
+    else:
+        scores = outputs.float().flatten()
+    try:
+        auc = float(sklearn.metrics.roc_auc_score(labels.cpu().numpy(), scores.cpu().numpy()))
+    except ValueError:
+        return 0.5
+    return 0.5 if math.isnan(auc) else auc
+
+
 def inverse_transform_targets(values, invert_cfg, stats):
     """
     Map normalized regression targets/outputs back to the original scale.
@@ -1177,12 +1224,12 @@ class ModelConfiguration:
         Statistics (mean/std/min/max) of the un-normalized targets, cached.
 
         Used to invert output normalization when ``invert_outputs`` is configured.
-        Computed once from ``self.graph_data.data['original_y']`` and reused for
+        Computed once from ``self.graph_data.original_y`` and reused for
         every batch and every validation/test evaluation, instead of reducing the
         full target tensor on each call.
         """
         if self._original_y_stats is None:
-            original_y = self.graph_data.data['original_y']
+            original_y = self.graph_data.original_y
             self._original_y_stats = {
                 'mean': original_y.mean(),
                 'std': original_y.std(),
@@ -1342,11 +1389,14 @@ class ModelConfiguration:
                 # accuracy
                 train_values.accuracy = (train_values.accuracy * train_values.current_elements + batch_acc * batch_length) / (train_values.current_elements + batch_length)
                 # roc_auc
-                # if undersampling is used, the batch always contains all classes otherwise roc_auc cannot be calculated
-                if self.para.run_config.config.get('training_data_sampling', None) is not None and self.para.run_config.config['training_data_sampling'].get('type', None) == 'undersampling':
-                    if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
-                        batch_roc_auc = sklearn.metrics.roc_auc_score(labels, prediction)
-                        train_values.accuracy_roc_auc = (train_values.accuracy_roc_auc * train_values.current_elements + batch_roc_auc * batch_length) / (train_values.current_elements + batch_length)
+                # This used to be gated on `training_data_sampling: undersampling`,
+                # because a batch holding a single class makes roc_auc_score raise.
+                # binary_roc_auc absorbs that case (returning the neutral 0.5), so
+                # the gate only served to report a misleading EpochAUC of 0.0 for
+                # every other sampling mode.
+                if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
+                    batch_roc_auc = binary_roc_auc(outputs, labels)
+                    train_values.accuracy_roc_auc = (train_values.accuracy_roc_auc * train_values.current_elements + batch_roc_auc * batch_length) / (train_values.current_elements + batch_length)
             train_values.current_elements += batch_length
             if self.para.print_results:
                 # train_values.loss is the running sum over batches so far; show it
@@ -1387,7 +1437,7 @@ class ModelConfiguration:
                     # check if output is two dimensional and task is graph classification
                     if self.para.run_config.config.get('task', None) == 'graph_classification' and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                         labels = torch.nn.functional.one_hot(labels, num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
-                    elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1:
+                    elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1 and labels.dim() == 1:
                         labels = labels.unsqueeze(1)
                 elif self.para.run_config.task in ['node_classification', 'node_regression']:
                     labels, outputs = self.evaluate_node_task(self.validate_data)
@@ -1409,9 +1459,8 @@ class ModelConfiguration:
                     validation_acc = 100 * torch.sum(prediction==labels).item() / len(labels)
                     validation_values.accuracy = validation_acc
                     if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
-                        # roc_auc
-                        validation_roc_auc = sklearn.metrics.roc_auc_score(labels, prediction)
-                        validation_values.accuracy_roc_auc = validation_roc_auc
+                        # roc_auc, ranked by the positive-class probability
+                        validation_values.accuracy_roc_auc = binary_roc_auc(outputs, labels)
 
                 # update best epoch
                 if self.para.run_config.task in ('graph_regression', 'node_regression'):
@@ -1489,7 +1538,7 @@ class ModelConfiguration:
                     # check if output is two dimensional and task is graph classification
                     if self.para.run_config.config.get('task', None) == 'graph_classification' and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                         labels = torch.nn.functional.one_hot(labels, num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
-                    elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1:
+                    elif self.para.run_config.config.get('task', None) == 'graph_regression' and len(outputs.shape) > 1 and outputs.shape[1] == 1 and labels.dim() == 1:
                         labels = labels.unsqueeze(1)
                 elif self.para.run_config.task in ['node_classification', 'node_regression']:
                     labels, outputs = self.evaluate_node_task(self.test_data)
@@ -1511,9 +1560,8 @@ class ModelConfiguration:
                     test_acc = 100 * torch.sum(prediction == labels).item() / len(labels)
                     test_values.accuracy = test_acc
                     if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
-                        # roc_auc
-                        test_roc_auc = sklearn.metrics.roc_auc_score(labels, prediction)
-                        test_values.accuracy_roc_auc = test_roc_auc
+                        # roc_auc, ranked by the positive-class probability
+                        test_values.accuracy_roc_auc = binary_roc_auc(outputs, labels)
 
                 if self.para.print_results:
                     np_labels = labels.detach().numpy()
@@ -2107,7 +2155,7 @@ class ModelConfiguration:
             # check if output is two dimensional and task is graph classification
             if self.para.run_config.config.get('task', None) == 'graph_classification'  and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                 target_labels = torch.nn.functional.one_hot(self.graph_data.y[batch_ids], num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
-            elif self.para.run_config.config.get('task', None) == 'graph_regression' and outputs.shape[1] == 1:
+            elif self.para.run_config.config.get('task', None) == 'graph_regression' and outputs.shape[1] == 1 and target_labels.dim() == 1:
                 target_labels = target_labels.unsqueeze(1)
             loss = self.criterion(outputs, target_labels)
             timer.measure("forward")

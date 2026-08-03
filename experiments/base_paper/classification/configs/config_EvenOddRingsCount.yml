@@ -14,8 +14,9 @@ models:
   - layer_type: invariant_based_aggregation
     activation: torch.nn.Tanh()
     bias: true
+    # one head per class (old schema: out_dim: 2) - EvenOddRingsCount16 has 2 classes
     heads:
-    - 1
+    - 2
     labels:
     - label_type: primary
   - layer_type: reshape

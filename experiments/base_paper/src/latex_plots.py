@@ -4,78 +4,35 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from simplegnn.framework.core import FrameworkMain
 from simplegnn.models.ShareGNN.layers.inv_based_message_passing import InvariantBasedMessagePassingLayer
 from simplegnn.datasets.utils.graph_drawing import GraphDrawing, CustomColorMap, RandomColorMap
 
+from latex import share_gnn_results
+from plot_common import (setup_pgf, save_latex_figure, save_raster_figure, get_model,
+                         clear_model_cache, FIGURE_DIR, figure_path, position_path)
+
 
 def ablation_threshold(dataset, threshold_type):
-    if not Path(f'results/base_paper/classification/Latex/Plots/ablation_threshold_{dataset}_{threshold_type}.pdf').exists():
-        plt.rcParams.update({
-            "font.family": "serif",  # use serif/main font for text elements
-            "font.size": 12,
-            "text.usetex": True,  # use inline math for ticks
-            "pgf.rcfonts": False,  # don't setup fonts from rc parameters
-            "pgf.texsystem": "lualatex",
-            "pgf.preamble": "\n".join([
-                r"\usepackage{url}",  # load additional packages
-                r"\usepackage{unicode-math}",  # unicode math setup
-                r"\setmainfont{DejaVu Serif}",  # serif font via preamble
-            ])
-        })
+    if not figure_path(f'ablation_threshold_{dataset}_{threshold_type}.pdf').exists():
+        setup_pgf(font_size=12)
         ablation_results_path = Path(f'results/base_paper/classification/Ablation/{threshold_type}/')
 
         ablation_results = dict()
         for i in list(range(1, 21)) + [30, 40, 50]:
             path = ablation_results_path.joinpath(f'{i}/')
-            # check if the path exists
-            if Path(path).exists():
-                results_str, results = share_gnn_results('ShareGNN', [dataset], path, False)
-                if i in ablation_results and isinstance(ablation_results[i], dict):
-                    ablation_results[i]['accuracy'] = results[0][0]
-                    ablation_results[i]['std'] = results[0][1]
-                else:
-                    ablation_results[i] = {'accuracy': results[0][0], 'std': results[0][1]}
-        # get number of parameters
-        for i in list(range(1, 21)) + [30, 40, 50]:
-            path = ablation_results_path.joinpath(f'{i}/')
-            if Path(path).exists():
-                # get the file from results folder that contains Best and Network
-                for file in Path(f'{path}/{dataset}/Results/classification_old').iterdir():
-                    if 'Best_Configuration' in file.name and 'Network' in file.name:
-                        with open(file, 'r') as f:
-                            data = f.read()
-                            data = data.split('\n')
-                            for line in data:
-                                if 'Total trainable parameters' in line:
-                                    num_parameters = int(line.split(':')[-1].strip())
-                                    ablation_results[i]['parameters'] = num_parameters
-                                    break
-                        break
-        # get avg best epoch
-        for i in list(range(1, 21)) + [30, 40, 50]:
-            path = ablation_results_path.joinpath(f'{i}/')
-            if Path(path).exists():
-                # get the file from results folder that contains Best and Network
-                df = pd.read_csv(f'{path}/{dataset}/summary_best_mean.csv', delimiter=",")
-                ablation_results[i]['mean_epoch'] = df['Epoch Mean'].values[0]
-        # get avg best epoch and avg epoch runtime
-        for i in list(range(1, 21)) + [30, 40, 50]:
-            path = ablation_results_path.joinpath(f'{i}/')
-            if Path(path).exists():
-                # get the file from results folder that contains Best and Network
-                df_all = None
-                for file in Path(f'{path}/{dataset}/Results/classification_old').iterdir():
-                    if f'{dataset}_Configuration' in file.name and '.csv' in file.suffix:
-                        df = pd.read_csv(file, delimiter=";")
-                        # concatenate the dataframes
-                        if df_all is None:
-                            df_all = df
-                        else:
-                            df_all = pd.concat([df_all, df], ignore_index=True)
-                # get the mean of all epoch times
-                mean_epoch_time = df_all['EpochTime'].mean()
-                ablation_results[i]['mean_epoch_time'] = mean_epoch_time
+            if not path.exists():
+                continue
+            results_str, results = share_gnn_results('ShareGNN', [dataset], path, False)
+            ablation_results[i] = {'accuracy': results[0][0], 'std': results[0][1]}
+            # number of parameters, from the best configuration's network file
+            for file in Path(f'{path}/{dataset}/Results/classification_old').iterdir():
+                if 'Best_Configuration' in file.name and 'Network' in file.name:
+                    with open(file, 'r') as f:
+                        for line in f.read().split('\n'):
+                            if 'Total trainable parameters' in line:
+                                ablation_results[i]['parameters'] = int(line.split(':')[-1].strip())
+                                break
+                    break
 
         fig, ax1 = plt.subplots()
 
@@ -117,23 +74,11 @@ def ablation_threshold(dataset, threshold_type):
             ax1.set_xlabel('Maximum \\# of Occurrences per Shared Weight (Encoder)')
         elif threshold_type == 'LowerUpper':
             ax1.set_xlabel('Minimum \\# of Occurrences per Shared Weight (Encoder)')
-        plt.savefig(f'results/base_paper/classification/Latex/Plots/ablation_threshold_{dataset}_{threshold_type}.pdf', bbox_inches='tight', backend='pgf')
-        pass
+        save_latex_figure(fig, figure_path(f'ablation_threshold_{dataset}_{threshold_type}.pdf'))
 
 def ablation_distance(dataset='NCI1', max_distance=12, fontsize=9):
-    if not Path(f'results/base_paper/classification/Latex/Plots/ablation_distance_{dataset}_{max_distance}.pdf').exists():
-        plt.rcParams.update({
-            "font.family": "serif",  # use serif/main font for text elements
-            "font.size": 12,
-            "text.usetex": True,  # use inline math for ticks
-            "pgf.rcfonts": False,  # don't setup fonts from rc parameters
-            "pgf.texsystem": "lualatex",
-            "pgf.preamble": "\n".join([
-                r"\usepackage{url}",  # load additional packages
-                r"\usepackage{unicode-math}",  # unicode math setup
-                r"\setmainfont{DejaVu Serif}",  # serif font via preamble
-            ])
-        })
+    if not figure_path(f'ablation_distance_{dataset}_{max_distance}.pdf').exists():
+        setup_pgf(font_size=12)
 
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         path = Path(f'results/base_paper/classification/Distance/{dataset}/')
@@ -179,7 +124,7 @@ def ablation_distance(dataset='NCI1', max_distance=12, fontsize=9):
         # set 0 to white
         cmap_custom.set_under('white')
 
-        plt.figure()
+        fig = plt.figure()
         ax = plt.gca()
         im = plt.imshow(np_array, cmap=cmap_custom, norm=norm)
         # add the values to the plot
@@ -214,28 +159,13 @@ def ablation_distance(dataset='NCI1', max_distance=12, fontsize=9):
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
         plt.colorbar(im, cax=cax).set_label('Accuracy in $\\%$')
-        plt.savefig(f'results/base_paper/classification/Latex/Plots/ablation_distance_{dataset}_{max_distance}.pdf', bbox_inches='tight', backend='pgf')
-        pass
+        save_latex_figure(fig, figure_path(f'ablation_distance_{dataset}_{max_distance}.pdf'))
 
 def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_labels_from_invariant=True, with_aggregation=False, molecule=False, channel=0, headers=True):
     graph_id_string = '_'.join([str(graph_id) for graph_id in graph_ids])
     # check if file exists
-    if not Path(f'results/base_paper/classification/Latex/Plots/visualization_{db_name}_{graph_id_string}.pdf').exists():
-        #mpl.use("pgf")
-        import matplotlib.pyplot as plt
-
-        plt.rcParams.update({
-            "font.family": "serif",  # use serif/main font for text elements
-            "font.size": 18,
-            "text.usetex": True,  # use inline math for ticks
-            "pgf.rcfonts": False,  # don't setup fonts from rc parameters
-            "pgf.texsystem": "lualatex",
-            "pgf.preamble": "\n".join([
-                r"\usepackage{url}",  # load additional packages
-                r"\usepackage{unicode-math}",  # unicode math setup
-                r"\setmainfont{DejaVu Serif}",  # serif font via preamble
-            ])
-        })
+    if not figure_path(f'visualization_{db_name}_{graph_id_string}.pdf').exists():
+        setup_pgf(font_size=18)
 
         # remove matplotlib frame
         # remove frame from each side of plot
@@ -243,18 +173,12 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
         plt.rcParams['axes.spines.right'] = False
         plt.rcParams['axes.spines.top'] = False
         plt.rcParams['axes.spines.bottom'] = False
-        #experiment = FrameworkMain(Path('experiments/base_paper/classification/configs/main_config_fair_real_world.yml'))
-        #experiment = FrameworkMain(Path('Examples/TUExample/classification/configs/config_main.yml'))
-        experiment = FrameworkMain(Path(path))
 
-        net = experiment.load_model(db_name=db_name, run_id=0, validation_id=0, best=True)
+        net = get_model(path, db_name, run_id=0, validation_id=0, best=True)
         num_convolution_layers = 0
         for layers in net.net_layers:
             if isinstance(layers, InvariantBasedMessagePassingLayer):
                 num_convolution_layers += 1
-        #sort_indices, steps = rules_vs_occurences(convolution_layer, db_name, channel)
-        #rules_vs_occurences_properties(convolution_layer)
-        #rules_vs_weights(convolution_layer, sort_indices, steps, db_name, channel)
 
         n = len(graph_ids)
         column_for_invariants = 1 if with_labels_from_invariant else 0
@@ -273,11 +197,8 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
             GraphDrawing(node_size=160, edge_width=1, weight_edge_width=2.5, weight_arrow_size=10, draw_type=draw_type)
         )
 
-        Path('results/base_paper/classification/Latex/Plots/Positions/').mkdir(exist_ok=True, parents=True)
-        save_pos_path = Path('results/base_paper/classification/Latex/Plots/Positions/')
-
         if len(graph_ids) == 1:
-            pos_path = save_pos_path.joinpath(f'{db_name}_{graph_ids[0]}_pos.txt')
+            pos_path = position_path(f'{db_name}_{graph_ids[0]}_pos.txt')
             convolution_layer = net.net_layers[0]
             convolution_layer.draw(ax=axs[0], graph_id=graph_ids[0], graph_drawing=graph_drawing, graph_only=True, pos_path=pos_path)
             if with_labels_from_invariant:
@@ -313,7 +234,7 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
             axs[0].set_ylabel(f'Graph Label: {net.graph_data.y[graph_ids[0]].item()}')
         else:
             for idx, graph_id in enumerate(graph_ids):
-                pos_path = save_pos_path.joinpath(f'{db_name}_{graph_id}_pos.txt')
+                pos_path = position_path(f'{db_name}_{graph_id}_pos.txt')
 
                 # get convolution layer
                 convolution_layer = net.net_layers[0]
@@ -326,7 +247,6 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
                     for j, filter_weights in enumerate(filtering):
                         convolution_layer.draw(ax=axs[idx][1+column_for_invariants+ i*len(filtering) + j], graph_id=graph_id, graph_drawing=graph_drawing, filter_weights=filter_weights, pos_path=pos_path)
 
-            # add subplots column and row titles
             # add subplots column and row titles
             if molecule:
                 axs[0][0].set_title(f'Atomic Numbers')
@@ -348,15 +268,11 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
                         elif 'absolute' in filter_weights:
                             axs[0][1 + column_for_invariants + i*len(filtering) + j].set_title(f'Top ${filter_weights["absolute"]}$ Weights')
 
-
-
             for idx, graph_id in enumerate(graph_ids):
                 axs[idx][0].set_ylabel(f'Graph Label: ${net.graph_data.y[graph_id].item()}$')
 
-
-        plt.savefig(f'results/base_paper/classification/Latex/Plots/visualization_{db_name}_{graph_id_string}.pdf', bbox_inches='tight', backend='pgf')
-        # remove matplotlib frame
-        # remove frame from each side of plot
+        save_latex_figure(fig, figure_path(f'visualization_{db_name}_{graph_id_string}.pdf'))
+        # restore the matplotlib frame
         plt.rcParams['axes.spines.left'] = True
         plt.rcParams['axes.spines.right'] = True
         plt.rcParams['axes.spines.top'] = True
@@ -365,28 +281,13 @@ def plot_network(path, db_name, graph_ids, filtering, draw_type=None, with_label
 
 def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_size=200, output_path=None):
     if output_path is None:
-        output_path = Path(f'results/base_paper/classification/Latex/Plots/')
+        output_path = FIGURE_DIR
     else:
         output_path = Path(output_path)
     if not output_path.joinpath(f'{db_name}_{"_".join(map(str, graph_ids))}.pdf').exists():
-        # make dir f'scripts/Evaluation/Drawing/Graphs/{db_name}/' if it does not exist
         output_path.mkdir(exist_ok=True, parents=True)
 
-        #mpl.use("pgf")
-        import matplotlib.pyplot as plt
-
-        plt.rcParams.update({
-            "font.family": "serif",  # use serif/main font for text elements
-            "font.size": 12,
-            "text.usetex": True,  # use inline math for ticks
-            "pgf.rcfonts": False,  # don't setup fonts from rc parameters
-            "pgf.texsystem": "lualatex",
-            "pgf.preamble": "\n".join([
-                r"\usepackage{url}",  # load additional packages
-                r"\usepackage{unicode-math}",  # unicode math setup
-                r"\setmainfont{DejaVu Serif}",  # serif font via preamble
-            ])
-        })
+        setup_pgf(font_size=12)
         # remove matplotlib frame
         # remove frame from each side of plot
         plt.rcParams['axes.spines.left'] = False
@@ -394,8 +295,7 @@ def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_
         plt.rcParams['axes.spines.top'] = False
         plt.rcParams['axes.spines.bottom'] = False
 
-        experiment = FrameworkMain(Path(path))
-        net = experiment.load_model(db_name=db_name, run_id=0, validation_id=0, best=True)
+        net = get_model(path, db_name, run_id=0, validation_id=0, best=True)
 
         fig, ax = plt.subplots(1, len(graph_ids), figsize=(5*len(graph_ids), 5*1))
         for i, graph_id in enumerate(graph_ids):
@@ -407,75 +307,62 @@ def plot_specific_graphs_from_db(path, db_name, graph_ids, draw_type=None, node_
             )
             # get convolution layer
             convolution_layer = net.net_layers[0]
-            convolution_layer.draw(ax=ax[i], graph_id=graph_id, graph_drawing=graph_drawing, graph_only=True)
+            convolution_layer.draw(ax=ax[i], graph_id=graph_id, graph_drawing=graph_drawing, graph_only=True,
+                                   pos_path=position_path(f'{db_name}_{graph_id}_pos.txt'))
 
             # add subplots column and row titles
             #axs.set_title(f'Graphs with Atomic Numbers')
             ax[i].set_xlabel(f'Graph Label: ${net.graph_data.y[graph_id]}$')
 
+        save_latex_figure(fig, output_path.joinpath(f'{db_name}_{"_".join(map(str, graph_ids))}.pdf'))
 
-
-        plt.savefig(output_path.joinpath(f'{db_name}_{"_".join(map(str, graph_ids))}.pdf'), bbox_inches='tight', backend='pgf')
-
-        # remove matplotlib frame
-        # remove frame from each side of plot
+        # restore the matplotlib frame
         plt.rcParams['axes.spines.left'] = True
         plt.rcParams['axes.spines.right'] = True
         plt.rcParams['axes.spines.top'] = True
         plt.rcParams['axes.spines.bottom'] = True
 
-def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, channel=0, appendix='') -> np.ndarray:
-    if not Path(f'results/base_paper/classification/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png').exists():
 
-        plt.rcParams.update({
-            "font.family": "serif",  # use serif/main font for text elements
-            "font.size": 14,
-            "text.usetex": True,  # use inline math for ticks
-            "pgf.rcfonts": False,  # don't setup fonts from rc parameters
-            "pgf.texsystem": "lualatex",
-            "pgf.preamble": "\n".join([
-                r"\usepackage{url}",  # load additional packages
-                r"\usepackage{unicode-math}",  # unicode math setup
-                r"\setmainfont{DejaVu Serif}",  # serif font via preamble
-            ])
-        })
-
-        # param-index column of every graph's assembled rows (the layer no
-        # longer stores a dataset-wide weight_distribution tensor)
-        import torch as _torch
-        weights = _torch.cat([layer.get_graph_weights(g)[:, 3]
-                              for g in range(len(layer.graph_data))]).numpy()
-        num_weights = layer.Param_W.shape[0]
-        weight_array = np.zeros(num_weights)
-        # get unique counts of entries in weights
-        weight_array = np.bincount(weights)
-        # sort the weight_array (largest occurence first) and save the sorted indices
-        sort_indices = np.argsort(weight_array)[::-1]
-
-        weight_array = weight_array[sort_indices]
+def _property_legend(layer, channel):
+    """tab20 colors and legend entries for the layer's properties."""
+    property_colors = plt.get_cmap('tab20').colors
+    if layer.property_descriptions[channel] == 'distances':
+        property_legend = [f'Distance {i}' for i in range(layer.n_properties[channel])]
+    else:
+        property_legend = [f'{layer.property_descriptions[channel]} {i}' for i in range(layer.n_properties[channel])]
+    return property_colors, property_legend
 
 
-        # get array such that in entry i is the index of weight_array where value is the first time larger than i
-        # iterate over weight_array in reverse order
-        steps = np.zeros(11)
-        current_step = 1
-        for i in range(num_weights-1, 0, -1):
-            if weight_array[i] != current_step:
-                steps[current_step] = i - 1
-                current_step += 1
-                if current_step == 11:
-                    break
+def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, channel=0, appendix=''):
+    # param-index column of every graph's assembled rows (the layer no longer
+    # stores a dataset-wide weight_distribution tensor); one batched call
+    weights = layer.get_all_param_indices().detach().cpu().numpy()
+    num_weights = layer.Param_W.shape[0]
+    # get unique counts of entries in weights
+    weight_array = np.bincount(weights, minlength=num_weights)
+    # sort the weight_array (largest occurence first) and save the sorted indices
+    sort_indices = np.argsort(weight_array)[::-1]
 
-        property_colors = plt.get_cmap('tab20').colors
-        if layer.property_descriptions[channel] == 'distances':
-            property_legend = [f'Distance {i}' for i in range(layer.n_properties[channel])]
-        else:
-            property_legend = [f'{layer.property_descriptions[channel]} {i}' for i in range(layer.n_properties[channel])]
-        f = lambda x : np.max(np.where(x >= np.array(layer.weight_offset)))
-        f_vectorized = np.vectorize(f)
-        # get property id from sort indices using the skips
-        property_indices = f_vectorized(sort_indices)
+    weight_array = weight_array[sort_indices]
 
+    # get array such that in entry i is the index of weight_array where value is the first time larger than i
+    # iterate over weight_array in reverse order
+    steps = np.zeros(11)
+    current_step = 1
+    for i in range(num_weights-1, 0, -1):
+        if weight_array[i] != current_step:
+            steps[current_step] = i - 1
+            current_step += 1
+            if current_step == 11:
+                break
+
+    # property id per sorted weight: largest offset that is <= the weight index
+    property_indices = np.searchsorted(np.asarray(layer.weight_offset), sort_indices, side='right') - 1
+
+    if not figure_path(f'occurrences_per_rule_{db_name}{appendix}.png').exists():
+        setup_pgf(font_size=14)
+
+        property_colors, property_legend = _property_legend(layer, channel)
         node_colors = np.array(property_colors)[property_indices]
 
         # plot the distribution of the rules with legend
@@ -483,7 +370,6 @@ def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, chann
         for i, p in enumerate(range(layer.n_properties[channel])):
             ax.scatter([], [], color=property_colors[i], label=property_legend[i])
         ax.scatter(np.arange(num_weights), weight_array, s=1.0, alpha=1, c=node_colors)
-        # add legend title
 
         # add vertical lines for the steps
         for i in range(1, 11):
@@ -492,29 +378,15 @@ def rules_vs_occurences(layer: InvariantBasedMessagePassingLayer, db_name, chann
         ax.legend(loc='upper right')
         plt.xlabel('Weights of Encoder (Sorted by Occurrences)')
         plt.ylabel('\\# Occurrences in Dataset')
-        # plt.title(f'{dataset}')
 
-        #plt.title('Number of occurrences per rule')
-        # use pgf backend for latex
-        plt.savefig(f'results/base_paper/classification/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png', bbox_inches='tight')
-        return sort_indices, steps
-    return None
+        save_raster_figure(fig, figure_path(f'occurrences_per_rule_{db_name}{appendix}.png'))
+    return sort_indices, steps, property_indices
 
-def rules_vs_weights(layer:InvariantBasedMessagePassingLayer, sort_indices:np.ndarray, steps,db_name, channel=0, appendix=''):
-    if not Path(f'results/base_paper/classification/Latex/Plots/weights_per_rule_{db_name}{appendix}.png').exists():
+def rules_vs_weights(layer:InvariantBasedMessagePassingLayer, sort_indices:np.ndarray, steps, property_indices, db_name, channel=0, appendix=''):
+    if not figure_path(f'weights_per_rule_{db_name}{appendix}.png').exists():
         weights = layer.Param_W.detach().cpu().numpy()
         weights = weights[sort_indices]
-        # colors from tab20
-        property_colors = plt.get_cmap('tab20').colors
-        if layer.property_descriptions[channel] == 'distances':
-            property_legend = [f'Distance {i}' for i in range(layer.n_properties[channel])]
-        else:
-            property_legend = [f'{layer.property_descriptions[channel]} {i}' for i in range(layer.n_properties[channel])]
-        f = lambda x : np.max(np.where(x >= np.array(layer.weight_offset)))
-        f_vectorized = np.vectorize(f)
-        # get property id from sort indices using the skips
-        property_indices = f_vectorized(sort_indices)
-
+        property_colors, property_legend = _property_legend(layer, channel)
         node_colors = np.array(property_colors)[property_indices]
 
         # plot the distribution of the rules with legend
@@ -530,31 +402,25 @@ def rules_vs_weights(layer:InvariantBasedMessagePassingLayer, sort_indices:np.nd
         ax.legend(loc='upper right')
         plt.xlabel('Weights of Encoder (Sorted by Occurrences)')
         plt.ylabel('Weight Value')
-        # plt.title(f'{dataset}')
 
-        #plt.title('Distribution of rules')
-        plt.savefig(f'results/base_paper/classification/Latex/Plots/weights_per_rule_{db_name}{appendix}.png', bbox_inches='tight')
+        save_raster_figure(fig, figure_path(f'weights_per_rule_{db_name}{appendix}.png'))
 
 
 def plot_shared_weights(path, db_name, appendix=''):
     if appendix != '':
         appendix = f'_{appendix}'
-    paths = [f'results/base_paper/classification/Latex/Plots/occurrences_per_rule_{db_name}{appendix}.png',
-             f'results/base_paper/classification/Latex/Plots/weights_per_rule_{db_name}{appendix}.png']
-    if not all([Path(p).exists() for p in paths]):
-        experiment = FrameworkMain(Path(path))
-        net = experiment.load_model(db_name=db_name, best=True)
+    paths = [figure_path(f'occurrences_per_rule_{db_name}{appendix}.png'),
+             figure_path(f'weights_per_rule_{db_name}{appendix}.png')]
+    if not all([p.exists() for p in paths]):
+        net = get_model(path, db_name, best=True)
         convolution_layer = net.net_layers[0]
         channel = 0
-        sort_indices, steps = rules_vs_occurences(convolution_layer, db_name, channel, appendix)
-        #rules_vs_occurences_properties(convolution_layer)
-        rules_vs_weights(convolution_layer, sort_indices, steps, db_name, channel, appendix)
+        sort_indices, steps, property_indices = rules_vs_occurences(convolution_layer, db_name, channel, appendix)
+        rules_vs_weights(convolution_layer, sort_indices, steps, property_indices, db_name, channel, appendix)
 
 
 def main():
-    # create Latex dir under Results
-    Path('results/base_paper/classification/Latex').mkdir(parents=True, exist_ok=True)
-    Path('results/base_paper/classification/Latex/Plots').mkdir(parents=True, exist_ok=True)
+    FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     plot_network_path = 'experiments/base_paper/classification/configs/main_config_fair_real_world.yml'
     plot_network_path_random = 'experiments/base_paper/classification/configs/main_config_fair_real_world_random_variation.yml'
     plot_network_path_synthetic = 'experiments/base_paper/classification/configs/main_config_fair_synthetic.yml'
@@ -563,31 +429,53 @@ def main():
     plot_network_path_ablation_threshold = lambda x : f'experiments/base_paper/classification/configs/ablation/threshold/lower/main_config_ablation_threshold_{x}.yml'
     plot_network_path_ablation_distance = 'experiments/base_paper/classification/configs/ablation/distances/main_config_ablation_distances.yml'
 
+    # CSV-only figures, no model/dataset loads
+    for db in ['NCI1', 'NCI109', 'Mutagenicity', 'DHFR']:
+        ablation_distance(db, 20, fontsize=6)
+        ablation_distance(db, 10)
+        ablation_distance(db)
+    for db in ['NCI1', 'NCI109', 'Mutagenicity', 'DHFR', 'IMDB-BINARY', 'IMDB-MULTI']:
+        for threshold_type in ['Lower', 'Upper', 'LowerUpper']:
+            ablation_threshold(db, threshold_type)
 
+    # model-based figures, grouped per dataset so each (config, dataset) pair
+    # is loaded once and the cache never holds more than one group
     plot_network(plot_regression_path, 'ZINC', [500], draw_type='kawai', filtering=[None, {'absolute' : 3}], molecule=True, headers=False)
+    clear_model_cache()
+
     plot_network(plot_network_path_random, 'DHFR', [272, 273], draw_type='kawai', filtering=[None, {'absolute' : 3}], molecule=True)
-
-
     plot_shared_weights(plot_network_path_random, 'DHFR')
-    plot_shared_weights(plot_network_path_random, 'IMDB-BINARY')
-    plot_shared_weights(plot_network_path_random, 'IMDB-MULTI')
-    plot_shared_weights(plot_network_path, 'NCI1')
-    plot_shared_weights(plot_network_path, 'NCI109')
-    plot_shared_weights(plot_network_path, 'Mutagenicity')
-
-    plot_shared_weights(plot_network_path_ablation_threshold(10), 'NCI1', appendix='lower_10')
-    plot_shared_weights(plot_network_path_ablation_threshold(10), 'NCI109', appendix='lower_10')
-    plot_shared_weights(plot_network_path_ablation_threshold(10), 'Mutagenicity', appendix='lower_10')
     plot_shared_weights(plot_network_path_ablation_threshold(10), 'DHFR', appendix='lower_10')
-    plot_shared_weights(plot_network_path_ablation_threshold(10), 'IMDB-BINARY', appendix='lower_10')
-    plot_shared_weights(plot_network_path_ablation_threshold(10), 'IMDB-MULTI', appendix='lower_10')
-
-    plot_shared_weights(plot_network_path_ablation_distance, 'NCI1', appendix='distance')
-    plot_shared_weights(plot_network_path_ablation_distance, 'NCI109', appendix='distance')
-    plot_shared_weights(plot_network_path_ablation_distance, 'Mutagenicity', appendix='distance')
     plot_shared_weights(plot_network_path_ablation_distance, 'DHFR', appendix='distance')
+    clear_model_cache()
 
+    plot_network(plot_network_path_random, 'IMDB-BINARY', [101,68,612], draw_type='kawai', filtering=[None, {'absolute' : 3}])
+    plot_shared_weights(plot_network_path_random, 'IMDB-BINARY')
+    plot_shared_weights(plot_network_path_ablation_threshold(10), 'IMDB-BINARY', appendix='lower_10')
+    clear_model_cache()
 
+    plot_network(plot_network_path_random, 'IMDB-MULTI', [25,805,1265], draw_type='kawai', filtering=[None, {'absolute' : 3}])
+    plot_shared_weights(plot_network_path_random, 'IMDB-MULTI')
+    plot_shared_weights(plot_network_path_ablation_threshold(10), 'IMDB-MULTI', appendix='lower_10')
+    clear_model_cache()
+
+    plot_network(plot_network_path, 'NCI1', [216, 320, 655], draw_type='kawai', filtering=[None, {'absolute' : 3}])
+    plot_shared_weights(plot_network_path, 'NCI1')
+    plot_shared_weights(plot_network_path_ablation_threshold(10), 'NCI1', appendix='lower_10')
+    plot_shared_weights(plot_network_path_ablation_distance, 'NCI1', appendix='distance')
+    clear_model_cache()
+
+    plot_network(plot_network_path, 'NCI109', [56, 18, 3165], draw_type='kawai', filtering=[None, {'absolute' : 3}])
+    plot_shared_weights(plot_network_path, 'NCI109')
+    plot_shared_weights(plot_network_path_ablation_threshold(10), 'NCI109', appendix='lower_10')
+    plot_shared_weights(plot_network_path_ablation_distance, 'NCI109', appendix='distance')
+    clear_model_cache()
+
+    plot_network(plot_network_path, 'Mutagenicity', [1654, 257, 360], draw_type='kawai', filtering=[None, {'absolute' : 3}])
+    plot_shared_weights(plot_network_path, 'Mutagenicity')
+    plot_shared_weights(plot_network_path_ablation_threshold(10), 'Mutagenicity', appendix='lower_10')
+    plot_shared_weights(plot_network_path_ablation_distance, 'Mutagenicity', appendix='distance')
+    clear_model_cache()
 
     plot_specific_graphs_from_db(plot_network_path_synthetic,db_name='EvenOddRings2_16', graph_ids=[3,2,1,4], draw_type='circle')
     plot_specific_graphs_from_db(plot_network_path_synthetic,db_name='EvenOddRingsCount16', graph_ids=[0,5], draw_type='circle')
@@ -599,55 +487,7 @@ def main():
     plot_network(plot_network_path_synthetic, 'EvenOddRingsCount16', [0,5,6], with_labels_from_invariant=False, draw_type='circle', filtering=[None])
     plot_network(plot_network_path_synthetic, 'Snowflakes', [500,120,476], draw_type='kawai', filtering=[None, {'absolute' : 3}])
     plot_network(plot_network_path_synthetic, 'CSL', [0,16,31], draw_type='kawai', filtering=[None])
-    plot_network(plot_network_path_random, 'IMDB-MULTI', [25,805,1265], draw_type='kawai', filtering=[None, {'absolute' : 3}])
-    plot_network(plot_network_path_random, 'IMDB-BINARY', [101,68,612], draw_type='kawai', filtering=[None, {'absolute' : 3}])
-
-    plot_network(plot_network_path, 'NCI1', [216, 320, 655], draw_type='kawai', filtering=[None, {'absolute' : 3}])
-    plot_network(plot_network_path, 'NCI109', [56, 18, 3165], draw_type='kawai', filtering=[None, {'absolute' : 3}])
-    plot_network(plot_network_path, 'Mutagenicity', [1654, 257, 360], draw_type='kawai', filtering=[None, {'absolute' : 3}])
-
-    ablation_distance('NCI1', 20, fontsize=6)
-    ablation_distance('NCI109', 20, fontsize=6)
-    ablation_distance('Mutagenicity', 20, fontsize=6)
-    ablation_distance('DHFR', 20, fontsize=6)
-
-    ablation_distance('NCI1', 10)
-    ablation_distance('NCI109', 10)
-    ablation_distance('Mutagenicity', 10)
-    ablation_distance('DHFR', 10)
-
-    ablation_distance('NCI1')
-    ablation_distance('NCI109')
-    ablation_distance('Mutagenicity')
-    ablation_distance('DHFR')
-
-
-
-    ablation_threshold('NCI1', 'Lower')
-    ablation_threshold('NCI1', 'Upper')
-    ablation_threshold('NCI1', 'LowerUpper')
-    ablation_threshold('NCI109', 'Lower')
-    ablation_threshold('NCI109', 'Upper')
-    ablation_threshold('NCI109', 'LowerUpper')
-    ablation_threshold('Mutagenicity', 'Lower')
-    ablation_threshold('Mutagenicity', 'Upper')
-    ablation_threshold('Mutagenicity', 'LowerUpper')
-    ablation_threshold('DHFR', 'Lower')
-    ablation_threshold('DHFR', 'Upper')
-    ablation_threshold('DHFR', 'LowerUpper')
-    ablation_threshold('IMDB-BINARY', 'Lower')
-    ablation_threshold('IMDB-BINARY', 'Upper')
-    ablation_threshold('IMDB-BINARY', 'LowerUpper')
-    ablation_threshold('IMDB-MULTI', 'Lower')
-    ablation_threshold('IMDB-MULTI', 'Upper')
-    ablation_threshold('IMDB-MULTI', 'LowerUpper')
-    ablation_distance('Mutagenicity')
-    ablation_distance('DHFR')
-
-
-
-
-
+    clear_model_cache()
 
 
 if __name__ == '__main__':

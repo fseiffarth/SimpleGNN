@@ -1,8 +1,11 @@
 import copy
 import os
+import random
 from pathlib import Path
 from typing import List, Any, Optional
 import networkx as nx
+import numpy as np
+import torch
 
 from simplegnn.framework.utils.parameters import Parameters
 
@@ -276,16 +279,6 @@ def convert_to_list(value: Any):
         return value
 
 
-'''
-Created on 14.03.2019
-
-@author:
-'''
-import random
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
-
 def diff(first, second):
     second = set(second)
     return [item for item in first if item not in second]
@@ -405,104 +398,6 @@ def get_accuracy(output, labels, one_hot_encoding=True, zero_one=False):
                     correct += 1
                 counter += 1
     return correct / counter
-
-
-def live_plotter(x_vec, y1_data, line1, identifier='', pause_time=0.1):
-    if line1 == []:
-        # this is the call to matplotlib that allows dynamic plotting
-        plt.ion()
-        fig = plt.figure(figsize=(13, 6))
-        ax = fig.add_subplot(111)
-        # create a variable for the line so we can later update it
-        line1, = ax.plot(x_vec, y1_data, '-o', alpha=0.8)
-        # update plot label/title
-        plt.ylabel('Y Label')
-        plt.title('Title: {}'.format(identifier))
-        plt.show()
-
-    # after the figure, axis, and line are created, we only need to update the y-data
-    line1.set_ydata(y1_data)
-    # adjust limits if new data goes beyond bounds
-    if np.min(y1_data) <= line1.axes.get_ylim()[0] or np.max(y1_data) >= line1.axes.get_ylim()[1]:
-        plt.ylim([np.min(y1_data) - np.std(y1_data), np.max(y1_data) + np.std(y1_data)])
-    # this pauses the data so the figure/axis can catch up - the amount of pause can be altered above
-    plt.pause(pause_time)
-
-    # return line so we can update it again in the next iteration
-    return line1
-
-
-def plot_init(line_num, identifier='', epochs=100):
-    coordinates = [[], []]
-    lines = []
-    # this is the call to matplotlib that allows dynamic plotting
-    plt.ion()
-    fig = plt.figure(figsize=(13, 6))
-    ax = fig.add_subplot(111)
-    # update plot label/title
-    plt.ylabel('Accuracy')
-    plt.xlabel('Epochs')
-    # set y range min and max
-    plt.ylim([0, 1])
-    # set x range min and max
-    plt.xlim([1, epochs])
-
-    plt.title('Title: {}'.format(identifier))
-    plt.show()
-
-    for i in range(0, line_num):
-        # create a variable for the line so we can later update it
-        line, = ax.plot(0, 0, '-o', alpha=0.8)
-        lines.append(line)
-        coordinates[0].append(np.zeros(1))
-        coordinates[1].append(np.zeros(1))
-    return lines, coordinates
-
-
-def plot_learning_data(new_x, new_y, data, epochs, title=''):
-    plt.ion()
-    plt.clf()
-
-    # set y range min and max
-    plt.ylim([0, 100])
-    # set x range min and max
-    plt.xlim([1, new_x])
-
-    plt.title(f"Title: {title}")
-    # add new_x new_y to data which is a map of lists
-    for i, y in enumerate(new_y, 0):
-        if len(data['Y']) <= i:
-            data['Y'].append([])
-            data['X'].append([])
-        data['Y'][i].append(y)
-        data['X'][i].append(new_x)
-    # plot data as multiple lines with different colors in one plot
-    for i, x in enumerate(data['X'], 0):
-        plt.plot(x, data['Y'][i])
-
-    # add legend to the lines epoch accuracy, validation accuracy and test accuracy
-    plt.legend(['Train', 'Validation', 'Test', 'Loss'], loc='lower right')
-
-    plt.draw()
-    plt.pause(0.001)
-    return data
-
-
-def add_values(xvalues, yvalues, coordinates):
-    for i, x in enumerate(xvalues, 0):
-        coordinates[0][i] = np.append(coordinates[0][i], x)
-        coordinates[1][i] = np.append(coordinates[1][i], yvalues[i])
-
-    return coordinates
-
-
-def live_plotter_lines(coordinates, lines):
-    for i, line in enumerate(lines, 0):
-        # after the figure, axis, and line are created, we only need to update the y-data
-        line.set_ydata(coordinates[1][i])
-        line.set_xdata(coordinates[0][i])
-    # return line so we can update it again in the next iteration
-    return lines
 
 
 def get_data_indices(size, seed, kFold):

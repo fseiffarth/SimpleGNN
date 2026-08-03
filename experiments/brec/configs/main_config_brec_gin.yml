@@ -1,0 +1,30 @@
+# BREC expressiveness benchmark — GIN negative control.
+# See specs/21-brec-expressiveness-benchmark.md.
+#
+# All 400 BREC pairs are 1-WL-indistinguishable by construction, so a
+# message-passing GNN's true score is 0/400. Any pair this config
+# "distinguishes" is a false positive of the T-squared test, which makes this
+# run a sanity check on the RPC implementation rather than an expressiveness
+# measurement. A handful of pairs with T-squared just above the 5.0 threshold is
+# expected (a fixed significance level over 400 tests); many, or any with a
+# large T-squared, would mean the harness is broken. See experiments/brec/README.md.
+#
+# Shares data/labels/properties paths with main_config_brec.yml so the dataset
+# is built (and, for the ShareGNN config, labelled) only once.
+datasets:
+  - {
+      name: "BREC",
+      source: "BREC",
+      task: "graph_regression",
+      regression_targets: [0],
+      validation_folds: 1,
+      paths: {
+        data: "data/BREC/",
+        labels: "data/BREC/labels/",
+        properties: "data/BREC/properties/",
+        results: "results/brec/gin/",
+        models: "experiments/brec/models_brec_gin.yml",
+        hyperparameters: "experiments/brec/parameters_brec.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/BREC_splits.json",
+      }
+  }

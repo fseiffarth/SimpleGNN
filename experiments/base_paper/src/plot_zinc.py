@@ -1,57 +1,24 @@
-from pathlib import Path
-
-import matplotlib.colors as mcolors
-
 import matplotlib.pyplot as plt
-import numpy as np
 
-from simplegnn.framework.core import FrameworkMain
-from simplegnn.datasets.utils.graph_drawing import GraphDrawing
-from simplegnn.framework.utils.preprocessing import load_splits
+from simplegnn.datasets.utils.graph_drawing import GraphDrawing, CustomColorMap
 
-
-def parameter_update():
-    plt.rcParams.update({
-        "font.family": "serif",  # use serif/main font for text elements
-        "font.size": 30,
-        "text.usetex": True,  # use inline math for ticks
-        "pgf.rcfonts": False,  # don't setup fonts from rc parameters
-        "pgf.texsystem": "lualatex",
-        "pgf.preamble": "\n".join([
-            r"\usepackage{url}",  # load additional packages
-            r"\usepackage{unicode-math}",  # unicode math setup
-            r"\setmainfont{DejaVu Serif}",  # serif font via preamble
-        ])
-    })
-
-
-class CustomColorMap:
-    def __init__(self):
-        aqua = (0.0, 0.6196, 0.8902)
-        # 89,189,247
-        skyblue = (0.3490, 0.7412, 0.9686)
-        fuchsia = (232 / 255.0, 46 / 255.0, 130 / 255.0)
-        violet = (152 / 255.0, 48 / 255.0, 130 / 255.0)
-        white = (1.0, 1.0, 1.0)
-        # darknavy 12,18,43
-        darknavy = (12 / 255.0, 18 / 255.0, 43 / 255.0)
-
-        # Define the three colors and their positions
-        lamarr_colors = [aqua, white, fuchsia]  # Color 3 (RGB values)
-
-        positions = [0.0, 0.5, 1.0]  # Positions of the colors (range: 0.0 to 1.0)
-
-        # Create a colormap using LinearSegmentedColormap
-        self.cmap = mcolors.LinearSegmentedColormap.from_list('custom_colormap', list(zip(positions, lamarr_colors)))
+from plot_common import (setup_pgf, save_latex_figure, get_experiment, get_model,
+                         figure_path, position_path)
 
 
 def main():
-    parameter_update()
-    experiment = FrameworkMain(Path('experiments/base_paper/regression/ZINC/configs/main_config_ZINC.yml'))
-    experiment.preprocessing(num_threads=1)
     graph_ids = [500]
     db_name = 'ZINC'
-    net = experiment.load_model(db_name=db_name, config_id=0, run_id=0, validation_id=0)
+    graph_ids_string = '_'.join([str(x) for x in graph_ids])
+    output_path = figure_path(f'{db_name}_{graph_ids_string}_message_passing.pdf')
+    if output_path.exists():
+        return
+
+    setup_pgf()
+    config_path = 'experiments/base_paper/regression/ZINC/configs/main_config_ZINC.yml'
+    experiment = get_experiment(config_path)
+    experiment.preprocessing(num_threads=1)
+    net = get_model(config_path, db_name, config_id=0, run_id=0, validation_id=0)
     n = len(graph_ids)
     m = 4
 
@@ -73,34 +40,26 @@ def main():
         GraphDrawing(node_size=40, edge_width=1, weight_edge_width=2.5, weight_arrow_size=10, draw_type='kawai'),
     )
 
-    Path('results/base_paper/regression/Latex/Plots/Positions/').mkdir(exist_ok=True, parents=True)
-    save_pos_path = Path('results/base_paper/regression/Latex/Plots/Positions/')
-    pos_path = save_pos_path.joinpath(f'{db_name}_{graph_ids[0]}_pos.txt')
-
     for idx, graph_id in enumerate(graph_ids):
         axs_id = axs
         if len(graph_ids) > 1:
             axs_id = axs[idx]
 
+        pos_path = position_path(f'{db_name}_{graph_id}_pos.txt')
+
         # get convolution layer
         convolution_layer = net.net_layers[2]
         # draw all the five heads
-        # convolution_layer.draw(ax=axs_id[0], graph_id=graph_id, graph_drawing=graph_drawing, graph_only=True)
-        convolution_layer.draw(ax=axs[0], graph_id=graph_ids[0], graph_drawing=graph_drawing, graph_only=True,
+        convolution_layer.draw(ax=axs_id[0], graph_id=graph_id, graph_drawing=graph_drawing, graph_only=True,
                                pos_path=pos_path)
         convolution_layer.draw(ax=axs_id[1], graph_id=graph_id, graph_drawing=graph_drawing, filter_weights=None,
-                               head=0)
+                               head=0, pos_path=pos_path)
         convolution_layer.draw(ax=axs_id[2], graph_id=graph_id, graph_drawing=graph_drawing, filter_weights=None,
-                               head=10)
+                               head=10, pos_path=pos_path)
         convolution_layer.draw(ax=axs_id[3], graph_id=graph_id, graph_drawing=graph_drawing, filter_weights=None,
-                               head=18)
+                               head=18, pos_path=pos_path)
 
-    # use latex backend for matplotlib
-    graph_ids_string = '_'.join([str(x) for x in graph_ids])
-    plt.savefig(f'results/base_paper/regression/Latex/{db_name}_{graph_ids_string}_message_passing.pdf', bbox_inches='tight', backend='pgf')
-    plt.show()
-
-    return
+    save_latex_figure(fig, output_path)
 
 
 if __name__ == '__main__':

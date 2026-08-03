@@ -1,0 +1,129 @@
+# Peptides-struct ShareGNN multi-head architecture, adapted from
+# experiments/qm9/models_QM9.yml. Identical to models_peptides_func.yml
+# except for the final output width (11 regression targets instead of 10
+# binary labels). See specs/20-lrgb-long-range-benchmark.md for why the
+# `distances` property range is scoped to 0-15 (cutoff: 15) instead of
+# QM9's 0-23.
+models:
+- - layer_type: linear
+    mode: aggr_features
+    out_features: 10
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_convolution
+    bias: false
+    activation: torch.nn.Identity()
+    heads:
+    - bias: false
+      num: 1
+      labels:
+        head:
+          label_type:
+          - induced_cycles
+          - primary
+          min_cycle_length: 6
+          max_cycle_length: 6
+        tail:
+          label_type:
+          - induced_cycles
+          - primary
+          min_cycle_length: 6
+          max_cycle_length: 6
+        bias:
+          label_type: wl_labeled
+          depth: 2
+      properties:
+        name: distances
+        cutoff: 15
+        values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    - bias: false
+      num: 1
+      labels:
+        head:
+          label_type: primary
+        tail:
+          label_type: primary
+        bias:
+          label_type: primary
+      properties:
+        name: distances
+        cutoff: 15
+        values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    - bias: false
+      num: 1
+      labels:
+        head:
+          label_type: wl_labeled
+          depth: 0
+        tail:
+          label_type: wl_labeled
+          depth: 0
+        bias:
+          label_type: wl_labeled
+          depth: 0
+      properties:
+        name: distances
+        cutoff: 15
+        values: [0, 1, 2, 3, 4, 5]
+    - bias: false
+      num: 1
+      labels:
+        head:
+          label_type: wl_labeled_edges
+          depth: 1
+        tail:
+          label_type: wl_labeled_edges
+          depth: 1
+        bias:
+          label_type: wl_labeled_edges
+          depth: 1
+      properties:
+        name: distances
+        cutoff: 15
+        values: [0, 1, 2, 3]
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - bias: true
+      num: 10
+      labels:
+        label_type:
+        - induced_cycles
+        - primary
+        min_cycle_length: 6
+        max_cycle_length: 6
+    - bias: true
+      num: 10
+      labels:
+        label_type: primary
+    - bias: true
+      num: 10
+      labels:
+        label_type: wl_labeled
+        depth: 0
+    - bias: true
+      num: 10
+      labels:
+        label_type: wl_labeled_edges
+        depth: 1
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 11
+    bias: true
+    activation: torch.nn.Identity()
+  - layer_type: reshape

@@ -19,8 +19,9 @@ models:
   - layer_type: invariant_based_aggregation
     activation: torch.nn.Tanh()
     bias: true
+    # one head per class (old schema: out_dim: 4) - Snowflakes has 4 classes
     heads:
-    - 1
+    - 4
     labels:
     - label_type:
       - wl

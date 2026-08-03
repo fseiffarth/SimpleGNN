@@ -15,8 +15,9 @@ models:
   - layer_type: invariant_based_aggregation
     activation: torch.nn.Tanh()
     bias: true
+    # one head per class (old schema: out_dim: 3) - LongRings100 has 3 classes
     heads:
-    - 1
+    - 3
     labels:
     - label_type: primary
   - layer_type: reshape

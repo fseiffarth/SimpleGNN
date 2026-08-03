@@ -1,0 +1,37 @@
+# Peptides-func graph-classification experiment (ShareGNN multi-head), Long
+# Range Graph Benchmark (Dwivedi et al., 2022), via
+# torch_geometric.datasets.LRGBDataset. See specs/20-lrgb-long-range-benchmark.md.
+#
+# DEVIATION: Peptides-func is genuinely multi-label (10 independent binary
+# tasks per graph), but the framework's `task: graph_classification` path
+# unconditionally flattens `y` and uses argmax-based single-label predictions
+# (graph_dataset.py, model_configuration.py) — using it as originally scoped
+# would silently corrupt the multi-label targets, not just mis-report a
+# metric. This config uses `task: graph_regression` + `loss:
+# BCEWithLogitsLoss` instead: graph_regression's pipeline never flattens `y`
+# and correctly keeps all 10 output columns, and the loss dispatch is
+# task-agnostic, so BCEWithLogitsLoss works unmodified. Reported
+# "MAE"/"accuracy" are therefore NOT the paper's Average Precision metric —
+# they're a side effect of reusing the regression code path. See
+# specs/20-lrgb-long-range-benchmark.md for the alternative (a real
+# multi-label patch), not implemented here.
+datasets:
+  - {
+      name: "peptides-func",
+      source: "LRGB",
+      task: "graph_regression",
+      # all 10 binary peptide-function targets
+      regression_targets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      validation_folds: 1,
+      paths: {
+        data: "data/LRGB/",
+        labels: "data/LRGB/labels/",
+        properties: "data/LRGB/properties/",
+        results: "results/lrgb/",
+        models: "experiments/lrgb/models_peptides_func.yml",
+        hyperparameters: "experiments/lrgb/parameters_peptides_func.yml",
+        # official LRGB train/val/test split expressed as offsets — regenerate
+        # with `python -m simplegnn.utils.lrgb_splits --dataset peptides-func`
+        splits: "src/simplegnn/datasets/splits/fixed/peptides-func_splits.json",
+      }
+  }

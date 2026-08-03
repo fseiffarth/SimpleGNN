@@ -161,6 +161,14 @@ class TestLayerDraw:
                    if isinstance(l, InvariantBasedAggregationLayer))
         return mp, agg
 
+    def test_get_all_param_indices_matches_per_graph_rows(self, net):
+        import torch
+
+        mp, _ = self._layers(net)
+        per_graph = torch.cat([mp.get_graph_weights(g)[:, 3]
+                               for g in range(len(mp.graph_data))])
+        assert torch.equal(mp.get_all_param_indices(), per_graph)
+
     def test_message_passing_draw_graph_only(self, net, drawings):
         mp, _ = self._layers(net)
         fig, ax = plt.subplots()
@@ -209,4 +217,91 @@ class TestLayerDraw:
         fig, ax = plt.subplots()
         agg.draw(ax=ax, graph_id=0, graph_drawing=drawings, graph_only=True)
         assert ax.collections
+        plt.close(fig)
+
+
+@pytest.mark.integration
+class TestPositionalEncodingDraw:
+    @pytest.fixture()
+    def pe_layer(self, share_gnn_setup_factory):
+        from simplegnn.models.model import GraphModel
+        from simplegnn.models.ShareGNN.layers.inv_based_positional_encoding import (
+            InvariantBasedPositionalEncodingLayer,
+        )
+
+        graph_data, para = share_gnn_setup_factory("models_ShareGNN_pe.yml")
+        net = GraphModel(graph_data=graph_data, para=para, seed=0, device="cpu")
+        return next(l for l in net.net_layers
+                    if isinstance(l, InvariantBasedPositionalEncodingLayer))
+
+    @pytest.fixture()
+    def drawings(self):
+        return (
+            GraphDrawing(node_size=40, edge_width=1, draw_type="kawai"),
+            GraphDrawing(node_size=40, edge_width=1, weight_edge_width=2.5,
+                         weight_arrow_size=10, draw_type="kawai"),
+        )
+
+    def test_graph_weights_match_forward_embeddings(self, pe_layer):
+        import torch
+
+        graph_id = 0
+        node_range = slice(pe_layer._pe_slices[graph_id],
+                           pe_layer._pe_slices[graph_id + 1])
+        embeddings = pe_layer._gather_embeddings(node_range).detach().cpu().numpy()
+        column = 0
+        for head, num in enumerate(pe_layer.n_heads_per_label):
+            for entry in range(num):
+                drawn = pe_layer.get_graph_weights(graph_id, head=head, entry=entry)
+                assert np.allclose(drawn, embeddings[:, column])
+                column += 1
+        assert column == embeddings.shape[1]
+
+    def test_shared_ids_share_weights(self, pe_layer):
+        ids = pe_layer.get_graph_embedding_ids(0, head=0)
+        weights = pe_layer.get_graph_weights(0, head=0)
+        for label_id in np.unique(ids):
+            assert np.ptp(weights[ids == label_id]) == 0
+
+    def test_draw_graph_only(self, pe_layer, drawings):
+        fig, ax = plt.subplots()
+        pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, graph_only=True)
+        assert ax.collections or ax.patches
+        plt.close(fig)
+
+    def test_draw_every_head_and_entry(self, pe_layer, drawings):
+        for head, num in enumerate(pe_layer.n_heads_per_label):
+            for entry in range(num):
+                fig, ax = plt.subplots()
+                pe_layer.draw(ax=ax, graph_id=1, graph_drawing=drawings, head=head,
+                              out_dimension=entry)
+                assert ax.collections
+                plt.close(fig)
+
+    def test_draw_color_by_label(self, pe_layer, drawings):
+        fig, ax = plt.subplots()
+        pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, color_by="label",
+                      with_graph=False)
+        assert ax.collections
+        plt.close(fig)
+
+    def test_draw_pos_path_roundtrip(self, pe_layer, drawings, tmp_path):
+        pos_path = tmp_path / "pe_graph0_pos.txt"
+        fig, ax = plt.subplots()
+        pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, graph_only=True,
+                      pos_path=pos_path)
+        plt.close(fig)
+        assert pos_path.is_file()
+        fig, ax = plt.subplots()
+        pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, pos_path=pos_path)
+        plt.close(fig)
+
+    def test_draw_rejects_invalid_arguments(self, pe_layer, drawings):
+        fig, ax = plt.subplots()
+        with pytest.raises(ValueError):
+            pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, head=99)
+        with pytest.raises(ValueError):
+            pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, out_dimension=99)
+        with pytest.raises(ValueError):
+            pe_layer.draw(ax=ax, graph_id=0, graph_drawing=drawings, color_by="nope")
         plt.close(fig)

@@ -1,0 +1,68 @@
+# Hyperparameters for the QM9 experiment. These were inline in the old RuleGNN
+# main config (`ReproduceExtended/configs/QM/main_config_QM.yml`) and moved here
+# unchanged, except where noted. See specs/19-qm9-migration.md.
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: double
+
+# optimizer: optimizer for the network
+optimizer:
+  - Adam
+
+# convolution_grad / aggregation_grad: turn learning on/off for the
+# invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# loss: loss function for the network
+loss:
+  - MAE
+
+# rule_occurrence_threshold: how often a rule has to occur to get its own weight.
+# Read directly in the layer (not in the grid loop) -> keep it a scalar.
+rule_occurrence_threshold: 1
+
+# weight initialization for the invariant-based layers
+# - type: [uniform, normal, constant, lower_upper, mean_aggregation]
+# - value/min/max/mean/std depending on the type
+weight_initialization: { convolution: {  type: 'lower_upper', value: -0.001 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: -0.001 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.001
+epochs:
+  - 400
+
+early_stopping:
+  enabled:
+    False
+  patience:
+    25
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.9, patience: 10, min_lr: 0.00001 }
+
+# how to sample the training data
+training_data_sampling: { type: 'default'}
+
+# DEVIATION FROM THE OLD CONFIG: the old file used `name: node_labels` here, but
+# the `one_hot_labels_normalize_features` transformation is only reachable when
+# `name` is 'all' (graph_dataset.py:788, 878 — same in the old repo,
+# GraphData.py:579, 666). With `node_labels` the transformation was silently
+# ignored and the model saw a single raw atomic-number column. `all` gives what
+# the transformation name promises: one-hot atom type concatenated with the
+# min-max-normalized node attributes (partial charges + 3D positions).
+# Set `name: node_labels` to reproduce the old single-column input.
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# z-score the regression targets for training ...
+output_features: { normalization: 'standard' }
+# ... and undo it before computing the metrics, so the reported MAE is in the
+# target's own units rather than in standard deviations. DEVIATION FROM THE OLD
+# CONFIG, where this line was commented out (model_configuration.py:1209-1213).
+invert_outputs: { normalization: 'standard' }
+
+best_model: True
