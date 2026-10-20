@@ -1,5 +1,6 @@
 import numpy as np
 
+from simplegnn.models.layers.nn_standard.glu import GLULayer
 from simplegnn.models.layers.utils.layer_types import LayerTypes
 
 
@@ -167,6 +168,15 @@ def check_layer(i:int, layer: dict)->(bool, str):
         for req in required:
             if req not in layer:
                 return False, f'{req} not defined in layer {i}'
+    elif layer['layer_type'] in [LayerTypes.GLU.value, LayerTypes.SWIGLU.value]:
+        # out_features is optional: a feed-forward block defaults to being
+        # dimension preserving
+        if 'variant' in layer and layer['variant'] not in GLULayer.VARIANT_GATES:
+            return False, (f'variant must be one of {list(GLULayer.VARIANT_GATES.keys())} '
+                           f'in layer {i}')
+        if 'gate_activation' in layer and layer['gate_activation'] not in GLULayer.GATE_ACTIVATIONS:
+            return False, (f'gate_activation must be one of {list(GLULayer.GATE_ACTIVATIONS.keys())} '
+                           f'in layer {i}')
     elif layer['layer_type'] == LayerTypes.ATTENTION_READOUT.value:
         required = ['out_features']
         for req in required:

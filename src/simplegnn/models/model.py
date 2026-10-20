@@ -54,6 +54,7 @@ from simplegnn.models.layers.nn_standard.batch_normalization import BatchNormLay
 from simplegnn.models.layers.nn_standard.dropout import DropoutLayer
 from simplegnn.models.layers.nn_standard.layer_normalization import LayerNormalization
 from simplegnn.models.layers.nn_standard.linear import LinearLayer
+from simplegnn.models.layers.nn_standard.glu import GLULayer
 from simplegnn.models.layers.nn_standard.reshape import Reshape
 from simplegnn.models.layers.utils.layer_types import LayerTypes
 from simplegnn.utils.timer import TimeClass
@@ -396,6 +397,7 @@ class GraphModel(torch.nn.Module):
 
         - Standard layers:
           - LINEAR → LinearLayer
+          - GLU (alias SWIGLU) → GLULayer
           - ACTIVATION → ActivationLayer
           - BATCH_NORM → BatchNormLayer
           - LAYER_NORM → LayerNormalization
@@ -509,6 +511,8 @@ class GraphModel(torch.nn.Module):
             return LayerNormalization(layer_args=layer_args).type(self.precision)
         elif layer.layer_type == LayerTypes.LINEAR.value:
             return LinearLayer(layer_args=layer_args).type(self.precision)
+        elif layer.layer_type in (LayerTypes.GLU.value, LayerTypes.SWIGLU.value):
+            return GLULayer(layer_args=layer_args).type(self.precision)
         elif layer.layer_type == LayerTypes.ATTENTION_READOUT.value:
             return AttentionReadoutLayer(layer_args=layer_args).type(self.precision)
         elif layer.layer_type == LayerTypes.RESHAPE.value:

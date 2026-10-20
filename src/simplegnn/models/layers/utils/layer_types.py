@@ -5,6 +5,10 @@ class LayerTypes(Enum):
     """All currently supported layer types."""
     ### standard layers
     LINEAR = 'linear'
+    GLU = 'glu'
+    # alias of GLU: the gate activation selects the variant, and 'silu'
+    # (SwiGLU) is the default gate
+    SWIGLU = 'swiglu'
     ATTENTION_READOUT = 'attention_readout'
     RESHAPE = 'reshape'
     LAYER_NORM = 'layer_norm'

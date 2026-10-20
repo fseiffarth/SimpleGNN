@@ -66,7 +66,8 @@ class FrameworkLayer(torch.nn.Module, ABC):
             Activation function (default: torch.nn.Identity()). Supported strings:
             'torch.nn.Identity()', 'torch.nn.ReLU()', 'torch.nn.LeakyReLU()',
             'torch.nn.ELU()', 'torch.nn.GELU()', 'torch.nn.Tanh()',
-            'torch.nn.Sigmoid()', 'torch.nn.Softmax(dim=1)', 'torch.nn.SELU()'.
+            'torch.nn.Sigmoid()', 'torch.nn.Softmax(dim=1)', 'torch.nn.SELU()',
+            'torch.nn.SiLU()'.
 
     Attributes
     ----------
@@ -288,6 +289,7 @@ class FrameworkLayer(torch.nn.Module, ABC):
                     'torch.nn.Sigmoid()': torch.nn.Sigmoid(),
                     'torch.nn.Softmax(dim=1)': torch.nn.Softmax(dim=1),
                     'torch.nn.SELU()': torch.nn.SELU(),
+                    'torch.nn.SiLU()': torch.nn.SiLU(),
                 }
                 if activation_value in ACTIVATION_MAP:
                     self.activation = ACTIVATION_MAP[activation_value]
