@@ -1,0 +1,26 @@
+# Peptides-func with the OPTIMAL (literature-informed) ShareGNN configuration —
+# identical to main_config_peptides_func.yml except for the models/
+# hyperparameters paths. See experiments/lrgb/OPTIMAL_CONFIG.md for the
+# rationale, and main_config_peptides_func.yml for the documented
+# task=graph_regression + BCEWithLogitsLoss multi-label workaround (reported
+# "MAE"/"accuracy" are surrogates, NOT the benchmark's Average Precision).
+datasets:
+  - {
+      name: "peptides-func",
+      source: "LRGB",
+      task: "graph_regression",
+      # all 10 binary peptide-function targets
+      regression_targets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      validation_folds: 1,
+      paths: {
+        data: "data/LRGB/",
+        labels: "data/LRGB/labels/",
+        properties: "data/LRGB/properties/",
+        results: "results/lrgb_optimal/",
+        models: "experiments/lrgb/models_peptides_func_optimal.yml",
+        hyperparameters: "experiments/lrgb/parameters_peptides_func_optimal.yml",
+        # official LRGB train/val/test split expressed as offsets — regenerate
+        # with `python -m simplegnn.utils.lrgb_splits --dataset peptides-func`
+        splits: "src/simplegnn/datasets/splits/fixed/peptides-func_splits.json",
+      }
+  }

@@ -1,0 +1,422 @@
+# Optimized ShareGNN architectures for the BREC expressiveness benchmark.
+# Rationale and literature sources: experiments/brec/OPTIMAL_CONFIG.md.
+# Baseline this improves on: experiments/brec/models_brec.yml (same schema).
+#
+# Three grid variants, selected with `--config_id` in main_brec.py
+# (parameters_brec_optimal.yml keeps every hyperparameter list a singleton, so
+# config_id N == variant N):
+#
+#   0  "extended invariants"  — richer label vocabulary (maximal-clique counts,
+#      cycle-x-WL product labels, closed walks 7/8) plus a CFI-deep receptive
+#      field (distances to 17). Recommended default. Needs new label files
+#      (cliques, closed_walks_7/8, the product label) on first preprocessing.
+#   1  "cached labels, extended reach" — models_brec.yml with ONLY the
+#      distance ranges on the WL heads widened (8 -> 17, the max CFI diameter).
+#      Needs NO new label generation (distance properties are stored uncapped;
+#      `values` merely selects which distances get weights), so this runs
+#      immediately on an existing data/BREC/ cache. Ablates receptive field
+#      alone against the baseline.
+#   2  "deep two-block" — variant 0's vocabulary with a second invariant
+#      convolution block (composition creates 2-step invariants; BREC's own
+#      analysis needs ~5 iterations of 3-WL to reach 270/400, arXiv:2304.07702
+#      Table 6). Roughly 2x the per-pair runtime of variant 0.
+#
+# Invariants kept from models_brec.yml (they are protocol requirements, not
+# tuning choices):
+#   - final linear emits OUTPUT_DIM = 16 (the T-squared test's embedding width)
+#   - no `primary` / `wl_labeled` heads (BREC graphs are unlabeled)
+#   - `induced_cycles` (chordless) instead of `simple_cycles` — simple-cycle
+#     enumeration is infeasible on the dense 4-Vertex_Condition graphs
+models:
+
+# ---------------------------------------------------------------------------
+# Variant 0 — extended invariants (recommended)
+# ---------------------------------------------------------------------------
+- - layer_type: invariant_based_positional_encoding
+    concatenate_input: false
+    heads:
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 1, max_walk_length: 1 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 2, max_walk_length: 2 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 3 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 4, max_walk_length: 4 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 5, max_walk_length: 5 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 6, max_walk_length: 6 }
+    # walks 7/8: extra spectral resolution, near-free to generate (matrix powers)
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 7, max_walk_length: 7 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 8, max_walk_length: 8 }
+    - num: 2
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    # maximal-clique count vector: chordless cycles are blind to cliques by
+    # definition; GSN's S4 substructure counts (which include cliques) score
+    # 99/140 on BREC's Regular graphs (arXiv:2304.07702 Table 7)
+    - num: 2
+      labels: { label_type: cliques }
+    # product label cycles x WL-1: an edge-level refinement in the spirit of
+    # GSN-e (edge-anchored counts beat node-anchored on BREC, Table 7)
+    - num: 2
+      labels:
+        label_type:
+        - induced_cycles
+        - wl
+        min_cycle_length: 3
+        max_cycle_length: 6
+        depth: 1
+    - num: 2
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    # cycle-count-keyed message passing (substructure signal 1-WL cannot see)
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        tail: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    # clique-keyed short-range head: strongly-regular / 4-vertex-condition focus
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: cliques }
+        tail: { label_type: cliques }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+    # distance-encoded WL heads; distances reach 17 = max CFI diameter.
+    # BREC's receptive-field analysis: radius 6 -> 385, 8 -> 398, 10 -> 400
+    # distinguishable pairs (arXiv:2304.07702 Table 5); rules are only
+    # instantiated for (label, label, distance) combinations that occur, so
+    # the wide range costs nothing outside CFI (all other diameters <= 5)
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 1 }
+        tail: { label_type: wl, depth: 1 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 2 }
+        tail: { label_type: wl, depth: 2 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 3 }
+        tail: { label_type: wl, depth: 3 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    # closed-walk (spectral) head
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+        tail: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    # degree backbone
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 0 }
+        tail: { label_type: wl, depth: 0 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - num: 16
+      bias: true
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: cliques }
+    - num: 16
+      bias: true
+      labels:
+        label_type:
+        - induced_cycles
+        - wl
+        min_cycle_length: 3
+        max_cycle_length: 6
+        depth: 1
+    - num: 16
+      bias: true
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 1 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 2 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  # OUTPUT_DIM of the RPC protocol — must stay 16
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 16
+    bias: true
+  - layer_type: reshape
+
+# ---------------------------------------------------------------------------
+# Variant 1 — cached labels only, extended receptive field
+# (models_brec.yml with WL-head distances widened 8 -> 17; no new labels)
+# ---------------------------------------------------------------------------
+- - layer_type: invariant_based_positional_encoding
+    concatenate_input: false
+    heads:
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 1, max_walk_length: 1 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 2, max_walk_length: 2 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 3 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 4, max_walk_length: 4 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 5, max_walk_length: 5 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 6, max_walk_length: 6 }
+    - num: 2
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 2
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        tail: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 1 }
+        tail: { label_type: wl, depth: 1 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 2 }
+        tail: { label_type: wl, depth: 2 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 3 }
+        tail: { label_type: wl, depth: 3 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+        tail: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 0 }
+        tail: { label_type: wl, depth: 0 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - num: 16
+      bias: true
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 1 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 16
+    bias: true
+  - layer_type: reshape
+
+# ---------------------------------------------------------------------------
+# Variant 2 — deep two-block (variant 0 vocabulary, two convolution blocks)
+# ---------------------------------------------------------------------------
+- - layer_type: invariant_based_positional_encoding
+    concatenate_input: false
+    heads:
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 1, max_walk_length: 1 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 2, max_walk_length: 2 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 3 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 4, max_walk_length: 4 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 5, max_walk_length: 5 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 6, max_walk_length: 6 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 7, max_walk_length: 7 }
+    - num: 2
+      labels: { label_type: closed_walks, min_walk_length: 8, max_walk_length: 8 }
+    - num: 2
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 2
+      labels: { label_type: cliques }
+    - num: 2
+      labels: { label_type: wl, depth: 0 }
+  # block 1: short-range substructure heads
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        tail: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: cliques }
+        tail: { label_type: cliques }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 1 }
+        tail: { label_type: wl, depth: 1 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 0 }
+        tail: { label_type: wl, depth: 0 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 32
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  # block 2: composition over block-1 features — realizes 2-step invariants
+  # a single invariant convolution cannot express
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        tail: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8] }
+    - num: 1
+      bias: true
+      labels:
+        head: { label_type: wl, depth: 2 }
+        tail: { label_type: wl, depth: 2 }
+        bias: { label_type: wl, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] }
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - num: 16
+      bias: true
+      labels: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: cliques }
+    - num: 16
+      bias: true
+      labels: { label_type: closed_walks, min_walk_length: 3, max_walk_length: 6 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 2 }
+    - num: 16
+      bias: true
+      labels: { label_type: wl, depth: 0 }
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 64
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 16
+    bias: true
+  - layer_type: reshape

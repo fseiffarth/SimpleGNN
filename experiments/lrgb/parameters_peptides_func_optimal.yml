@@ -1,0 +1,89 @@
+# OPTIMAL hyperparameters for Peptides-func (models_peptides_func_optimal.yml).
+# Literature-aligned with Tönshoff et al. 2023 (arXiv:2309.00367, "Where Did
+# the Gap Go?"): AdamW, lr 1e-3, cosine schedule with linear warmup, dropout
+# 0.1 (in the network config), 250 epochs — the recipe that lifted a plain GCN
+# to 0.686 AP on this dataset. ShareGNN-specific regularization (rule
+# occurrence threshold, proximal L1) follows the tuned ZINC v12 setup
+# (experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v12.yml).
+# See experiments/lrgb/OPTIMAL_CONFIG.md. Loss stays BCEWithLogitsLoss on the
+# graph_regression code path — see main_config_peptides_func.yml for why.
+device: cpu
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: float
+
+# AdamW + no weight decay: matches Tönshoff et al. / GraphGPS peptides
+# settings (decay 0). The invariant layers are regularized by the rule
+# occurrence threshold and proximal L1 below instead; if overfitting persists,
+# grid-search decay by listing several dicts, e.g. add
+# { type: 'AdamW', weight_decay: 0.00001 }.
+optimizer:
+  - { type: 'AdamW', weight_decay: 0.0 }
+
+# BCE over the 10 independent binary function labels (multi-label task run on
+# the graph_regression pipeline; reported "MAE"/"accuracy" are surrogates, not
+# the paper's AP — see main_config_peptides_func.yml).
+loss:
+  - BCEWithLogitsLoss
+
+# Rule pruning: strongest ShareGNN lever against overfitting (deletes
+# rare-rule parameters instead of shrinking them; found best at 10 on ZINC
+# v12). Peptides has ~15.5k graphs of ~150 nodes, so rules occur far more
+# often than on ZINC — 5 keeps long-distance rules alive while dropping noise.
+# NOT grid-searchable (read directly in the layer) — edit per run; sweep
+# {1, 5, 10, 20} if tuning.
+rule_occurrence_threshold: 5
+
+# Proximal L1 on invariant-layer rule weights: learned rule selection
+# (drives uninformative long-distance rules to exactly 0). Same values as the
+# tuned ZINC v12 for convolution/aggregation; the encoding table gets a 10x
+# gentler lambda because pruning input embeddings before they learn is riskier
+# (see the v12 config's warning). NOT grid-searchable — edit per run.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.001 }
+
+# Fan-in-scaled init with mean-aggregation prior (ZINC v12); the
+# positional_encoding entry initializes the invariant encoder's embedding
+# tables.
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+# Literature batch sizes are 200 (Tönshoff) / 128 (GraphGPS); 128 is the
+# memory-conscious choice for ~150-node graphs with all-pairs distance rules.
+# Drop to 64 if the batched forward OOMs (see memory note on parallel folds).
+batch_size:
+  - 128
+# lr 1e-3: unanimous across Tönshoff GCN/GINE and GRIT on peptides.
+learning_rate:
+  - 0.001
+# 250 epochs: Tönshoff et al.'s budget; the cosine schedule below is tied to it.
+epochs:
+  - 250
+
+# Cosine decay with 10 linear-warmup epochs — the framework's exact port of
+# GraphGPS/GRIT 'cosine_with_warmup', which Tönshoff et al. found clearly
+# better than ReduceLROnPlateau on LRGB. max_epoch defaults to `epochs`.
+scheduler: { type: 'CosineWarmup', num_warmup_epochs: 10 }
+
+# No early stopping: the cosine schedule must run to completion (stopping
+# early leaves the LR mid-decay); best_model selection still picks the best
+# validation epoch.
+early_stopping:
+  enabled: False
+  patience: 250
+
+csv_flush_interval: 1
+
+training_data_sampling: { type: 'default' }
+
+# One-hot primary atom labels + normalized OGB atom attributes; the encoder
+# layer (concatenate_input: true) appends its learned invariant embeddings to
+# these — the ShareGNN equivalent of GCN+RWSE feature concatenation.
+input_features: { name: all, transformation: 'one_hot_labels_normalize_features' }
+
+# No output_features/invert_outputs: BCEWithLogitsLoss trains directly on the
+# raw 0/1 multi-hot targets.
+
+best_model: True

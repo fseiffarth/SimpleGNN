@@ -1,0 +1,93 @@
+# Optimal hyperparameters for QM9 ShareGNN regression (models_QM9_optimal.yml).
+# Base: parameters_ZINC_test_v12.yml (the latest converged ZINC recipe), with
+# QM9-specific changes: target standardization + inversion (as in
+# parameters_QM9.yml), float precision, larger batch, and an epoch budget
+# scaled for ~110k training graphs (vs ZINC's 10k). Rationale and citations in
+# experiments/qm9/OPTIMAL_CONFIG.md.
+device: cpu
+# batched invariant-layer forward: essential at QM9 scale (130831 graphs).
+share_gnn_forward: { batched: True }
+mode: experiments
+# float (not the old QM9 config's double): halves memory/compute; standardized
+# targets keep the loss well-conditioned in float32.
+precision: float
+
+# AdamW with mild decoupled weight decay on all dense parameters; the fast
+# lever against invariant-layer overfitting on ZINC, kept here as a mild prior
+# (QM9's 110k training graphs overfit far less).
+optimizer:
+  - { type: 'AdamW', weight_decay: 0.00001 }
+
+# MAE (L1): the QM9 evaluation metric; training directly on it is standard
+# practice for QM9 regressors (DimeNet, Benchmarking-GNNs ZINC protocol).
+loss:
+  - MAE
+
+# rule_occurrence_threshold: how often a rule must occur to get its own weight.
+# NOT grid-searchable (read directly in the layer) -> scalar, edit per run.
+# ZINC v12 converged to 10 on 10k training graphs; with ~110k QM9 training
+# graphs the same absolute count is a much weaker filter, so 20 keeps the
+# effective rarity cutoff comparable while pruning the (large) WL-depth-1
+# edge-label vocabularies. Sweep {10, 20, 50} if preprocessing time allows.
+rule_occurrence_threshold: 20
+
+# Proximal L1 on invariant-layer Param_W (learned rule selection). Convolution/
+# aggregation lambdas as in ZINC v12; encoding pruning acts on the input
+# embedding table and is riskier (see ZINC v10 ablation, which switched it
+# off) — with 10x more data the encoder needs less pruning, so it is disabled.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.0 }
+
+# mean_aggregation: fan-in-scaled normal with a mean-aggregation prior;
+# gain=1.0/mean_ratio=0.5 is the setting ZINC v2-v12 converged to.
+# positional_encoding: init of the invariant-based encoder embedding tables.
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+# 128 (vs ZINC's 32): ~860 optimizer steps/epoch on 110k graphs — large-dataset
+# practice (Gilmer et al. used tiny batches but 540 epochs; modern QM9 runs use
+# 64-128). Larger batches also amortize the batched invariant forward.
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+# 200 epochs ~ 170k steps at batch 128; with the plateau schedule + lr-floor
+# stop below, runs typically terminate earlier. ZINC's 500 epochs on 10k
+# graphs corresponds to far fewer gradient steps than this.
+epochs:
+  - 200
+
+early_stopping:
+  enabled: True
+  patience: 200
+  # Dwivedi et al. "Benchmarking GNNs" protocol: stop once ReduceLROnPlateau
+  # has annealed the LR to its floor rather than exhausting the epoch budget.
+  lr_threshold: 0.00001
+
+csv_flush_interval: 1
+
+# ReduceLROnPlateau factor 0.5 / min_lr 1e-5: the Benchmarking-GNNs molecular
+# protocol (kept from ZINC v12 for comparability). patience 5 instead of 10:
+# an epoch is ~860 steps here (vs ~300 on ZINC), so 5 stagnant epochs is
+# already ~4300 steps of no validation progress.
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default' }
+
+# The first layer is an invariant_based_positional_encoding with
+# concatenate_input: false, so the model's input node features are DISCARDED —
+# each node's vector comes from the learned per-invariant embeddings. Feed a
+# constant. This also guarantees the 3D coordinates that QM9 preprocessing
+# stores in node_attributes never reach the model (2D/topology-only regime).
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+# z-score the regression target for training (Gilmer et al. 2017 normalized
+# all QM9 targets to mean 0 / variance 1) ...
+output_features: { normalization: 'standard' }
+# ... and undo it before computing metrics, so reported MAE is in the target's
+# native units (comparable to published QM9 tables).
+invert_outputs: { normalization: 'standard' }
+
+best_model: True

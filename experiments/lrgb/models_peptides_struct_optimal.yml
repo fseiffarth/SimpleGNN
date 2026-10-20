@@ -1,0 +1,233 @@
+# OPTIMAL Peptides-struct ShareGNN architecture (literature-informed redesign of
+# models_peptides_struct.yml — see experiments/lrgb/OPTIMAL_CONFIG.md for full
+# rationale + citations). Identical to models_peptides_func_optimal.yml except
+# for the output width (11 regression targets). Key changes vs the baseline:
+#
+# 1. Walk-based node encoder: an invariant_based_positional_encoding with
+#    closed-walk heads (counts (A^k)_ii, k=2..8) CONCATENATED onto the OGB
+#    atom features (concatenate_input: true). Tönshoff et al. 2023
+#    (arXiv:2309.00367) found LapPE best for Peptides-struct and RWSE for
+#    -func; ShareGNN has no LapPE analogue, so the closed-walk (RWSE-like)
+#    encoder is used for both tasks (both PEs gave large gains in their
+#    ablation; idiom taken from the tuned ZINC network_ZINC_test_v11/v12).
+# 2. Transformer-style pre-norm residual convolution (residual +
+#    pre_layer_norm), as in network_ZINC_test_v2..v12.
+# 3. Long-range receptive field via distance properties: coarse label types
+#    (primary, wl_0) message-pass over shortest-path distances 1..20
+#    (cutoff: 20, up from the baseline's 15) — one ShareGNN layer covers what
+#    needs >20 stacked MPNN layers. Finer labels (WL-1 edges) are kept
+#    short-range to bound the rule count.
+# 4. 3-layer MLP prediction head with dropout 0.1 — the single biggest win in
+#    Tönshoff et al.'s reassessment (a linear head was the main reason LRGB's
+#    original MPNN baselines underperformed).
+models:
+- - layer_type: invariant_based_positional_encoding
+    # Keep the 9-column OGB atom features and append the learned invariant
+    # embeddings — mirrors GCN+RWSE feature concatenation (Tönshoff et al.).
+    concatenate_input: true
+    heads:
+    # closed_walks k=2..8: random-walk-return structure (RWSE analogue).
+    # Walk length 1 is omitted — always 0 on simple graphs (ZINC v11 ablation).
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 2
+        max_walk_length: 2
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 3
+        max_walk_length: 3
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 4
+        max_walk_length: 4
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 5
+        max_walk_length: 5
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 6
+        max_walk_length: 6
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 7
+        max_walk_length: 7
+    - num: 2
+      labels:
+        label_type: [closed_walks, primary]
+        min_walk_length: 8
+        max_walk_length: 8
+    # local structural context
+    - num: 2
+      labels:
+        label_type: primary
+    - num: 2
+      labels:
+        label_type: wl_labeled
+        depth: 0
+    - num: 2
+      labels:
+        label_type: wl_labeled_edges
+        depth: 0
+    - num: 2
+      labels:
+        label_type: wl_labeled_edges
+        depth: 1
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    # -- LONG-RANGE heads: coarse labels, distances up to 20 (cutoff: 20).
+    # Peptide graphs have mean diameter ~57; all-pairs distances at full range
+    # are intractable at this dataset scale (~15.5k graphs, ~150 nodes each),
+    # so 20 is the tractability compromise (baseline used 15). If resources
+    # allow, raising this cutoff is the single most "long-range" lever.
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: primary }
+        tail: { label_type: primary }
+        bias: { label_type: primary }
+      properties:
+        name: distances
+        cutoff: 20
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: wl_labeled, depth: 0 }
+        tail: { label_type: wl_labeled, depth: 0 }
+        bias: { label_type: wl_labeled, depth: 0 }
+      properties:
+        name: distances
+        cutoff: 20
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    # -- ring-structure heads (aromatic side chains: 5- and 6-rings),
+    #    mid-range interactions between rings and the backbone
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: [induced_cycles, primary], min_cycle_length: 5, max_cycle_length: 5 }
+        tail: { label_type: [induced_cycles, primary], min_cycle_length: 5, max_cycle_length: 5 }
+        bias: { label_type: primary }
+      properties:
+        name: distances
+        cutoff: 20
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: [induced_cycles, primary], min_cycle_length: 6, max_cycle_length: 6 }
+        tail: { label_type: [induced_cycles, primary], min_cycle_length: 6, max_cycle_length: 6 }
+        bias: { label_type: primary }
+      properties:
+        name: distances
+        cutoff: 20
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    # -- SHORT-RANGE heads: fine WL labels, small distance range so the rule
+    #    set stays bounded (label-pair count grows quadratically with the WL
+    #    alphabet; rule_occurrence_threshold prunes the rare remainder)
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: wl_labeled_edges, depth: 0 }
+        tail: { label_type: wl_labeled_edges, depth: 0 }
+        bias: { label_type: primary }
+      properties:
+        name: distances
+        cutoff: 20
+        values: [1, 2, 3, 4]
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: wl_labeled_edges, depth: 1 }
+        tail: { label_type: wl_labeled_edges, depth: 1 }
+        bias: { label_type: primary }
+      properties:
+        name: distances
+        cutoff: 20
+        values: [1, 2]
+    # -- bond-type-aware 1-hop head (edge labels = OGB bond features)
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: primary }
+        tail: { label_type: primary }
+        bias: { label_type: primary }
+      properties:
+        name: edge_label_distances
+        cutoff: 1
+        values: [1]
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 96
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: dropout
+    p: 0.1
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - num: 10
+      bias: true
+      labels:
+        label_type: [induced_cycles, primary]
+        min_cycle_length: 5
+        max_cycle_length: 5
+    - num: 10
+      bias: true
+      labels:
+        label_type: [induced_cycles, primary]
+        min_cycle_length: 6
+        max_cycle_length: 6
+    - num: 10
+      bias: true
+      labels:
+        label_type: primary
+    - num: 10
+      bias: true
+      labels:
+        label_type: wl_labeled
+        depth: 0
+    - num: 10
+      bias: true
+      labels:
+        label_type: wl_labeled_edges
+        depth: 0
+    - num: 10
+      bias: true
+      labels:
+        label_type: wl_labeled_edges
+        depth: 1
+  - layer_type: reshape
+  # 3-layer MLP prediction head with dropout — Tönshoff et al. 2023 found the
+  # linear->MLP head swap accounts for most of the LRGB performance gap.
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 96
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: dropout
+    p: 0.1
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 96
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 11
+    bias: true
+    activation: torch.nn.Identity()
+  - layer_type: reshape

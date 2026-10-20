@@ -1,0 +1,33 @@
+# BREC expressiveness benchmark — optimized ShareGNN configs.
+# Rationale: experiments/brec/OPTIMAL_CONFIG.md.
+#
+# Same wiring as main_config_brec.yml (consumed by experiments/brec/main_brec.py,
+# NOT by FrameworkMain.run_configurations(); task/splits/training params exist
+# only to satisfy the framework's dataset pipeline). Shares data/labels/
+# properties paths with the baseline configs so every already-generated label
+# file is reused; only genuinely new labels (cliques, closed_walks 7/8, the
+# induced_cycles-x-wl product label) are generated on first preprocessing.
+#
+# Run (variant 0 = recommended; ShareGNN needs the covariance ridge):
+#   python experiments/brec/main_brec.py --dataset BREC \
+#       --config experiments/brec/configs/main_config_brec_optimal.yml \
+#       --config_id 0 --epsilon-matrix 1e-7
+datasets:
+  - {
+      name: "BREC",
+      source: "BREC",
+      task: "graph_regression",
+      regression_targets: [0],
+      validation_folds: 1,
+      paths: {
+        data: "data/BREC/",
+        labels: "data/BREC/labels/",
+        properties: "data/BREC/properties/",
+        results: "results/brec/sharegnn_optimal/",
+        models: "experiments/brec/models_brec_optimal.yml",
+        hyperparameters: "experiments/brec/parameters_brec_optimal.yml",
+        # placeholder split (the RPC runner ignores it) — regenerate with
+        # `python -m simplegnn.utils.brec_splits --dataset BREC`
+        splits: "src/simplegnn/datasets/splits/fixed/BREC_splits.json",
+      }
+  }

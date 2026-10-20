@@ -1,0 +1,220 @@
+# Optimal QM9 ShareGNN architecture (topology + atom/bond labels only, no 3D).
+# Derived from the strongest converged ZINC design (network_ZINC_test_v12.yml,
+# specs/15 + specs/09) and adapted to QM9 graph statistics:
+# - QM9 graphs include hydrogens: <= 29 atoms, <= 9 heavy atoms. Rings only form
+#   over heavy atoms -> cycle lengths 3-8 (ZINC used 5-10); shortest-path
+#   diameters <= ~12 (ZINC config used 1-23) -> distance values trimmed to 1-12.
+# - Input encoder: invariant_based_positional_encoding with
+#   concatenate_input: false, i.e. the learned per-invariant embeddings ARE the
+#   node features. Atom-type information enters through the 'primary' /
+#   wl_labeled label heads, so the model never sees the 3D coordinates that
+#   QMGraphDataPreprocessing packs into node_attributes — this keeps the run in
+#   the 2D/topology-only comparison class (vs. SchNet/DimeNet, which use 3D).
+# - Encoder heads reuse exactly the aggregation heads' label configs (same
+#   trick as ZINC v2/v12), so no extra label files are generated.
+# - Convolution is a transformer-style pre-norm residual block
+#   (residual: true, pre_layer_norm: true), which replaced the free-standing
+#   layer_norm in ZINC v2 and was kept through v12.
+# See experiments/qm9/OPTIMAL_CONFIG.md for full rationale and citations.
+models:
+- - layer_type: invariant_based_positional_encoding
+    concatenate_input: false
+    heads:
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 2, max_walk_length: 2 }
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 3, max_walk_length: 3 }
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 4, max_walk_length: 4 }
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 5, max_walk_length: 5 }
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 6, max_walk_length: 6 }
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 7, max_walk_length: 7 }
+    - num: 2
+      labels: { label_type: [closed_walks, primary], min_walk_length: 8, max_walk_length: 8 }
+    - num: 2
+      labels: { label_type: primary }
+    - num: 2
+      labels: { label_type: wl_labeled, depth: 0 }
+    - num: 2
+      labels: { label_type: wl_labeled_edges, depth: 0 }
+    - num: 2
+      labels: { label_type: wl_labeled_edges, depth: 1 }
+  - layer_type: invariant_based_convolution
+    bias: true
+    residual: true
+    pre_layer_norm: true
+    activation: torch.nn.Identity()
+    heads:
+    # cycle heads: QM9 rings live on the <= 9 heavy atoms -> lengths 3-8.
+    # induced_cycles covers the chordless rings (3-6, the common QM9 ring
+    # sizes); simple_cycles adds the fused-ring perimeters (5-8), where the
+    # two families actually differ.
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 3 }
+        tail: { label_type: induced_cycles, min_cycle_length: 3, max_cycle_length: 3 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 4, max_cycle_length: 4 }
+        tail: { label_type: induced_cycles, min_cycle_length: 4, max_cycle_length: 4 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 5 }
+        tail: { label_type: induced_cycles, min_cycle_length: 5, max_cycle_length: 5 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: induced_cycles, min_cycle_length: 6, max_cycle_length: 6 }
+        tail: { label_type: induced_cycles, min_cycle_length: 6, max_cycle_length: 6 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: simple_cycles, min_cycle_length: 5, max_cycle_length: 5 }
+        tail: { label_type: simple_cycles, min_cycle_length: 5, max_cycle_length: 5 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: simple_cycles, min_cycle_length: 6, max_cycle_length: 6 }
+        tail: { label_type: simple_cycles, min_cycle_length: 6, max_cycle_length: 6 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: simple_cycles, min_cycle_length: 7, max_cycle_length: 7 }
+        tail: { label_type: simple_cycles, min_cycle_length: 7, max_cycle_length: 7 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: simple_cycles, min_cycle_length: 8, max_cycle_length: 8 }
+        tail: { label_type: simple_cycles, min_cycle_length: 8, max_cycle_length: 8 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    # atom-type heads: primary labels are atomic numbers (H, C, N, O, F).
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: primary }
+        tail: { label_type: primary }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+    # bond-type-aware direct-neighbor head: primary edge labels are the four
+    # QM9 bond types (single/double/triple/aromatic).
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: primary }
+        tail: { label_type: primary }
+        bias: { label_type: primary }
+      properties: { name: edge_label_distances, cutoff: 1, values: [1] }
+    # WL refinement heads: short-range, finer-grained structural roles.
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: wl_labeled, depth: 0 }
+        tail: { label_type: wl_labeled, depth: 0 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+    - bias: true
+      num: 1
+      labels:
+        head: { label_type: wl_labeled, depth: 0 }
+        tail: { label_type: wl_labeled, depth: 0 }
+        bias: { label_type: wl_labeled, depth: 0 }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: wl_labeled_edges, depth: 0 }
+        tail: { label_type: wl_labeled_edges, depth: 0 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2, 3, 4] }
+    - bias: true
+      num: 2
+      labels:
+        head: { label_type: wl_labeled_edges, depth: 1 }
+        tail: { label_type: wl_labeled_edges, depth: 1 }
+        bias: { label_type: primary }
+      properties: { name: distances, values: [1, 2] }
+  - layer_type: linear
+    mode: aggr_channels
+    out_features: 100
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: invariant_based_aggregation
+    activation: torch.nn.Identity()
+    bias: true
+    heads:
+    - num: 10
+      bias: true
+      labels: { label_type: [induced_cycles, primary], min_cycle_length: 3, max_cycle_length: 3 }
+    - num: 10
+      bias: true
+      labels: { label_type: [induced_cycles, primary], min_cycle_length: 4, max_cycle_length: 4 }
+    - num: 10
+      bias: true
+      labels: { label_type: [induced_cycles, primary], min_cycle_length: 5, max_cycle_length: 5 }
+    - num: 10
+      bias: true
+      labels: { label_type: [induced_cycles, primary], min_cycle_length: 6, max_cycle_length: 6 }
+    - num: 10
+      bias: true
+      labels: { label_type: [simple_cycles, primary], min_cycle_length: 5, max_cycle_length: 5 }
+    - num: 10
+      bias: true
+      labels: { label_type: [simple_cycles, primary], min_cycle_length: 6, max_cycle_length: 6 }
+    - num: 10
+      bias: true
+      labels: { label_type: [simple_cycles, primary], min_cycle_length: 7, max_cycle_length: 7 }
+    - num: 10
+      bias: true
+      labels: { label_type: [simple_cycles, primary], min_cycle_length: 8, max_cycle_length: 8 }
+    - num: 10
+      bias: true
+      labels: { label_type: primary }
+    - num: 10
+      bias: true
+      labels: { label_type: wl_labeled, depth: 0 }
+    - num: 10
+      bias: true
+      labels: { label_type: wl_labeled_edges, depth: 0 }
+    - num: 10
+      bias: true
+      labels: { label_type: wl_labeled_edges, depth: 1 }
+  - layer_type: reshape
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 100
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: layer_norm
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 100
+    bias: true
+    activation: torch.nn.LeakyReLU()
+  - layer_type: linear
+    mode: aggr_features
+    out_features: 1
+    bias: true
+    activation: torch.nn.Identity()
+  - layer_type: reshape

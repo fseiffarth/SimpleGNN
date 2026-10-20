@@ -1,0 +1,23 @@
+# Peptides-struct with the OPTIMAL (literature-informed) ShareGNN
+# configuration — identical to main_config_peptides_struct.yml except for the
+# models/hyperparameters paths. See experiments/lrgb/OPTIMAL_CONFIG.md.
+datasets:
+  - {
+      name: "peptides-struct",
+      source: "LRGB",
+      task: "graph_regression",
+      # all 11 structural regression targets
+      regression_targets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      validation_folds: 1,
+      paths: {
+        data: "data/LRGB/",
+        labels: "data/LRGB/labels/",
+        properties: "data/LRGB/properties/",
+        results: "results/lrgb_optimal/",
+        models: "experiments/lrgb/models_peptides_struct_optimal.yml",
+        hyperparameters: "experiments/lrgb/parameters_peptides_struct_optimal.yml",
+        # official LRGB train/val/test split expressed as offsets — regenerate
+        # with `python -m simplegnn.utils.lrgb_splits --dataset peptides-struct`
+        splits: "src/simplegnn/datasets/splits/fixed/peptides-struct_splits.json",
+      }
+  }

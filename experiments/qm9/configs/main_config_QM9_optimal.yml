@@ -1,0 +1,24 @@
+# QM9 ShareGNN regression — optimal config (see experiments/qm9/OPTIMAL_CONFIG.md).
+# Per-target training (Gilmer et al. 2017: per-target models beat joint
+# training by up to ~40%). To train another property, copy this file, change
+# `regression_targets` and the `results` path (PyG QM9 target order:
+# 0 mu, 1 alpha, 2 HOMO, 3 LUMO, 4 gap, 5 R2, 6 ZPVE, 7 U0, 8 U, 9 H, 10 G, 11 Cv).
+datasets:
+  - {
+      name: "QM9",
+      source: "QM9",
+      task: "graph_regression",
+      regression_targets: [0],
+      validation_folds: 1,
+      paths: {
+        data: "data/QM9/",
+        labels: "data/QM9/labels/",
+        properties: "data/QM9/properties/",
+        results: "results/qm9_optimal/target_0_mu/",
+        models: "experiments/qm9/models_QM9_optimal.yml",
+        hyperparameters: "experiments/qm9/parameters_QM9_optimal.yml",
+        # single-fold 80/10/10 split, seed 42 — regenerate with
+        # `python -m simplegnn.utils.qm_splits --dataset QM9`
+        splits: "src/simplegnn/datasets/splits/fixed/QM9_splits.json",
+      }
+  }

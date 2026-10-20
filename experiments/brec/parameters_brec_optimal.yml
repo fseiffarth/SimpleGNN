@@ -1,0 +1,58 @@
+# Hyperparameters for the optimized BREC configs (models_brec_optimal.yml).
+# Rationale: experiments/brec/OPTIMAL_CONFIG.md.
+#
+# IMPORTANT: the RPC runner (experiments/brec/main_brec.py) does NOT read the
+# training hyperparameters from this file. The protocol fixes them, and
+# main_brec.py hard-codes the reference implementation's values:
+#   Adam(lr=1e-3, weight_decay=1e-5) + ReduceLROnPlateau,
+#   CosineEmbeddingLoss(margin=0.0) with target -1, batch size 16, 50 epochs.
+# Those values sit inside the ranges the BREC paper searched for its baselines
+# (lr {1e-3, 1e-4, 1e-5}, wd {1e-3..1e-5}, batch {8, 16, 32}, epochs 10-100;
+# arXiv:2304.07702 Appendix O / Table 10), and for a deterministic invariant
+# model the decision is dominated by the label vocabulary anyway (the paper's
+# own training ablation, Table 3: GSN scores 254/400 with random weights AND
+# with training). So there is nothing to gain from a training-hyperparameter
+# grid here — every list below is a singleton ON PURPOSE, which also keeps
+# `--config_id` N pointing exactly at model variant N of the network config.
+#
+# What DOES matter here: device, precision, and input_features.
+device: cpu
+mode: experiments
+precision: double
+share_gnn_forward: { batched: True }
+
+# --- ignored by the RPC runner (kept mirroring the hard-coded protocol) ---
+optimizer:
+  - { type: 'Adam', weight_decay: 0.00001 }
+loss:
+  - MAE
+batch_size:
+  - 16
+learning_rate:
+  - 0.001
+epochs:
+  - 50
+early_stopping:
+  enabled: False
+  patience: 50
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.00001 }
+training_data_sampling: { type: 'default' }
+# --- end ignored block ---
+
+# Keep every observed invariant rule: on BREC a rule that occurs in only one
+# graph of one pair can be exactly the rule that separates the pair, and
+# per-pair models are tiny, so pruning buys nothing and can cost pairs.
+rule_occurrence_threshold: 1
+
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+# MANDATORY for a valid BREC run: constant node features. BREC graphs are
+# unlabeled, and the benchmark measures what the *architecture* can distinguish.
+# Random node features (`random_variation:`) would let any GNN separate any
+# pair, inflating the score to 400/400 while also breaking the reliability
+# control (the isomorphic pair would be "distinguished" too). Do not add them.
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }

@@ -1,0 +1,65 @@
+# OPTIMAL hyperparameters for Peptides-struct (models_peptides_struct_optimal.yml).
+# Identical training recipe to parameters_peptides_func_optimal.yml —
+# Tönshoff et al. 2023 (arXiv:2309.00367) used the same optimizer/schedule
+# for both peptide tasks (AdamW, lr 1e-3, cosine + linear warmup, 250 epochs,
+# dropout 0.1 in the network; their tuned GCN reaches 0.2460 test MAE here).
+# Differences vs the func file: loss = MAE (L1, the benchmark metric) and
+# z-scored targets inverted for reporting (as in the QM9/baseline struct
+# configs). See experiments/lrgb/OPTIMAL_CONFIG.md.
+device: cpu
+share_gnn_forward: { batched: True }
+mode: experiments
+precision: float
+
+# AdamW + no weight decay (Tönshoff et al. / GraphGPS peptides settings);
+# ShareGNN regularization comes from the rule threshold + proximal L1 below.
+optimizer:
+  - { type: 'AdamW', weight_decay: 0.0 }
+
+# L1 loss == the benchmark's MAE metric.
+loss:
+  - MAE
+
+# See parameters_peptides_func_optimal.yml for the rationale on both
+# ShareGNN-specific regularizers (neither is grid-searchable — edit per run).
+rule_occurrence_threshold: 5
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.001 }
+
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+# Literature batch sizes are 200 (Tönshoff) / 128 (GraphGPS); drop to 64 if
+# the batched forward OOMs on ~150-node graphs.
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+epochs:
+  - 250
+
+# GraphGPS/GRIT-style cosine schedule with linear warmup (framework port);
+# clearly better than ReduceLROnPlateau on LRGB per Tönshoff et al.
+scheduler: { type: 'CosineWarmup', num_warmup_epochs: 10 }
+
+# Cosine schedule runs to completion; best_model still selects the best
+# validation epoch.
+early_stopping:
+  enabled: False
+  patience: 250
+
+csv_flush_interval: 1
+
+training_data_sampling: { type: 'default' }
+
+input_features: { name: all, transformation: 'one_hot_labels_normalize_features' }
+
+# z-score the 11 structural targets for training, and invert before computing
+# metrics so the reported MAE is in the targets' own units (comparable to the
+# published 0.24-0.25 numbers) — same rationale as QM9 (specs/19).
+output_features: { normalization: 'standard' }
+invert_outputs: { normalization: 'standard' }
+
+best_model: True
