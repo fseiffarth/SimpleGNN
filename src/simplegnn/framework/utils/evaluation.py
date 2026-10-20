@@ -352,6 +352,20 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
                 # remove
                 # average over all rows
                 summary_best_model_mean = summary_best_model.mean(numeric_only=True)
+                # The '* Std' columns of summary_best.csv hold the spread across the
+                # validation folds of a single run. Datasets with a single fixed split
+                # (the regression benchmarks: ZINC, QM9, substructure counting, ...) have
+                # exactly one fold per run, so every per-run std is NaN and averaging them
+                # propagates NaN into summary_best_mean.csv. In that case report the spread
+                # across the repeated runs (seeds) instead, which is the meaningful
+                # quantity for a fixed split. Multi-fold runs keep their previous values.
+                across_run_std = summary_best_model.std(numeric_only=True)
+                for std_column in summary_best_model_mean.index:
+                    if not std_column.endswith(' Std'):
+                        continue
+                    mean_column = f"{std_column[:-len(' Std')]} Mean"
+                    if pd.isna(summary_best_model_mean[std_column]) and mean_column in across_run_std.index:
+                        summary_best_model_mean[std_column] = across_run_std[mean_column]
                 # drop column RunId
                 summary_best_model_mean = summary_best_model_mean.drop('RunId')
                 config_id = int(summary_best_model_mean['ConfigurationId'])
