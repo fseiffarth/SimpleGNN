@@ -1,0 +1,21 @@
+# ZINC graph-regression test v7: architecture identical to test_v2 (invariant-based
+# positional-encoding node encoder + pre-norm residual convolution, specs/15), but
+# the positional encoder's closed_walks node labels are replaced by the monomial
+# (edge-label multiset) refinement closed_walks_edges (specs/24, variant A).
+# All other heads (cycles, wl, primary) and all hyperparameters match test_v2.
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_test_v7/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v7.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v7.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

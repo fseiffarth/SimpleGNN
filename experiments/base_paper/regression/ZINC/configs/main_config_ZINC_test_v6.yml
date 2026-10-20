@@ -1,0 +1,21 @@
+# ZINC graph-regression test v6: the test_v2 configuration (invariant-based
+# positional encoding as node encoder + pre-norm residual convolution,
+# specs/15) with every LeakyReLU nonlinearity replaced by a SwiGLU block.
+# Invariant layers and hyperparameters are unchanged, so this isolates the
+# effect of the gated feed-forward nonlinearity against the v2 run.
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_test_v6/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v6.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v6.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }

@@ -1,0 +1,20 @@
+# ZINC graph-regression test v9: test_v2 with induced/simple-cycle labels in the
+# aggregation step replaced by ordinary closed-walk labels, (A^k)_ii for k=1-10.
+# No edge labels are used for the closed walks; all other architecture and
+# hyperparameter choices match test_v2.
+datasets:
+  - {
+      name: "ZINC",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC_test_v9/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_test_v9.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_test_v9.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC_splits.json",
+      }
+  }
