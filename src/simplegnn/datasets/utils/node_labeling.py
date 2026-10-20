@@ -245,6 +245,10 @@ def get_label_string(label_dict: dict) -> str:
     - 'cliques': Clique membership (requires 'max_clique_size')
     - 'subgraph': Subgraph pattern matching (requires 'id')
     - 'closed_walks': Closed walk counts (A^k)_ii (requires 'max_walk_length')
+    - 'closed_walks_edges': Closed walk counts split by the multiset of edge
+      labels traversed (requires edge labels)
+    - 'closed_walks_weighted': Closed walk counts over an edge-label-weighted
+      adjacency matrix (requires edge labels)
 
     **Recursive Composition:**
     If label_type is a list, the function recursively generates strings for each
@@ -397,8 +401,8 @@ def get_label_string(label_dict: dict) -> str:
             l_string = f"{l_string}_bins_{num_bins}"
         if max_labels is not None:
             l_string = f"{l_string}_max_labels_{max_labels}"
-    elif label_type == "closed_walks":
-        l_string = "closed_walks"
+    elif label_type in ("closed_walks", "closed_walks_edges", "closed_walks_weighted"):
+        l_string = label_type
         if 'min_walk_length' in label_dict:
             min_walk_length = label_dict['min_walk_length']
             l_string = f"{l_string}_{min_walk_length}"
@@ -1013,6 +1017,301 @@ class ClosedWalkNodeLabeling(NodeLabelingBase):
             graph_profiles.append([tuple(int(d[i]) for d in diagonals) for i in range(len(graph.nodes()))])
 
         # Step 2: compress the profiles to consecutive integer ids over the dataset
+        unique_profiles = sorted({profile for profiles in graph_profiles for profile in profiles})
+        profile_to_label = {profile: i for i, profile in enumerate(unique_profiles)}
+        self.profile_to_label = profile_to_label
+        return [[profile_to_label[profile] for profile in profiles] for profiles in graph_profiles]
+
+
+def _edge_label_value(edge_attributes: dict) -> int:
+    """
+    Read the primary edge label out of a NetworkX edge attribute dict.
+
+    to_networkx() stores the label as a scalar for a 1-D primary_edge_labels
+    tensor and as a sequence for a 2-D one (the NEL reader keeps the remaining
+    entries as edge attributes, see GraphDataset.read_nel_data_v2); both forms
+    are reduced to the single int label here.
+    """
+    if 'primary_edge_labels' not in edge_attributes:
+        raise ValueError(
+            "Edge-labeled closed walks require 'primary_edge_labels' on every edge; the dataset "
+            "has no edge labels. Use label_type 'closed_walks' instead.")
+    value = edge_attributes['primary_edge_labels']
+    if isinstance(value, (list, tuple)):
+        value = value[0]
+    elif torch.is_tensor(value):
+        value = value.flatten()[0] if value.ndim > 0 else value
+    return int(value)
+
+
+def _labeled_adjacency_matrices(graph: nx.Graph) -> Tuple[dict, List]:
+    """
+    Split the adjacency matrix of graph into one 0/1 matrix per edge label.
+
+    Returns
+    -------
+    (dict, list)
+        Mapping edge label -> n x n int64 matrix, and the node order the
+        matrices are indexed by (graph.nodes(), matching nx.to_numpy_array).
+    """
+    nodes = list(graph.nodes())
+    node_index = {node: i for i, node in enumerate(nodes)}
+    size = len(nodes)
+    per_label = {}
+    for source, target, attributes in graph.edges(data=True):
+        label = _edge_label_value(attributes)
+        matrix = per_label.get(label)
+        if matrix is None:
+            matrix = np.zeros((size, size), dtype=np.int64)
+            per_label[label] = matrix
+        i, j = node_index[source], node_index[target]
+        matrix[i, j] = 1
+        matrix[j, i] = 1
+    return per_label, nodes
+
+
+def _first_primes(count: int) -> List[int]:
+    """The first count prime numbers, smallest first."""
+    primes = []
+    candidate = 2
+    while len(primes) < count:
+        if all(candidate % prime for prime in primes):
+            primes.append(candidate)
+        candidate += 1
+    return primes
+
+
+class ClosedWalkEdgeLabeledNodeLabeling(NodeLabelingBase):
+    """
+    Node labeling based on closed walk counts refined by edge-label multisets.
+
+    Splitting the adjacency matrix by edge label (A = sum_c A_c) and working over
+    the commutative polynomial ring with one variable per edge label turns the
+    diagonal of the k-th power into a polynomial: the coefficient of a monomial
+    counts the closed walks of length k at node i that traverse exactly that
+    multiset of edge labels. Two nodes get the same label iff all these counts
+    coincide over the requested walk lengths.
+
+    Parameters
+    ----------
+    graph_data : GraphDataset
+        The dataset to label. Its graphs must carry 'primary_edge_labels'.
+    min_walk_length : int, optional
+        Smallest walk length included in the profile (default: 2).
+    max_walk_length : int
+        Largest walk length k included in the profile (default: 6).
+    max_labels : int, optional
+        Maximum number of distinct labels to retain.
+    save_times : Path, optional
+        Path to file for logging generation times.
+
+    Notes
+    -----
+    - Strictly finer than ClosedWalkNodeLabeling: summing the counts over all
+      monomials of degree k recovers the unlabeled count (A^k)_ii.
+    - The profile holds C(k + |L| - 1, k) entries per length rather than the
+      |L|^k of a fully sequence-refined ("word") variant, at the price of not
+      distinguishing the order in which the labels are traversed.
+    - Cost per graph is O(max_walk_length * n^3 * #monomials) time and
+      #monomials * n^2 int64 memory; sized for molecular graphs.
+    - Labels are canonical only across datasets sharing an edge-label
+      vocabulary, so they belong with the primary labels rather than with the
+      structural labels used for cross-dataset transfer.
+
+    See Also
+    --------
+    ClosedWalkNodeLabeling : Unlabeled counterpart
+    ClosedWalkWeightedNodeLabeling : Cheaper, lossy edge-label refinement
+    """
+    def __init__(self, graph_data: GraphDataset, min_walk_length: Optional[int] = None, max_walk_length: int = 6,
+                 max_labels: Optional[int] = None, label_path: Optional[Path] = None,
+                 save_times: Optional[Path] = None):
+        optional_params = []
+        if min_walk_length is not None:
+            optional_params.append(('min', min_walk_length))
+        optional_params.append(('max', max_walk_length))
+        super().__init__(
+            base_name='closed_walks_edges',
+            graph_data=graph_data,
+            label_path=label_path,
+            max_labels=max_labels,
+            optional_parameters=optional_params,
+            save_times=save_times
+        )
+        self.min_walk_length = min_walk_length if min_walk_length is not None else 2
+        self.max_walk_length = max_walk_length
+        if self.min_walk_length < 1:
+            raise ValueError("min_walk_length must be at least 1")
+        if self.max_walk_length < self.min_walk_length:
+            raise ValueError("max_walk_length must be at least min_walk_length")
+
+    def generate(self) -> List[List[int]]:
+        """
+        Compute edge-label-refined closed walk count profiles for all nodes.
+
+        Returns
+        -------
+        List[List[int]]
+            List of compressed profile labels, one list per graph.
+        """
+        if self.graph_data.nx_graphs is None:
+            self.graph_data.create_nx_graphs(directed=False)
+
+        # Step 1: collect the per-monomial closed walk counts of each node
+        graph_profiles = []
+        for graph in self.graph_data.nx_graphs:
+            per_label, nodes = _labeled_adjacency_matrices(graph)
+            size = len(nodes)
+            # counts[monomial][i, j] = number of walks i -> j using exactly the
+            # edge labels in monomial (a sorted tuple, i.e. a multiset)
+            counts = {(): np.eye(size, dtype=np.int64)}
+            diagonals = []
+            for length in range(1, self.max_walk_length + 1):
+                extended = {}
+                for monomial, matrix in counts.items():
+                    if not matrix.any():
+                        continue
+                    for label, adjacency in per_label.items():
+                        key = tuple(sorted(monomial + (label,)))
+                        product = matrix @ adjacency
+                        if key in extended:
+                            extended[key] += product
+                        else:
+                            extended[key] = product
+                counts = extended
+                if length >= self.min_walk_length:
+                    for monomial, matrix in counts.items():
+                        diagonals.append((length, monomial, matrix.diagonal()))
+            # profile per node in graph.nodes() order; zero counts are dropped so
+            # the signature does not depend on the dataset-wide label vocabulary
+            graph_profiles.append([
+                tuple(sorted(
+                    ((length, monomial), int(diagonal[i]))
+                    for length, monomial, diagonal in diagonals if diagonal[i] != 0
+                ))
+                for i in range(size)
+            ])
+
+        # Step 2: compress the profiles to consecutive integer ids over the dataset
+        unique_profiles = sorted({profile for profiles in graph_profiles for profile in profiles})
+        profile_to_label = {profile: i for i, profile in enumerate(unique_profiles)}
+        self.profile_to_label = profile_to_label
+        return [[profile_to_label[profile] for profile in profiles] for profiles in graph_profiles]
+
+
+class ClosedWalkWeightedNodeLabeling(NodeLabelingBase):
+    """
+    Node labeling based on closed walk counts over an edge-label-weighted matrix.
+
+    Each edge label is assigned a distinct prime (labels sorted ascending, then
+    the smallest primes in order), giving a weighted adjacency matrix A_w. The
+    entry (A_w^k)_ii sums the weight products over all closed walks of length k
+    at node i, so walks traversing different label multisets contribute
+    differently. Unlike ClosedWalkEdgeLabeledNodeLabeling this is a lossy
+    refinement -- the per-multiset counts are summed, and distinct multisets can
+    sum-collide -- but it costs no more than the unlabeled labeling.
+
+    Parameters
+    ----------
+    graph_data : GraphDataset
+        The dataset to label. Its graphs must carry 'primary_edge_labels'.
+    min_walk_length : int, optional
+        Smallest walk length included in the profile (default: 2).
+    max_walk_length : int
+        Largest walk length k included in the profile (default: 6).
+    max_labels : int, optional
+        Maximum number of distinct labels to retain.
+    save_times : Path, optional
+        Path to file for logging generation times.
+
+    Attributes
+    ----------
+    label_weights : dict
+        The edge label -> prime assignment, determined by the dataset-wide set
+        of edge labels. It is folded into the hash params by the save function
+        so weighted labels from different vocabularies cannot alias.
+
+    Notes
+    -----
+    - The powers are accumulated in float64 (BLAS-backed and faster than int64
+      matmul); every entry is checked against 2**53 so the counts stay exactly
+      representable, and generation raises rather than returning rounded values.
+    - Between the unlabeled counts and the multiset-refined ones in
+      discriminative power, at the unlabeled cost of O(max_walk_length * n^3).
+
+    See Also
+    --------
+    ClosedWalkNodeLabeling : Unlabeled counterpart
+    ClosedWalkEdgeLabeledNodeLabeling : Exact, more expensive edge-label refinement
+    """
+    # float64 integers stay exact below 2**53; all entries are non-negative, so
+    # bounding the maximum of each power bounds every partial sum and product
+    EXACT_INTEGER_LIMIT = 2 ** 53
+
+    def __init__(self, graph_data: GraphDataset, min_walk_length: Optional[int] = None, max_walk_length: int = 6,
+                 max_labels: Optional[int] = None, label_path: Optional[Path] = None,
+                 save_times: Optional[Path] = None):
+        optional_params = []
+        if min_walk_length is not None:
+            optional_params.append(('min', min_walk_length))
+        optional_params.append(('max', max_walk_length))
+        super().__init__(
+            base_name='closed_walks_weighted',
+            graph_data=graph_data,
+            label_path=label_path,
+            max_labels=max_labels,
+            optional_parameters=optional_params,
+            save_times=save_times
+        )
+        self.min_walk_length = min_walk_length if min_walk_length is not None else 2
+        self.max_walk_length = max_walk_length
+        if self.min_walk_length < 1:
+            raise ValueError("min_walk_length must be at least 1")
+        if self.max_walk_length < self.min_walk_length:
+            raise ValueError("max_walk_length must be at least min_walk_length")
+        self.label_weights = {}
+
+    def generate(self) -> List[List[int]]:
+        """
+        Compute weighted closed walk profiles for all nodes.
+
+        Returns
+        -------
+        List[List[int]]
+            List of compressed profile labels, one list per graph.
+        """
+        if self.graph_data.nx_graphs is None:
+            self.graph_data.create_nx_graphs(directed=False)
+
+        # Step 1: fix the label -> prime assignment over the whole dataset
+        edge_labels = sorted({
+            _edge_label_value(attributes)
+            for graph in self.graph_data.nx_graphs
+            for _, _, attributes in graph.edges(data=True)
+        })
+        self.label_weights = dict(zip(edge_labels, _first_primes(len(edge_labels))))
+
+        # Step 2: collect the weighted closed walk profile of each node
+        graph_profiles = []
+        for graph in self.graph_data.nx_graphs:
+            per_label, nodes = _labeled_adjacency_matrices(graph)
+            size = len(nodes)
+            weighted = np.zeros((size, size), dtype=np.float64)
+            for label, matrix in per_label.items():
+                weighted += self.label_weights[label] * matrix
+            power = np.eye(size, dtype=np.float64)
+            diagonals = []
+            for length in range(1, self.max_walk_length + 1):
+                power = power @ weighted
+                if power.size and power.max() > self.EXACT_INTEGER_LIMIT:
+                    raise ValueError(
+                        f"weighted closed walk counts exceed the exact float64 range at length {length}; "
+                        f"lower max_walk_length or use label_type 'closed_walks_edges'")
+                if length >= self.min_walk_length:
+                    diagonals.append(power.diagonal())
+            graph_profiles.append([tuple(int(d[i]) for d in diagonals) for i in range(size)])
+
+        # Step 3: compress the profiles to consecutive integer ids over the dataset
         unique_profiles = sorted({profile for profiles in graph_profiles for profile in profiles})
         profile_to_label = {profile: i for i, profile in enumerate(unique_profiles)}
         self.profile_to_label = profile_to_label
@@ -1774,6 +2073,151 @@ def save_closed_walk_labels(graph_data: GraphDataset, min_walk_length: Optional[
         signatures = {label_id: profile for profile, label_id in labeling.profile_to_label.items()}
         label_hashes = hash_vocabulary(signatures, 'closed_walks', hash_params)
         hash_meta = {'canonical': True, 'kind': 'closed_walks', 'params': hash_params}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
+        if save_times is not None:
+            try:
+                with open(save_times, 'a') as f:
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
+            except:
+                raise ValueError("No save time path given")
+    else:
+        print(f"File {file} already exists. Skipping.")
+    return file
+
+
+def save_closed_walk_edges_labels(graph_data: GraphDataset, min_walk_length: Optional[int] = None,
+                                  max_walk_length: int = 6, max_labels: Optional[int] = None,
+                                  label_path: Optional[Path] = None,
+                                  save_times: Optional[Path] = None) -> str:
+    """
+    Generate and save edge-label-refined closed walk node labels.
+
+    Nodes are labeled by their closed walk counts split by the multiset of edge
+    labels each walk traverses, compressed to consecutive integer ids over the
+    whole dataset.
+
+    Parameters
+    ----------
+    graph_data : GraphDataset
+        Graph dataset to label. Must carry 'primary_edge_labels'.
+    min_walk_length : int, optional
+        Smallest walk length included in the profile (default: 2).
+    max_walk_length : int
+        Largest walk length k included in the profile (default: 6).
+    max_labels : int, optional
+        Maximum number of distinct labels to retain.
+    label_path : Path, optional
+        Directory where labels will be saved.
+    save_times : Path, optional
+        Path to file for logging generation times.
+
+    Returns
+    -------
+    str
+        Path to the saved .pt file.
+
+    See Also
+    --------
+    ClosedWalkEdgeLabeledNodeLabeling : Implementation details
+    """
+    l = 'closed_walks_edges'
+    if min_walk_length is not None:
+        l = f'{l}_{min_walk_length}'
+    l = f'{l}_{max_walk_length}'
+    if max_labels is not None:
+        l = f'{l}_{max_labels}'
+    if label_path is None:
+        raise ValueError("No label path given")
+    else:
+        file = label_path.joinpath(f"{graph_data.name}_labels_{l}.pt")
+    if not file.exists():
+        print(f"Saving {l} labels for {graph_data.name} to {file}")
+        start_time = time.time()
+
+        labeling = ClosedWalkEdgeLabeledNodeLabeling(
+            graph_data, min_walk_length=min_walk_length, max_walk_length=max_walk_length,
+            max_labels=max_labels, label_path=label_path, save_times=save_times
+        )
+        labels = labeling.generate()
+        hash_params = (labeling.min_walk_length, labeling.max_walk_length)
+        # the signature carries the raw edge label values, so it is comparable
+        # across datasets that share an edge-label vocabulary without further params
+        signatures = {label_id: profile for profile, label_id in labeling.profile_to_label.items()}
+        label_hashes = hash_vocabulary(signatures, 'closed_walks_edges', hash_params)
+        hash_meta = {'canonical': True, 'kind': 'closed_walks_edges', 'params': hash_params}
+        save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
+        if save_times is not None:
+            try:
+                with open(save_times, 'a') as f:
+                    f.write(f"| {graph_data.name} | {l} | {time.time() - start_time:.4f} |\n")
+            except:
+                raise ValueError("No save time path given")
+    else:
+        print(f"File {file} already exists. Skipping.")
+    return file
+
+
+def save_closed_walk_weighted_labels(graph_data: GraphDataset, min_walk_length: Optional[int] = None,
+                                     max_walk_length: int = 6, max_labels: Optional[int] = None,
+                                     label_path: Optional[Path] = None,
+                                     save_times: Optional[Path] = None) -> str:
+    """
+    Generate and save weighted (edge-label-primed) closed walk node labels.
+
+    Nodes are labeled by ((A_w)^l)_ii for l = min_walk_length, ..., max_walk_length,
+    where A_w weights each edge by a prime determined by its edge label.
+
+    Parameters
+    ----------
+    graph_data : GraphDataset
+        Graph dataset to label. Must carry 'primary_edge_labels'.
+    min_walk_length : int, optional
+        Smallest walk length included in the profile (default: 2).
+    max_walk_length : int
+        Largest walk length k included in the profile (default: 6).
+    max_labels : int, optional
+        Maximum number of distinct labels to retain.
+    label_path : Path, optional
+        Directory where labels will be saved.
+    save_times : Path, optional
+        Path to file for logging generation times.
+
+    Returns
+    -------
+    str
+        Path to the saved .pt file.
+
+    See Also
+    --------
+    ClosedWalkWeightedNodeLabeling : Implementation details
+    """
+    l = 'closed_walks_weighted'
+    if min_walk_length is not None:
+        l = f'{l}_{min_walk_length}'
+    l = f'{l}_{max_walk_length}'
+    if max_labels is not None:
+        l = f'{l}_{max_labels}'
+    if label_path is None:
+        raise ValueError("No label path given")
+    else:
+        file = label_path.joinpath(f"{graph_data.name}_labels_{l}.pt")
+    if not file.exists():
+        print(f"Saving {l} labels for {graph_data.name} to {file}")
+        start_time = time.time()
+
+        labeling = ClosedWalkWeightedNodeLabeling(
+            graph_data, min_walk_length=min_walk_length, max_walk_length=max_walk_length,
+            max_labels=max_labels, label_path=label_path, save_times=save_times
+        )
+        labels = labeling.generate()
+        # the counts only mean something relative to the label -> prime assignment,
+        # so it is committed to as well: a weighted label from one edge-label
+        # vocabulary can then never alias one from another
+        hash_params = (labeling.min_walk_length, labeling.max_walk_length,
+                       tuple(sorted(labeling.label_weights.items())))
+        signatures = {label_id: profile for profile, label_id in labeling.profile_to_label.items()}
+        label_hashes = hash_vocabulary(signatures, 'closed_walks_weighted', hash_params)
+        hash_meta = {'canonical': True, 'kind': 'closed_walks_weighted', 'params': hash_params}
         save_labels_to_file(file, graph_data.name, l, labels, max_labels, label_hashes=label_hashes, hash_meta=hash_meta)
         if save_times is not None:
             try:
