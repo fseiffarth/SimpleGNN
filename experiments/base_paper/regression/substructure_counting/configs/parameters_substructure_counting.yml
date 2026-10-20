@@ -12,10 +12,13 @@ loss:
 
 rule_occurrence_threshold: 1
 
+# positional_encoding: init of the invariant-based encoder embedding tables
+# (used by the walk networks; ignored by networks without an encoder layer).
 weight_initialization: { convolution: { type: 'lower_upper', value: 0.001 },
                          convolution_bias: { type: 'lower_upper', value: 0.0 },
                          aggregation: { type: 'lower_upper', value: 0.001 },
-                         aggregation_bias: { type: 'lower_upper', value: 0.0 } }
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
 
 batch_size:
   - 64

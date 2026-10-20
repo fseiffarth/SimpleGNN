@@ -1,11 +1,68 @@
-# Walk-count variant of the cycle-count network: simple_cycles heads replaced by
-# closed_walks heads of the same lengths (3-6); wl head unchanged.
+# Multi-task (6 targets) walk-count variant of the cycle-count network:
+# simple_cycles heads replaced by closed_walks heads; wl head unchanged.
+# - A leading invariant_based_positional_encoding acts as node encoder
+#   (concatenate_input: false -> the learned embeddings ARE the node features,
+#   the constant input feature is discarded). One head per closed-walk length
+#   2..10; length 1 is omitted because (A^1)_ii == 0 on these simple graphs,
+#   i.e. a constant label carrying no signal. num: 2 learned entries per label
+#   value -> 9 * 2 = 18 input features.
+# - Convolution and aggregation heads now cover closed-walk lengths 3..10
+#   (previously 3..6).
+# - Convolution heads use num: 2 (previously 1).
 models:
-- - layer_type: invariant_based_convolution
+- - layer_type: invariant_based_positional_encoding
+    concatenate_input: false
+    heads:
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 2
+        max_walk_length: 2
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 3
+        max_walk_length: 3
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 4
+        max_walk_length: 4
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 5
+        max_walk_length: 5
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 6
+        max_walk_length: 6
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 7
+        max_walk_length: 7
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 8
+        max_walk_length: 8
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 9
+        max_walk_length: 9
+    - num: 2
+      labels:
+        label_type: closed_walks
+        min_walk_length: 10
+        max_walk_length: 10
+  - layer_type: invariant_based_convolution
     bias: false
     activation: torch.nn.LeakyReLU()
     heads:
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -24,7 +81,7 @@ models:
         name: distances
         values:
         - 0
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -43,7 +100,7 @@ models:
         name: distances
         values:
         - 0
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -62,7 +119,7 @@ models:
         name: distances
         values:
         - 0
-    - num: 1
+    - num: 2
       bias: false
       labels:
         head:
@@ -81,7 +138,83 @@ models:
         name: distances
         values:
         - 0
-    - num: 1
+    - num: 2
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 7
+          max_walk_length: 7
+        tail:
+          label_type: closed_walks
+          min_walk_length: 7
+          max_walk_length: 7
+        bias:
+          label_type: closed_walks
+          min_walk_length: 7
+          max_walk_length: 7
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 2
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 8
+          max_walk_length: 8
+        tail:
+          label_type: closed_walks
+          min_walk_length: 8
+          max_walk_length: 8
+        bias:
+          label_type: closed_walks
+          min_walk_length: 8
+          max_walk_length: 8
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 2
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 9
+          max_walk_length: 9
+        tail:
+          label_type: closed_walks
+          min_walk_length: 9
+          max_walk_length: 9
+        bias:
+          label_type: closed_walks
+          min_walk_length: 9
+          max_walk_length: 9
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 2
+      bias: false
+      labels:
+        head:
+          label_type: closed_walks
+          min_walk_length: 10
+          max_walk_length: 10
+        tail:
+          label_type: closed_walks
+          min_walk_length: 10
+          max_walk_length: 10
+        bias:
+          label_type: closed_walks
+          min_walk_length: 10
+          max_walk_length: 10
+      properties:
+        name: distances
+        values:
+        - 0
+    - num: 2
       bias: false
       labels:
         head:
@@ -114,8 +247,8 @@ models:
     activation: torch.nn.LeakyReLU()
   - layer_type: layer_norm
   - layer_type: invariant_based_aggregation
-    activation: torch.nn.LeakyReLU()
     bias: true
+    activation: torch.nn.LeakyReLU()
     heads:
     - num: 10
       bias: true
@@ -141,6 +274,30 @@ models:
         label_type: closed_walks
         min_walk_length: 6
         max_walk_length: 6
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 7
+        max_walk_length: 7
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 8
+        max_walk_length: 8
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 9
+        max_walk_length: 9
+    - num: 10
+      bias: true
+      labels:
+        label_type: closed_walks
+        min_walk_length: 10
+        max_walk_length: 10
     - num: 10
       bias: true
       labels:
