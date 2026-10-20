@@ -7,6 +7,7 @@
 #   ./experiments/ogb/run_ogb.sh molbace        # runs one dataset
 #   ./experiments/ogb/run_ogb.sh --all          # runs all six, in size order
 #   NUM_THREADS=4 ./experiments/ogb/run_ogb.sh molhiv
+#   ./experiments/ogb/run_ogb.sh molhiv-t50     # a sweep arm (see README)
 set -e
 
 # Get script directory
@@ -58,12 +59,15 @@ fi
 # Split files are mandatory at FrameworkMain construction; generate them once.
 # The first call downloads the dataset into /tmp, the same root the experiment's
 # preprocessing uses, so the download is shared.
+# Sweep arms are named <dataset>-<variant> (e.g. molhiv-t50) and share the base
+# dataset's split file, so the suffix is stripped here.
 SPLIT_DIR="$ROOT_DIR/src/simplegnn/datasets/splits/fixed"
 for ds in "${DATASETS[@]}"; do
-    SPLITS="$SPLIT_DIR/ogbg-${ds}_splits.json"
+    base_ds="${ds%%-*}"
+    SPLITS="$SPLIT_DIR/ogbg-${base_ds}_splits.json"
     if [ ! -f "$SPLITS" ]; then
-        echo "Split file missing for ogbg-${ds}, generating it (downloads the dataset on first run)..."
-        python -m simplegnn.utils.ogb_splits --dataset "ogbg-${ds}"
+        echo "Split file missing for ogbg-${base_ds}, generating it (downloads the dataset on first run)..."
+        python -m simplegnn.utils.ogb_splits --dataset "ogbg-${base_ds}"
     fi
 done
 

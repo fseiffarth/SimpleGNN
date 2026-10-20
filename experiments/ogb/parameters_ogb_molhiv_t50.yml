@@ -1,0 +1,113 @@
+# ogbg-molhiv overfitting sweep -- arm B: rule_occurrence_threshold = 50.
+#
+# This is the reduced-capacity arm. Every line other than the threshold itself
+# is identical to parameters_ogb_molhiv_t1.yml, so a difference between the two
+# runs is attributable to the rule vocabulary alone.
+#
+# Why the sweep exists: train AUC saturates and validation AUC peaks within the
+# first epoch. Part of that is the dataset (32,901 scaffold-split training
+# molecules, ~3.5% positive => ~1,150 positive graphs; at batch_size 64 one
+# epoch is already 515 optimizer steps, and published GIN baselines peak just as
+# early). The rest is this config: no weight decay, no dropout, and a rule
+# threshold of 1.
+#
+# Changes vs parameters_ogb_classification.yml:
+#   optimizer      Adam -> AdamW (decoupled decay; wd is a real axis now)
+#   weight_decay   unset (0.0) -> [0.0, 0.01] grid
+#   learning_rate  0.001 -> 0.0001 (see the checkpoint-resolution note below)
+#   weighted_loss  True -> False (see note below)
+#   epochs         200 -> 40, early-stopping patience 30 -> 10
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+# NOTE: 'float' roughly halves the wall clock and the memory of a molhiv run.
+# Kept at 'double' here only to match the baseline config; switch both arms
+# together if you want the speed.
+precision: double
+
+# AdamW decouples the decay from the Adam update, so weight_decay is a genuine
+# regularization axis rather than an L2 term folded into the adaptive step.
+# Given as a plain string (not a dict) on purpose: an explicit `weight_decay`
+# inside an optimizer dict would override the grid below
+# (model_configuration.py:1039-1042).
+optimizer:
+  - AdamW
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Two output logits + CrossEntropyLoss, so the AUC is taken over the softmax
+# positive-class probability (binary_roc_auc in framework/model_configuration.py).
+loss:
+  - CrossEntropyLoss
+
+# Off for this sweep. The per-batch weights are 1 - count/total
+# (model_configuration.py:605-611), i.e. ~0.965 vs ~0.035 at a 3.5% positive
+# rate -- a ~27x upweight of the ~2 positives in a batch of 64, which for a rank
+# metric like ROC-AUC mostly accelerates memorizing those individual positives.
+# (Side effect worth knowing: ~10% of batches of 64 contain no positive at all,
+# and there the count tensor broadcasts to a flat 0.5/0.5 weighting.)
+# Re-enable it as a separate A/B once the threshold/decay picture is clear.
+weighted_loss: False
+
+# ARM B. Read directly in the layer, not in the grid loop
+# (inv_based_message_passing.py:1145), so it must stay a scalar -- hence one
+# parameter file per value instead of a list.
+# At 50, a rule must fire in at least 50 node pairs across the dataset to get its
+# own weight; everything rarer is dropped (inv_based_message_passing.py:1147).
+# On 41k molecules that removes the memorization tail while keeping the rules
+# that are actually estimable from the training data.
+rule_occurrence_threshold: 50
+
+# weight initialization for the invariant-based layers
+weight_initialization: { convolution: {  type: 'lower_upper', value: 0.1 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: 0.1 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+
+batch_size:
+  - 64
+
+# 1e-3 gave the per-epoch checkpointer no resolution: with 515 steps per epoch,
+# a validation-AUC optimum reached inside epoch 1 cannot be captured by a metric
+# sampled once per epoch. 1e-4 spreads the same trajectory over ~10 epochs.
+learning_rate:
+  - 0.0001
+
+# AdamW decoupled decay. 0.01 is the torch AdamW default; 0.1 is the sensible
+# next step up if 0.01 does not move the val/test gap (adds a third config).
+weight_decay:
+  - 0.0
+  - 0.01
+
+epochs:
+  - 40
+
+early_stopping:
+  enabled:
+    True
+  patience:
+    10
+
+# ReduceLROnPlateau tracks the validation *loss* with mode='min'
+# (model_configuration.py:set_scheduler). Tightened from patience 10/factor 0.9,
+# which over a 40-epoch run would have fired twice for a ~19% total reduction.
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 5, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default'}
+
+# `all` + this transformation gives one-hot atom type concatenated with the
+# min-max-normalized remaining OGB atom features (see the same note in
+# experiments/qm9/parameters_QM9.yml: the transformation is only reachable when
+# `name` is 'all', graph_dataset.py:788/878).
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# evaluation_metric drives the per-epoch metric and best-epoch checkpointing;
+# evaluation_type drives the cross-configuration model selection in
+# framework/utils/evaluation.py. Both must be roc_auc to actually select on AUC
+# -- OGB scores these datasets on ROC-AUC, and accuracy is meaningless at a
+# 3.5% positive rate (predicting all-negative scores 96.5%).
+evaluation_metric: roc_auc
+evaluation_type: roc_auc
+
+best_model: True

@@ -1,0 +1,82 @@
+# OPTIMAL hyperparameters for the single-task regression `ogbg-mol*` datasets
+# (molesol 1,128 / molfreesolv 642 / mollipo 4,200 graphs; OGB scores all
+# three on RMSE over the official scaffold split). Rationale: OPTIMAL_CONFIG.md.
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: float
+share_gnn_forward: { batched: True }
+
+# AdamW as a plain string so the weight_decay grid below is honored.
+optimizer:
+  - AdamW
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Train on the leaderboard metric. The framework reports MAE per epoch
+# alongside regardless (model_configuration.py computes it independently).
+loss:
+  - RMSE
+
+# Compromise across the three dataset sizes: 3 removes the occurs-once
+# lookup-table tail everywhere without starving 642-graph freesolv. For a
+# mollipo-only run, 5-10 is the better setting (ZINC, 10k train graphs of the
+# same molecule family, converged on 10). Scalar (read in the layer), so it
+# cannot be a grid axis -- edit per run.
+rule_occurrence_threshold: 3
+
+# Proximal L1 rule selection, ZINC v12 operating point. NOT grid-searchable.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+batch_size:
+  - 32
+
+learning_rate:
+  - 0.001
+
+# ZINC v12 settled on a light 1e-5 decay next to L1 + threshold; 0.01 (torch
+# default) is the candidate for the much smaller OGB sets. 2 configurations.
+weight_decay:
+  - 0.00001
+  - 0.01
+
+# ZINC-protocol budget; with lr_threshold stopping, runs end when the LR
+# anneals to its floor rather than exhausting the budget.
+epochs:
+  - 300
+
+early_stopping:
+  enabled: True
+  patience: 40
+  lr_threshold: 0.000001
+
+csv_flush_interval: 1
+
+# Dwivedi et al. "Benchmarking GNNs" annealing protocol (factor 0.5 /
+# patience 10), tracking validation loss with mode='min'.
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default' }
+
+# One-hot atom type + min-max-normalized remaining OGB atom features; required
+# because the positional-encoding encoder runs with concatenate_input: true.
+input_features: { name: all, transformation: 'one_hot_labels_normalize_features' }
+
+# z-score the targets for training (logS, kcal/mol and logD scales differ a
+# lot) and undo it before the metrics so reported MAE/RMSE are in the
+# target's own units.
+output_features: { normalization: 'standard' }
+invert_outputs: { normalization: 'standard' }
+
+# Select configurations on validation loss (RMSE). Stated explicitly: the
+# default 'accuracy' is a constant 0 on regression runs.
+evaluation_type: loss
+
+best_model: True

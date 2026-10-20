@@ -1,0 +1,103 @@
+# OPTIMAL hyperparameters for `ogbg-molhiv` (41,127 molecules, ~3.5% positive,
+# official scaffold split, ROC-AUC). Rationale: OPTIMAL_CONFIG.md.
+#
+# Built from the conclusions of the molhiv t1/t50 overfitting sweep (see
+# README.md and parameters_ogb_molhiv_t1.yml) plus the regularization stack
+# that the ZINC test v11/v12 tuning converged on (AdamW + proximal L1 +
+# rule_occurrence_threshold + mean_aggregation init).
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+# float roughly halves wall clock and memory on a 41k-graph run; the tuned ZINC
+# configs run float throughout with no metric drift observed.
+precision: float
+share_gnn_forward: { batched: True }
+
+# AdamW (decoupled decay) as a plain string so the weight_decay grid below is
+# honored -- an explicit weight_decay inside an optimizer dict would override
+# it (model_configuration.py grid handling).
+optimizer:
+  - AdamW
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Two output logits + CrossEntropyLoss, so the AUC is taken over the softmax
+# positive-class probability (binary_roc_auc in framework/model_configuration.py).
+loss:
+  - CrossEntropyLoss
+
+# Off: at a 3.5% positive rate the per-batch weights are ~27x on the ~1 positive
+# per batch of 32, which for a rank metric mostly accelerates memorizing those
+# individual positives (see the analysis in parameters_ogb_molhiv_t1.yml).
+weighted_loss: False
+
+# The single strongest anti-overfitting lever for invariant layers: rules that
+# occur fewer than 10 times across the 41k molecules get no weight at all
+# (deleted, not shrunk). 10 is where the ZINC v12 tuning landed; the molhiv
+# sweep arms bracket it at 1 and 50. Read as a scalar inside the layer, so it
+# cannot be a grid axis -- edit per run.
+rule_occurrence_threshold: 10
+
+# Proximal L1 (soft-thresholding after each optimizer step) on invariant-layer
+# rule weights: drives uninformative rules to exactly 0 (learned rule
+# selection). 0.01 is the ZINC v12 operating point. NOT grid-searchable.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+
+# Fan-in-scaled init with a mean-aggregation prior (ZINC v12 operating point);
+# the positional_encoding entry initializes the encoder's embedding tables.
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+# 32 matches the official OGB mol* example code (and the ZINC protocol).
+batch_size:
+  - 32
+
+# 1e-4, not the literature-standard 1e-3: per-epoch checkpointing cannot capture
+# a validation-AUC optimum reached inside epoch 1, and at 1e-3 molhiv peaks
+# within the first ~500 optimizer steps (sweep README). 1e-4 spreads the same
+# trajectory over ~10 epochs so the checkpointer can see it.
+learning_rate:
+  - 0.0001
+
+# AdamW decoupled decay as a real grid axis: torch default 0.01 vs the stronger
+# 0.1 -- the two candidates the sweep analysis singled out. 2 configurations.
+weight_decay:
+  - 0.01
+  - 0.1
+
+# 100 epochs is the OGB baseline budget; with lr 1e-4 + plateau halving the run
+# either LR-floors or exhausts patience well before that.
+epochs:
+  - 100
+
+early_stopping:
+  enabled: True
+  patience: 20
+  # Dwivedi et al. "Benchmarking GNNs" protocol: also stop once
+  # ReduceLROnPlateau has annealed the LR to its floor (matches min_lr below).
+  lr_threshold: 0.000001
+
+csv_flush_interval: 1
+
+# Benchmarking-GNNs-style annealing (factor 0.5 / patience 10), tracks the
+# validation loss with mode='min' (model_configuration.py:set_scheduler).
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default' }
+
+# One-hot atom type concatenated with the min-max-normalized remaining OGB atom
+# features; required (not `constant`) because the positional-encoding encoder
+# runs with concatenate_input: true and passes these through.
+input_features: { name: all, transformation: 'one_hot_labels_normalize_features' }
+
+# evaluation_metric drives per-epoch metric + best-epoch checkpointing;
+# evaluation_type drives cross-configuration selection. Both must be roc_auc:
+# OGB scores molhiv on ROC-AUC and accuracy is meaningless at 3.5% positives.
+evaluation_metric: roc_auc
+evaluation_type: roc_auc
+
+best_model: True

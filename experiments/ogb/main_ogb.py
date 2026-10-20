@@ -20,6 +20,20 @@ DATASETS = {
     'molesol': CONFIG_DIR / 'main_molesol.yml',
     'molfreesolv': CONFIG_DIR / 'main_molfreesolv.yml',
     'mollipo': CONFIG_DIR / 'main_mollipo.yml',
+    # molhiv overfitting sweep: identical apart from rule_occurrence_threshold,
+    # which is read as a scalar in the layer and so cannot be a grid axis.
+    # Each arm writes to its own results root; see the config headers.
+    'molhiv-t1': CONFIG_DIR / 'main_molhiv_t1.yml',
+    'molhiv-t50': CONFIG_DIR / 'main_molhiv_t50.yml',
+    # optimal arms: tuned models/parameters pairs (see OPTIMAL_CONFIG.md);
+    # same datasets/splits, results land in results/ogb_optimal/. The
+    # <dataset>-<variant> naming keeps run_ogb.sh's split generation working.
+    'molhiv-optimal': CONFIG_DIR / 'main_molhiv_optimal.yml',
+    'molbace-optimal': CONFIG_DIR / 'main_molbace_optimal.yml',
+    'molbbbp-optimal': CONFIG_DIR / 'main_molbbbp_optimal.yml',
+    'molesol-optimal': CONFIG_DIR / 'main_molesol_optimal.yml',
+    'molfreesolv-optimal': CONFIG_DIR / 'main_molfreesolv_optimal.yml',
+    'mollipo-optimal': CONFIG_DIR / 'main_mollipo_optimal.yml',
 }
 
 

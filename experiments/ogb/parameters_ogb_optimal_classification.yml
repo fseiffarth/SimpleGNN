@@ -1,0 +1,81 @@
+# OPTIMAL hyperparameters for the SMALL single-task binary-classification
+# `ogbg-mol*` datasets: molbace (1,513 graphs) and molbbbp (2,039 graphs),
+# both scored on ROC-AUC over the official scaffold split.
+# Rationale: OPTIMAL_CONFIG.md. For ogbg-molhiv use
+# parameters_ogb_optimal_molhiv.yml (different lr / threshold / decay grid).
+device: cpu
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: float
+share_gnn_forward: { batched: True }
+
+# AdamW as a plain string so the weight_decay grid below is honored.
+optimizer:
+  - AdamW
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Two output logits + CrossEntropyLoss, so the AUC is taken over the softmax
+# positive-class probability (binary_roc_auc in framework/model_configuration.py).
+loss:
+  - CrossEntropyLoss
+
+# bace is ~46% positive and bbbp ~76% positive -- mild skews that ROC-AUC
+# handles by itself; the molhiv analysis (parameters_ogb_molhiv_t1.yml) applies
+# even less here, so no reweighting.
+weighted_loss: False
+
+# Scaled down from molhiv's 10: with only ~1,200 (bace) / ~1,600 (bbbp)
+# training graphs a threshold of 10 would also delete genuinely recurring
+# chemistry. 5 removes the occurs-once lookup-table tail while keeping rules
+# seen in a handful of scaffolds. Scalar (read in the layer) -- edit per run.
+rule_occurrence_threshold: 5
+
+# Proximal L1 rule selection, ZINC v12 operating point. NOT grid-searchable.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+batch_size:
+  - 32
+
+# Literature-standard 1e-3 is fine here: at ~40-50 optimizer steps per epoch
+# the per-epoch checkpointer has plenty of resolution (unlike molhiv, where
+# 1e-3 burns through the whole trajectory inside epoch 1).
+learning_rate:
+  - 0.001
+
+# 2-point decoupled-decay grid: off vs torch default. 2 configurations.
+weight_decay:
+  - 0.0
+  - 0.01
+
+epochs:
+  - 200
+
+early_stopping:
+  enabled: True
+  patience: 30
+  lr_threshold: 0.000001
+
+csv_flush_interval: 1
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.000001 }
+
+training_data_sampling: { type: 'default' }
+
+# One-hot atom type + min-max-normalized remaining OGB atom features; required
+# because the positional-encoding encoder runs with concatenate_input: true.
+input_features: { name: all, transformation: 'one_hot_labels_normalize_features' }
+
+# Both must be roc_auc: per-epoch checkpointing AND cross-config selection on
+# the OGB metric (see README.md, "Metric handling").
+evaluation_metric: roc_auc
+evaluation_type: roc_auc
+
+best_model: True
