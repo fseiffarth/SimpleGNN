@@ -11,7 +11,7 @@ from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.graph_drawing import GraphDrawing, resolve_positions
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
-from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, range_gather
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, label_inverse, range_gather
 
 
 class InvariantBasedAggregationLayer(InvariantBasedLayer):
@@ -71,7 +71,7 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         self._agg_col_ranges = []  # per head-config: (column_base, num_replicas)
         for head_id, head in enumerate(layer.layer_heads):
             node_labels = self.graph_data.node_labels[self.node_label_descriptions[head_id]].node_labels
-            _, indices, counts = torch.unique(node_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
+            indices = label_inverse(node_labels)
             column_base = int(np.sum(self.n_heads_per_label[:head_id], dtype=int))
             weight_base = int(np.sum([self.n_node_labels[i] * self.n_heads_per_label[i] for i in range(head_id)], dtype=int))
             # Non-persistent buffer: moved by net.to(device), kept out of state_dict

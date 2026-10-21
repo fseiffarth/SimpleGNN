@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 import hashlib
 import json
+import pickle
 
 import matplotlib
 import yaml
@@ -20,7 +21,7 @@ from simplegnn.datasets.utils.NodeLabels import NodeLabels
 from simplegnn.datasets.utils.graph_drawing import GraphDrawing, filter_weight_bounds, resolve_positions
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
-from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, range_gather
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, label_inverse, range_gather
 from simplegnn.utils.utils import available_memory_bytes
 
 
@@ -359,6 +360,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         bias_unique_cache = {}       # bias label description -> unique inverse indices
         indices_cache_hits = 0       # fine-grained (indices, counts) cache stats
         indices_cache_misses = 0
+        # (property description, value) -> consolidated row index of its
+        # pairs; identical for every head sharing the description, so it is
+        # computed once per build instead of once per head (spec 25)
+        target_rows_memo = {}
 
         timing = self._init_timing
         for phase in ('consolidate', 'cache_load', 'cache_miss_compute', 'remap',
@@ -469,11 +474,6 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                         valid_values = torch.where(torch.logical_and(counts >= threshold, counts <= upper_threshold))[0]
                     else:
                         valid_values = torch.where(counts >= threshold)[0]
-                    # relabel indices using a vectorized mapping (-1 = dropped,
-                    # which is exactly the pv sentinel for "row unused")
-                    mapping = torch.full((counts.size(0),), -1, dtype=torch.int64, device=indices.device)
-                    mapping[valid_values] = torch.arange(valid_values.numel(), device=indices.device, dtype=torch.int64)
-                    indices = mapping[indices]
                     num_weights = valid_values.numel()
                 # retain the surviving unique encoded values for slot->key
                 # export (spec 18 B1); an old-format cache hit has uniques=None
@@ -490,20 +490,36 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     head_weight_num.append(num_weights)
                 t = lap('remap', t)
 
-                # write the (absolute, replica-0) parameter index of every pair
-                # of this property value into the head's pv vector — dropped
-                # rows keep the -1 sentinel
                 base_offset = self.weight_offset[-1]
-                target = cons.target_rows(property_key)
-                t = lap('target_rows', t)
-                pv[target] = torch.where(indices >= 0, indices + base_offset, indices).to(torch.int32)
-                t = lap('scatter', t)
-                nw_key[cons.key_index[property_key]] = num_weights
                 total_params = base_offset + num_weights * self.n_heads_per_label[head_id]
                 if total_params > torch.iinfo(torch.int32).max:
                     raise ValueError(
                         f"Layer {self.layer_id}: {total_params:,} weight parameters exceed the "
                         f"int32 range of the factored pv storage — reduce heads/labels/properties.")
+                # unique id -> absolute (replica-0) parameter index, with the
+                # threshold drop and the invalid bucket folded in as -1 (the
+                # pv sentinel for "row unused"): a single small int32 table,
+                # so the full-length remap is one gather (spec 25)
+                if valid_values is None:
+                    lut = torch.arange(base_offset, base_offset + num_weights, dtype=torch.int64)
+                else:
+                    lut = torch.full((counts.size(0),), -1, dtype=torch.int64)
+                    lut[valid_values] = torch.arange(base_offset, base_offset + num_weights, dtype=torch.int64)
+                lut = lut.to(torch.int32)
+                t = lap('remap', t)
+
+                # write the parameter index of every pair of this property
+                # value into the head's pv vector — dropped rows keep -1
+                target = target_rows_memo.get((desc, property_key))
+                if target is None:
+                    target = cons.target_rows(property_key)
+                    if cons.total_rows <= torch.iinfo(torch.int32).max:
+                        target = target.to(torch.int32)
+                    target_rows_memo[(desc, property_key)] = target
+                t = lap('target_rows', t)
+                pv[target] = lut[indices]
+                t = lap('scatter', t)
+                nw_key[cons.key_index[property_key]] = num_weights
 
                 for n in range(self.n_heads_per_label[head_id]):
                     self.weight_offset.append(self.weight_offset[-1] + num_weights)
@@ -526,7 +542,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 # gathered as Param_b[b_off[h, f] + bias_idx[node]] in forward.
                 bias_label_key = self.bias_label_descriptions[head_id]
                 if bias_label_key not in bias_unique_cache:
-                    _, bias_indices, _ = torch.unique(bias_labels, dim=0, return_inverse=True, return_counts=True, sorted=False)
+                    bias_indices = label_inverse(bias_labels)
                     bias_unique_cache[bias_label_key] = bias_indices
                     slot = len(self._bias_slot)
                     self._bias_slot[bias_label_key] = slot
@@ -1067,8 +1083,14 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             raise FileNotFoundError(f"Cache file not found: {cached_path}")
 
         try:
-            # Load cache file
-            cached_data = torch.load(str(cached_path), weights_only=False)
+            # Load cache file. The payload is plain tensors/ints/strings, so the
+            # restricted unpickler suffices; mmap maps the storages instead of
+            # copying them (the indices are read once by the pv remap gather).
+            # Legacy files that are not mmap-able fall back to a full load.
+            try:
+                cached_data = torch.load(str(cached_path), mmap=True, weights_only=True)
+            except (RuntimeError, pickle.UnpicklingError):
+                cached_data = torch.load(str(cached_path), weights_only=False)
 
             # Validate structure
             if not isinstance(cached_data, dict):

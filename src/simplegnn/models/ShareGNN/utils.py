@@ -25,6 +25,21 @@ def range_gather(slices: torch.Tensor, positions: torch.Tensor):
     return gather_idx, slot_of_row
 
 
+def label_inverse(labels: torch.Tensor) -> torch.Tensor:
+    """
+    Index of every node's label among the sorted unique labels, i.e. the
+    inverse of ``torch.unique(labels, dim=0, return_inverse=True)``.
+
+    For 1-D labels the plain sort-based unique gives the identical inverse
+    (``unique(dim=0)`` always sorts, and a 1-D row sorts as its scalar) but is
+    ~80x faster — the dim=0 path took ~8 s per call on ZINC-full's 5.8M nodes
+    (spec 25). Multi-column labels keep the row-wise unique.
+    """
+    if labels.dim() == 1:
+        return torch.unique(labels, sorted=True, return_inverse=True)[1]
+    return torch.unique(labels, dim=0, return_inverse=True)[1]
+
+
 def is_batched_pos(pos) -> bool:
     """
     True if `pos` addresses multiple graphs at once (batched ShareGNN forward),

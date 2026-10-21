@@ -41,8 +41,31 @@ Note: `parameters_ZINC_full.yml` forces `precompute_rows: true`, which
 materializes **32.6 GiB** of assembled rows after the build (and moves them to
 the GPU) — a second large init cost on top of the index build.
 
+### Step 0 measurements (ZINC-full, CPU, warm caches, `precompute_rows: false`)
+
+| Phase | Time |
+|---|---:|
+| Network construction (all layers) | 235.0 s |
+| Layer 1 (convolution) build | 51.9 s |
+| ↳ bias | 20.2 s |
+| ↳ target_rows | 17.5 s |
+| ↳ scatter | 5.7 s |
+| ↳ cache_load (316 files) | 3.6 s |
+| ↳ consolidate | 2.7 s |
+| ↳ remap | 1.5 s |
+
+cProfile: 32 calls of `torch.unique(..., dim=0)` (`unique_dim`) took
+**212.6 s** — one per head in the positional-encoding layer (14), the
+aggregation layer (16) and the conv bias. On ZINC-full's 5.8M nodes the
+row-wise `dim=0` path costs ~7–8 s per call versus ~0.1 s for the 1-D sort
+unique, which yields the identical inverse for 1-D labels. Cache I/O is cheap
+(3.6 s), so prefetching was dropped from step 1.
+
 ### Step 1 — bit-identical quick wins (no cache-format change)
 
+- `label_inverse()` (`models/ShareGNN/utils.py`): 1-D sort unique instead of
+  `unique(dim=0)` for the conv bias, aggregation and positional-encoding
+  index vectors — the dominant cost.
 - Memoize `target_rows` per (property description, value) for the duration of
   one build (int32; 151M rows fit), so shared descriptions compute it once.
 - Fused lookup-table remap: one small int32 LUT of size `len(counts)` with
@@ -50,11 +73,24 @@ the GPU) — a second large init cost on top of the index build.
   `pv[target] = lut[indices]` — one gather instead of ~4 int64 passes.
 - `torch.load(..., mmap=True, weights_only=True)` for the indices cache
   (falls back to the old load for legacy files).
-- Prefetch the next cache file on a background thread while the current one
-  is processed.
 
 Weight ordering, `weight_offset`, `_pv_*`, `_nw_*` and slot keys stay
 identical, so checkpoints and transfer sidecars remain compatible.
+
+Result (same setup as the step 0 measurements):
+
+| Phase | Step 0 | Step 1 |
+|---|---:|---:|
+| Network construction (all layers) | 235.0 s | **11.8 s** |
+| Layer 1 build | 51.9 s | 8.8 s |
+| ↳ bias | 20.2 s | 0.2 s |
+| ↳ target_rows | 17.5 s | 1.4 s |
+| ↳ scatter | 5.7 s | 3.8 s |
+| ↳ cache_load | 3.6 s | 0.4 s |
+| Peak RSS (whole run) | 20.1 GB | 19.1 GB |
+
+What remains in layer 1 is the irreducible pv scatter (2.4B entries) and the
+one-time consolidation; steps 2–3 would mainly save disk space now.
 
 ### Step 2 — compact cache dtype (format bump, backward compatible)
 

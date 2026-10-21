@@ -11,7 +11,7 @@ from simplegnn.datasets.graph_dataset import GraphDataset
 from simplegnn.datasets.utils.graph_drawing import GraphDrawing, resolve_positions
 from simplegnn.framework.utils.parameters import Parameters
 from simplegnn.models.ShareGNN.layers.inv_based import InvariantBasedLayer
-from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, range_gather
+from simplegnn.models.ShareGNN.utils import Layer, is_batched_pos, label_inverse, range_gather
 
 
 class InvariantBasedPositionalEncodingLayer(InvariantBasedLayer):
@@ -71,7 +71,7 @@ class InvariantBasedPositionalEncodingLayer(InvariantBasedLayer):
             self.n_heads_per_label.append(head.num)
 
             node_labels = graph_data.node_labels[desc].node_labels
-            _, indices = torch.unique(node_labels, dim=0, return_inverse=True, sorted=False)
+            indices = label_inverse(node_labels)
             # Non-persistent buffers: moved by net.to(device), kept out of state_dict
             self.register_buffer(f'_pe_idx_{head_id}', indices.to(torch.int32), persistent=False)
             self.register_buffer(f'_pe_off_{head_id}',
