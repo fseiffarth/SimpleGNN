@@ -125,3 +125,50 @@ def test_label_inverse_matches_unique_dim0(labels):
 
     _, expected = torch.unique(labels, dim=0, return_inverse=True, sorted=False)
     assert torch.equal(label_inverse(labels), expected)
+
+
+def _reference_materialized_rows(layer):
+    """The pre-spec-25 materialization: assemble graph chunks from the
+    factored structures, then stable-argsort the rows by graph."""
+    num_graphs = len(layer._num_nodes_list)
+    columns, rows_per_graph = [[], [], [], []], []
+    for start in range(0, num_graphs, 4096):
+        positions = list(range(start, min(start + 4096, num_graphs)))
+        *rows, graph_slot = layer._assemble_rows(positions)
+        order = torch.argsort(graph_slot, stable=True)
+        for column, values in zip(columns, rows):
+            column.append(values[order].to(torch.int32))
+        rows_per_graph.append(torch.bincount(graph_slot, minlength=len(positions)))
+    slices = torch.cat([torch.zeros(1, dtype=torch.int64), torch.cat(rows_per_graph).cumsum(dim=0)])
+    return [torch.cat(column) for column in columns], slices
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("models_file", ["models_ShareGNN.yml", "models_ShareGNN_pe.yml"])
+@pytest.mark.parametrize("chunk_graphs", [16384, 7])
+def test_materialized_rows_match_reference(share_gnn_setup_factory, monkeypatch, models_file, chunk_graphs):
+    """The direct-placement _materialize_rows must reproduce the old
+    argsort-based layout row for row (order matters for float accumulation),
+    including head replicas (num > 1 in the _pe fixture) and chunk borders."""
+    from simplegnn.models.model import GraphModel
+    from simplegnn.models.ShareGNN.layers.inv_based_message_passing import (
+        InvariantBasedMessagePassingLayer,
+    )
+
+    monkeypatch.setattr(InvariantBasedMessagePassingLayer, '_MATERIALIZE_CHUNK_GRAPHS', chunk_graphs)
+    graph_data, para = share_gnn_setup_factory(models_file)
+    para.run_config.config['share_gnn_forward'] = {'precompute_rows': True}
+    try:
+        net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
+    finally:
+        para.run_config.config.pop('share_gnn_forward')
+    for layer in _mp_layers(net):
+        assert layer._rows_materialized
+        layer._rows_materialized = False  # make _assemble_rows use the factored path
+        (heads, i_local, j_local, params), slices = _reference_materialized_rows(layer)
+        layer._rows_materialized = True
+        assert torch.equal(layer._rc_slices, slices)
+        assert torch.equal(layer._rc_heads, heads)
+        assert torch.equal(layer._rc_i, i_local)
+        assert torch.equal(layer._rc_j, j_local)
+        assert torch.equal(layer._rc_params, params)

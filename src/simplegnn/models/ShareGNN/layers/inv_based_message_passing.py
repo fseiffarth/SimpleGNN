@@ -743,6 +743,10 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 self._materialize_rows(total_rows)
                 self._init_timing['materialize_rows'] = time.perf_counter() - materialize_start
 
+    # graphs per _materialize_rows chunk: bounds the transient index tensors
+    # (~0.5 GB per head-config on ZINC-full) independent of dataset size
+    _MATERIALIZE_CHUNK_GRAPHS = 16384
+
     def _materialize_rows(self, total_rows: int) -> None:
         """
         Assemble the rows of every graph once (in graph chunks, graph-major)
@@ -750,6 +754,13 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         with a single range-gather per column instead of the per-config
         assembly — the old representation's per-step speed at a
         deliberately-bounded memory cost.
+
+        The layout is fully determined by the per-(head-config, graph) row
+        counts: graph g's block holds, in head-config / replica order, the
+        config's used pair rows of g in pair order — exactly the order of the
+        per-batch assembly. Every row's destination is therefore computed
+        directly and written once, instead of concatenating int64 parts and
+        stable-argsorting all rows by graph (~60 s on ZINC-full, spec 25).
         """
         num_graphs = len(self._num_nodes_list)
         rc_heads = torch.empty(total_rows, dtype=torch.int32)
@@ -758,19 +769,47 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         rc_params = torch.empty(total_rows, dtype=torch.int32)
         rows_per_graph = torch.zeros(num_graphs, dtype=torch.int64)
         write = 0
-        chunk = 4096
-        for start in range(0, num_graphs, chunk):
-            positions = list(range(start, min(start + chunk, num_graphs)))
-            heads, i_local, j_local, params, graph_slot = self._assemble_rows(positions)
-            # group the chunk's rows by graph (stable: keeps assembly order within a graph)
-            order = torch.argsort(graph_slot, stable=True)
-            n = heads.shape[0]
-            rc_heads[write:write + n] = heads[order].to(torch.int32)
-            rc_i[write:write + n] = i_local[order].to(torch.int32)
-            rc_j[write:write + n] = j_local[order].to(torch.int32)
-            rc_params[write:write + n] = params[order].to(torch.int32)
-            rows_per_graph[start:start + len(positions)] = torch.bincount(graph_slot, minlength=len(positions))
-            write += n
+        chunk = self._MATERIALIZE_CHUNK_GRAPHS
+        for g0 in range(0, num_graphs, chunk):
+            g1 = min(g0 + chunk, num_graphs)
+            # used pair rows (pv >= 0) of every config and their count per graph
+            masks, counts = [], []
+            for head_id, meta in enumerate(self._cfg_meta):
+                pslices = getattr(self, f'_pslices_{meta["desc_slot"]}')
+                r0 = int(pslices[g0])
+                mask = getattr(self, f'_pv_{head_id}')[r0:int(pslices[g1])] >= 0
+                used = torch.cat([torch.zeros(1, dtype=torch.int64), mask.cumsum(dim=0)])
+                local_slices = pslices[g0:g1 + 1] - r0
+                masks.append((r0, mask))
+                counts.append(used[local_slices[1:]] - used[local_slices[:-1]])
+            rows_chunk = sum(cnt * meta['num'] for cnt, meta in zip(counts, self._cfg_meta))
+            rows_per_graph[g0:g1] = rows_chunk
+            # destination of each graph's next config block, advanced per config
+            block_start = write + rows_chunk.cumsum(dim=0) - rows_chunk
+            for head_id, meta in enumerate(self._cfg_meta):
+                slot = meta['desc_slot']
+                r0, mask = masks[head_id]
+                cnt = counts[head_id]
+                sel = mask.nonzero().squeeze(1) + r0
+                if sel.numel() > 0:
+                    # sel is graph-major, so a row's graph and its rank among
+                    # the graph's used rows follow from the counts alone
+                    graph_of_row = torch.repeat_interleave(torch.arange(g1 - g0), cnt)
+                    rank = torch.arange(sel.numel()) - (cnt.cumsum(dim=0) - cnt)[graph_of_row]
+                    dest0 = block_start[graph_of_row] + rank
+                    cnt_of_row = cnt[graph_of_row]
+                    lp = getattr(self, f'_lp_{slot}')[sel]
+                    params0 = getattr(self, f'_pv_{head_id}')[sel]
+                    if meta['num'] > 1:
+                        nw_of_row = getattr(self, f'_nw_{head_id}')[getattr(self, f'_kid_{slot}')[sel].long()]
+                    for n in range(meta['num']):
+                        dest = dest0 if n == 0 else dest0 + n * cnt_of_row
+                        rc_heads.index_fill_(0, dest, meta['head_base'] + n)
+                        rc_i[dest] = lp[:, 0]
+                        rc_j[dest] = lp[:, 1]
+                        rc_params[dest] = params0 if n == 0 else (params0 + n * nw_of_row).to(torch.int32)
+                block_start = block_start + cnt * meta['num']
+            write += int(rows_chunk.sum())
         slices = torch.cat([torch.zeros(1, dtype=torch.int64), rows_per_graph.cumsum(dim=0)])
         # Non-persistent buffers: moved by net.to(device), kept out of state_dict
         self.register_buffer('_rc_heads', rc_heads, persistent=False)
