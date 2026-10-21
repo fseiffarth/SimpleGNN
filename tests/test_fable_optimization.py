@@ -73,10 +73,12 @@ def test_invariant_parameters_are_registered(share_gnn_setup):
 
 
 @pytest.mark.integration
-def test_distribution_buffers_registered_and_not_persistent(share_gnn_setup):
+def test_distribution_buffers_registered_and_not_persistent(share_gnn_setup, monkeypatch):
     """The factored index structures (_pv_*/_bias_idx_*) are buffers (moved by
     net.to) but not in state_dict."""
     graph_data, para = share_gnn_setup
+    # keep the factored pv vectors: materialization frees them (spec 25)
+    monkeypatch.setitem(para.run_config.config, "share_gnn_forward", {"precompute_rows": False})
     net = _build_net(graph_data, para)
 
     buffer_names = {name for name, _ in net.named_buffers()}
@@ -108,7 +110,8 @@ def test_invariant_layer_weights_are_updated_on_gpu(share_gnn_setup):
     assert mp_layers
     for module in mp_layers:
         assert module.Param_W.is_cuda, "Param_W was not moved to CUDA"
-        assert module._pv_0.is_cuda, "pv index buffer not moved to CUDA"
+        index_buffer = module._rc_params if module._rows_materialized else module._pv_0
+        assert index_buffer.is_cuda, "index buffers not moved to CUDA"
 
     weights_before = [m.Param_W.detach().clone() for m in mp_layers]
     optimizer = torch.optim.Adam(net.parameters(), lr=0.01)
@@ -297,10 +300,12 @@ def test_layer_distribution_cache_off_by_default(share_gnn_setup):
 
 
 @pytest.mark.integration
-def test_layer_distribution_cache_round_trip(share_gnn_setup):
+def test_layer_distribution_cache_round_trip(share_gnn_setup, monkeypatch):
     """Coarse per-layer cache (opt-in): cold build == warm load, and the warm
     model still trains (T9)."""
     graph_data, para = share_gnn_setup
+    # keep the factored pv vectors: materialization frees them (spec 25)
+    monkeypatch.setitem(para.run_config.config, "share_gnn_forward", {"precompute_rows": False})
     para.run_config.config["cache"] = {"layer_distributions": True}
 
     net_probe = _build_net(graph_data, para)

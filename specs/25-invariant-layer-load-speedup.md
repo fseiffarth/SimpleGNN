@@ -141,3 +141,22 @@ chunk and stable-argsorted all 2.19B rows by graph.
   never reaches a GPU). Avoids the 32.6 GiB host buffer and most of the
   host-to-device copy. Same fits check as before; GPU memory in steady state
   is unchanged (the rows lived on the GPU before, too).
+
+### Step 6 — GPU memory of the materialized model
+
+ZINC-full used ~50 GB of VRAM: 32.6 GiB materialized rows (4x int32), 8.8 GiB
+factored `_pv_*` vectors, 1.4 GiB shared pair views, the rest small tensors
+and allocator cache.
+
+- After materialization the factored structures (`_pv_*`, `_nw_*`, `_lp_*`,
+  `_kid_*`, `_pslices_*`) are only read by the factored branch of
+  `_assemble_rows`, which is never taken again, so they are freed (and the
+  CUDA cache emptied after a GPU build).
+- Head and graph-local node-id columns use the smallest dtype that fits
+  (`_row_dtypes`: uint8 for ZINC's <= 18 heads / <= 38 nodes, int16/int32 for
+  larger graphs); readers already widen with `.long()`. 16 -> 7 bytes per row.
+
+Net buffers + parameters on ZINC-full: **43.6 GiB -> 15.0 GiB**; init peak
+RSS (CPU build) 56 -> 34 GB. Forward/backward bit-identical. Lighter models
+also make running `run_best_configuration`'s 3 runs in parallel on one GPU
+feasible.

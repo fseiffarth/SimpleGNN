@@ -36,10 +36,12 @@ def _invariant_layers(net):
 
 
 @pytest.mark.integration
-def test_invariant_layer_weight_distribution_is_cached_and_stable(share_gnn_setup):
+def test_invariant_layer_weight_distribution_is_cached_and_stable(share_gnn_setup, monkeypatch):
     from simplegnn.models.model import GraphModel
 
     graph_data, para = share_gnn_setup
+    # keep the factored pv vectors: materialization frees them (spec 25)
+    monkeypatch.setitem(para.run_config.config, "share_gnn_forward", {"precompute_rows": False})
 
     first = GraphModel(graph_data=graph_data, para=para, seed=42, device="cpu")
     assert list(CACHE_DIR.glob("*.pt")), (

@@ -70,6 +70,7 @@ def test_pv_matches_reference_construction(share_gnn_setup, threshold, upper_thr
     saved = {key: config.get(key) for key in ('rule_occurrence_threshold', 'rule_occurrence_upper_threshold')}
     config['rule_occurrence_threshold'] = threshold
     config['rule_occurrence_upper_threshold'] = upper_threshold
+    config['share_gnn_forward'] = {'precompute_rows': False}  # keep the factored pv vectors
     try:
         net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
         layers = _mp_layers(net)
@@ -83,6 +84,7 @@ def test_pv_matches_reference_construction(share_gnn_setup, threshold, upper_thr
             assert layer.weight_offset == reference_offsets
             assert set(layer._init_timing) >= {'cache_load', 'target_rows', 'scatter', 'finalize', 'total'}
     finally:
+        config.pop('share_gnn_forward', None)
         for key, value in saved.items():
             if value is None:
                 config.pop(key, None)
@@ -157,20 +159,21 @@ def test_materialized_rows_match_reference(share_gnn_setup_factory, monkeypatch,
 
     monkeypatch.setattr(InvariantBasedMessagePassingLayer, '_MATERIALIZE_CHUNK_GRAPHS', chunk_graphs)
     graph_data, para = share_gnn_setup_factory(models_file)
-    para.run_config.config['share_gnn_forward'] = {'precompute_rows': True}
     try:
+        para.run_config.config['share_gnn_forward'] = {'precompute_rows': True}
         net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
+        para.run_config.config['share_gnn_forward'] = {'precompute_rows': False}
+        factored_net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
     finally:
         para.run_config.config.pop('share_gnn_forward')
-    for layer in _mp_layers(net):
-        assert layer._rows_materialized
-        layer._rows_materialized = False  # make _assemble_rows use the factored path
-        (heads, i_local, j_local, params), slices = _reference_materialized_rows(layer)
-        layer._rows_materialized = True
+    for layer, factored in zip(_mp_layers(net), _mp_layers(factored_net)):
+        assert layer._rows_materialized and not factored._rows_materialized
+        (heads, i_local, j_local, params), slices = _reference_materialized_rows(factored)
         assert torch.equal(layer._rc_slices, slices)
-        assert torch.equal(layer._rc_heads, heads)
-        assert torch.equal(layer._rc_i, i_local)
-        assert torch.equal(layer._rc_j, j_local)
+        # compact storage dtypes; the widened values must match exactly
+        assert torch.equal(layer._rc_heads.long(), heads.long())
+        assert torch.equal(layer._rc_i.long(), i_local.long())
+        assert torch.equal(layer._rc_j.long(), j_local.long())
         assert torch.equal(layer._rc_params, params)
 
 
@@ -230,3 +233,76 @@ def test_rows_materialize_on_gpu_identically(share_gnn_setup_factory):
         assert gpu_layer._rc_heads.is_cuda
         for built, expected in zip(_materialized_columns(gpu_layer), _materialized_columns(cpu_layer)):
             assert torch.equal(built.cpu(), expected)
+
+
+@pytest.mark.parametrize("max_value,expected", [
+    (0, torch.uint8), (255, torch.uint8), (256, torch.int16),
+    (32767, torch.int16), (32768, torch.int32), (2 ** 31 - 1, torch.int32),
+])
+def test_smallest_index_dtype(max_value, expected):
+    from simplegnn.models.ShareGNN.layers.inv_based_message_passing import (
+        InvariantBasedMessagePassingLayer,
+    )
+
+    assert InvariantBasedMessagePassingLayer._smallest_index_dtype(max_value) == expected
+
+
+@pytest.mark.integration
+def test_materialized_rows_are_compact_and_free_factored_structures(share_gnn_setup_factory):
+    """Materialization stores head / node-id columns in the smallest dtype,
+    frees the factored structures it was built from, and the forward and
+    gradients stay bit-identical to the factored (unmaterialized) model."""
+    from simplegnn.models.model import GraphModel
+    from simplegnn.models.ShareGNN.layers.inv_based_message_passing import (
+        InvariantBasedMessagePassingLayer,
+    )
+
+    graph_data, para = share_gnn_setup_factory("models_ShareGNN_pe.yml")
+    try:
+        para.run_config.config['share_gnn_forward'] = {'precompute_rows': True}
+        net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
+        para.run_config.config['share_gnn_forward'] = {'precompute_rows': False}
+        factored_net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
+    finally:
+        para.run_config.config.pop('share_gnn_forward')
+
+    for layer in _mp_layers(net):
+        # MUTAG: < 256 heads and nodes per graph
+        assert layer._rc_heads.dtype == torch.uint8
+        assert layer._rc_i.dtype == layer._rc_j.dtype == torch.uint8
+        assert layer._rc_params.dtype == torch.int32
+        assert layer._row_bytes() == 7
+        leftovers = [name for name, _ in layer.named_buffers()
+                     if name.startswith(InvariantBasedMessagePassingLayer._FACTORED_BUFFER_PREFIXES)]
+        assert not leftovers, f"factored buffers not freed: {leftovers}"
+    for layer in _mp_layers(factored_net):
+        assert hasattr(layer, '_pv_0'), "the factored model must keep its pv vectors"
+
+    graph_ids = list(range(16))
+    outputs = []
+    for model in (net, factored_net):
+        model.zero_grad(set_to_none=True)
+        out = torch.stack([model(graph_data[i], pos=i) for i in graph_ids])
+        out.sum().backward()
+        outputs.append((out.detach(), [layer.Param_W.grad.clone() for layer in _mp_layers(model)]))
+    (out_m, grads_m), (out_f, grads_f) = outputs
+    assert torch.equal(out_m, out_f)
+    for grad_m, grad_f in zip(grads_m, grads_f):
+        assert torch.equal(grad_m, grad_f)
+
+
+@pytest.mark.integration
+def test_compact_row_dtypes_widen_for_large_graphs(share_gnn_setup_factory, monkeypatch):
+    """Graphs with more than 255 nodes need int16 node-id columns."""
+    from simplegnn.models.model import GraphModel
+
+    graph_data, para = share_gnn_setup_factory()
+    para.run_config.config['share_gnn_forward'] = {'precompute_rows': False}
+    try:
+        layer = _mp_layers(GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu'))[0]
+    finally:
+        para.run_config.config.pop('share_gnn_forward')
+    monkeypatch.setattr(layer, '_num_nodes_list', layer._num_nodes_list[:-1] + [300])
+    heads_dtype, node_dtype = layer._row_dtypes()
+    assert heads_dtype == torch.uint8 and node_dtype == torch.int16
+    assert layer._row_bytes() == 1 + 2 * 2 + 4

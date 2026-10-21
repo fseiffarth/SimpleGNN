@@ -730,7 +730,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             total_rows = sum(
                 int((getattr(self, f'_pv_{h}') >= 0).sum()) * meta['num']
                 for h, meta in enumerate(self._cfg_meta))
-            rows_bytes = total_rows * 16  # 4x int32 columns
+            rows_bytes = total_rows * self._row_bytes()
             available = available_memory_bytes()
             fits = rows_bytes <= max_bytes and (available is None or rows_bytes <= 0.40 * available)
             if precompute is True and not fits:
@@ -757,7 +757,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         """Build deferred materialized rows once the buffers reach the GPU."""
         super()._apply(fn, *args, **kwargs)
         # getattr: _apply may run before _finalize_initialization set the flag
-        if getattr(self, '_rows_pending', None) is not None and getattr(self, '_pv_0').device.type == 'cuda':
+        if getattr(self, '_rows_pending', None) is not None and self._x_slices.device.type == 'cuda':
             self._materialize_pending_rows()
         return self
 
@@ -765,13 +765,52 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         """Materialize rows deferred by _finalize_initialization on the
         device the buffers currently live on."""
         total_rows, self._rows_pending = self._rows_pending, None
-        device = getattr(self, '_pv_0').device
+        device = self._x_slices.device
         start = time.perf_counter()
         self._materialize_rows(total_rows)
         if device.type == 'cuda':
             torch.cuda.synchronize(device)
+            # hand the freed factored structures back to the driver, so the
+            # memory is available to other processes (e.g. parallel runs)
+            torch.cuda.empty_cache()
         print(f"Layer {self.layer_id}: materialized {total_rows:,} rows "
-              f"({total_rows * 16 / 2**30:.1f} GiB) on {device} in {time.perf_counter() - start:.2f}s")
+              f"({total_rows * self._row_bytes() / 2**30:.1f} GiB) on {device} "
+              f"in {time.perf_counter() - start:.2f}s")
+
+    @staticmethod
+    def _smallest_index_dtype(max_value: int) -> torch.dtype:
+        """Smallest integer dtype holding 0..max_value (uint8 / int16 / int32)."""
+        if max_value <= torch.iinfo(torch.uint8).max:
+            return torch.uint8
+        if max_value <= torch.iinfo(torch.int16).max:
+            return torch.int16
+        return torch.int32
+
+    def _row_dtypes(self) -> Tuple[torch.dtype, torch.dtype]:
+        """
+        Storage dtypes of the materialized (head, i/j) columns. Heads and
+        graph-local node ids are tiny for molecule datasets (ZINC: <= 18 heads,
+        <= 38 nodes), so uint8 instead of int32 cuts the row cache from 16 to
+        7 bytes per row (32.6 -> 14.3 GiB on ZINC-full, spec 25). Readers
+        always widen with .long(), so the values seen downstream are unchanged.
+        """
+        max_nodes = max(self._num_nodes_list, default=1)
+        return (self._smallest_index_dtype(self.num_heads - 1),
+                self._smallest_index_dtype(max_nodes - 1))
+
+    def _row_bytes(self) -> int:
+        """Bytes per materialized row: head + i + j columns plus int32 param."""
+        heads_dtype, node_dtype = self._row_dtypes()
+        return heads_dtype.itemsize + 2 * node_dtype.itemsize + torch.int32.itemsize
+
+    # factored index structures that only the per-batch assembly reads; dead
+    # weight once the rows are materialized (10.2 GiB on ZINC-full)
+    _FACTORED_BUFFER_PREFIXES = ('_pv_', '_nw_', '_lp_', '_kid_', '_pslices_')
+
+    def _drop_factored_structures(self) -> None:
+        """Free the factored structures after materialization (spec 25)."""
+        for name in [n for n in self._buffers if n.startswith(self._FACTORED_BUFFER_PREFIXES)]:
+            del self._buffers[name]
 
     # graphs per _materialize_rows chunk: bounds the transient index tensors
     # (~0.5 GB per head-config on ZINC-full) independent of dataset size
@@ -780,7 +819,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
     def _materialize_rows(self, total_rows: int) -> None:
         """
         Assemble the rows of every graph once (in graph chunks, graph-major)
-        and register them as int32 buffers. _assemble_rows then serves batches
+        and register them as compact integer buffers (see _row_dtypes), then
+        drop the factored structures they were built from. _assemble_rows then serves batches
         with a single range-gather per column instead of the per-config
         assembly — the old representation's per-step speed at a
         deliberately-bounded memory cost.
@@ -793,10 +833,11 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         stable-argsorting all rows by graph (~60 s on ZINC-full, spec 25).
         """
         num_graphs = len(self._num_nodes_list)
-        device = getattr(self, '_pv_0').device
-        rc_heads = torch.empty(total_rows, dtype=torch.int32, device=device)
-        rc_i = torch.empty(total_rows, dtype=torch.int32, device=device)
-        rc_j = torch.empty(total_rows, dtype=torch.int32, device=device)
+        device = self._x_slices.device
+        heads_dtype, node_dtype = self._row_dtypes()
+        rc_heads = torch.empty(total_rows, dtype=heads_dtype, device=device)
+        rc_i = torch.empty(total_rows, dtype=node_dtype, device=device)
+        rc_j = torch.empty(total_rows, dtype=node_dtype, device=device)
         rc_params = torch.empty(total_rows, dtype=torch.int32, device=device)
         rows_per_graph = torch.zeros(num_graphs, dtype=torch.int64, device=device)
         zero = torch.zeros(1, dtype=torch.int64, device=device)
@@ -830,7 +871,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     rank = torch.arange(sel.numel(), device=device) - (cnt.cumsum(dim=0) - cnt)[graph_of_row]
                     dest0 = block_start[graph_of_row] + rank
                     cnt_of_row = cnt[graph_of_row]
-                    lp = getattr(self, f'_lp_{slot}')[sel]
+                    lp = getattr(self, f'_lp_{slot}')[sel].to(node_dtype)
                     params0 = getattr(self, f'_pv_{head_id}')[sel]
                     if meta['num'] > 1:
                         nw_of_row = getattr(self, f'_nw_{head_id}')[getattr(self, f'_kid_{slot}')[sel].long()]
@@ -850,6 +891,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         self.register_buffer('_rc_params', rc_params, persistent=False)
         self.register_buffer('_rc_slices', slices, persistent=False)
         self._rows_materialized = True
+        self._drop_factored_structures()
 
     def _assemble_rows(self, positions):
         """
@@ -867,7 +909,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         if self._rows_pending is not None:
             # deferred to the GPU but never moved there: build in place
             self._materialize_pending_rows()
-        device = getattr(self, '_pv_0').device
+        device = self._x_slices.device
         positions_t = torch.as_tensor(positions, dtype=torch.int64, device=device)
         if self._rows_materialized:
             gather_idx, slot_of_row = range_gather(self._rc_slices, positions_t)
