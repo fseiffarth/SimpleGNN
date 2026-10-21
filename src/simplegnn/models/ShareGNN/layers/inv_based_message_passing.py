@@ -295,16 +295,40 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         self._slot_key_uniques = {}   # (head_id, str(property_key)) -> {'uniques', 'counts', 'max_label'}
         self._slot_keys = None        # built on demand by _ensure_slot_keys()
 
+        # per-phase wall-clock seconds of the index build (spec 25), filled by
+        # _build_distributions and reported by _report_init_timing
+        self._init_timing = {}
+        init_start = time.perf_counter()
         cache_config = self.para.run_config.config.get('cache') or {}
         if cache_config.get('layer_distributions', False):
             layer_cache_path = self._get_layer_cache_path()
             if not self._load_layer_distribution_cache(layer_cache_path):
                 self._build_distributions(graph_data)
                 self._save_layer_distribution_cache(layer_cache_path)
+            else:
+                self._init_timing['layer_cache_load'] = time.perf_counter() - init_start
         else:
             self._build_distributions(graph_data)
 
+        finalize_start = time.perf_counter()
         self._finalize_initialization()
+        self._init_timing['finalize'] = (time.perf_counter() - finalize_start
+                                         - self._init_timing.get('materialize_rows', 0.0))
+        self._init_timing['total'] = time.perf_counter() - init_start
+        self._report_init_timing()
+
+    def _report_init_timing(self) -> None:
+        """
+        Print the per-phase breakdown of the layer initialization when it took
+        at least a second (or always with `profile_layers: True`), so slow
+        index builds on large datasets show where the time goes (spec 25).
+        """
+        timing = self._init_timing
+        if timing.get('total', 0.0) < 1.0 and not self.profile_layers:
+            return
+        phases = ', '.join(f"{name} {seconds:.2f}s" for name, seconds in timing.items()
+                           if name != 'total' and seconds > 0)
+        print(f"Layer {self.layer_id} init timing: total {timing['total']:.2f}s ({phases})")
 
     def _build_distributions(self, graph_data: GraphDataset) -> None:
         """
@@ -336,6 +360,17 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         indices_cache_hits = 0       # fine-grained (indices, counts) cache stats
         indices_cache_misses = 0
 
+        timing = self._init_timing
+        for phase in ('consolidate', 'cache_load', 'cache_miss_compute', 'remap',
+                      'target_rows', 'scatter', 'bias'):
+            timing.setdefault(phase, 0.0)
+
+        def lap(phase, start):
+            """Add the time since `start` to `phase`; return the new start."""
+            now = time.perf_counter()
+            timing[phase] += now - start
+            return now
+
         # shared consolidated pair views, one per property description
         self._desc_slot = {}         # property description -> buffer slot
         self._cfg_meta = []          # per head-config: desc slot, head base, replicas
@@ -350,7 +385,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             # get all the valid property values for the head (e.g., the distances 0, 3, 6)
             prop = self.graph_data.properties[self.property_descriptions[head_id]]
             valid_property_values = prop.valid_values[(self.layer_id, head_id)]
+            t = time.perf_counter()
             cons = prop.consolidated(x_slices)
+            lap('consolidate', t)
             # apply the head and tail labels to the subdict
             source_labels = self.graph_data.node_labels[self.source_label_descriptions[head_id]].node_labels
             target_labels = self.graph_data.node_labels[self.target_label_descriptions[head_id]].node_labels
@@ -394,9 +431,11 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
 
                 cached_path = self.get_cache_path(head, property_key)
 
+                t = time.perf_counter()
                 try:
                     indices, counts, do_invalid_indices_exist, uniques, unique_max_label = self._load_cached_indices(cached_path, head, property_key)
                     indices_cache_hits += 1
+                    t = lap('cache_load', t)
 
                 except Exception as e:
                     indices_cache_misses += 1
@@ -417,6 +456,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     self._save_cached_indices(cached_path, head, property_key, indices, counts,
                                               do_invalid_indices_exist,
                                               uniques=uniques, max_label=unique_max_label)
+                    t = lap('cache_miss_compute', t)
 
                 # Threshold filtering (now do_invalid_indices_exist is always defined)
                 num_weights = len(counts)
@@ -448,13 +488,16 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     }
                 for n in range(self.n_heads_per_label[head_id]):
                     head_weight_num.append(num_weights)
+                t = lap('remap', t)
 
                 # write the (absolute, replica-0) parameter index of every pair
                 # of this property value into the head's pv vector — dropped
                 # rows keep the -1 sentinel
                 base_offset = self.weight_offset[-1]
                 target = cons.target_rows(property_key)
+                t = lap('target_rows', t)
                 pv[target] = torch.where(indices >= 0, indices + base_offset, indices).to(torch.int32)
+                t = lap('scatter', t)
                 nw_key[cons.key_index[property_key]] = num_weights
                 total_params = base_offset + num_weights * self.n_heads_per_label[head_id]
                 if total_params > torch.iinfo(torch.int32).max:
@@ -473,6 +516,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
             self.register_buffer(f'_pv_{head_id}', pv, persistent=False)
             self.register_buffer(f'_nw_{head_id}', nw_key, persistent=False)
 
+            t = time.perf_counter()
             if self.bias:
                 # The old enumeration stored one (head, node, feature, param)
                 # row per node x feature x head replica — a pure broadcast of
@@ -497,6 +541,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 for n in range(self.n_heads_per_label[head_id]):
                     self.bias_num.append(self.in_features * self.n_bias_labels[head_id])
                     self.b_head_offset += self.bias_num[-1]
+            lap('bias', t)
 
             self.weight_num += head_weight_num
         if indices_cache_hits or indices_cache_misses:
@@ -678,7 +723,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     f"(limit {max_bytes / 2**30:.1f} GiB / 40% of available RAM). "
                     f"Raise precompute_rows_max_bytes or use precompute_rows: 'auto'/False.")
             if fits:
+                materialize_start = time.perf_counter()
                 self._materialize_rows(total_rows)
+                self._init_timing['materialize_rows'] = time.perf_counter() - materialize_start
 
     def _materialize_rows(self, total_rows: int) -> None:
         """
