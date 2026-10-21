@@ -785,7 +785,9 @@ class ModelConfiguration:
             print('Using pretrained network')
             self.net = pretrained_network
         else:
+            start_time = time.time()
             self.net = GraphModel(graph_data=self.graph_data, para=self.para, seed=self.seed, device=self.device)
+            self.preprocessing_times['network_construction'] = time.time() - start_time
             # hash-keyed cross-dataset transfer (spec 18 B3): build the target
             # net normally, then remap a source checkpoint into it
             transfer_config = self.para.run_config.config.get('transfer', None)
@@ -795,10 +797,16 @@ class ModelConfiguration:
                 self.preprocessing_times['transfer_weight_loading'] = time.time() - start_time
 
         # set the network to device
+        start_time = time.time()
         self.net.to(self.device)
         # move the graph data to the same device as the network (features,
         # labels, attributes); slices/num_nodes bookkeeping stays on CPU
         self.graph_data.to(self.device)
+        if torch.device(self.device).type == 'cuda':
+            torch.cuda.synchronize()
+        self.preprocessing_times['network_to_device'] = time.time() - start_time
+        print(f"Network construction {self.preprocessing_times.get('network_construction', 0.0):.2f}s, "
+              f"move to {self.device} {self.preprocessing_times['network_to_device']:.2f}s")
         # new weights: drop any cached node-task evaluation outputs
         self._node_eval_outputs = None
         print(f'Network initialized with seed {self.seed}')
@@ -1866,6 +1874,8 @@ class ModelConfiguration:
             'dataset_loading': 'Dataset loading (shared by all runs)',
             'labels_and_properties_loading': 'Label and property loading',
             'model_initialization': 'Model initialization',
+            'network_construction': '↳ of which network construction',
+            'network_to_device': '↳ of which moving network and data to device',
             'transfer_weight_loading': '↳ of which transfer weight loading',
             'data': 'Dataset loading / generation',
             'splits': 'Split loading / generation',
