@@ -1,7 +1,7 @@
 # Hyperparameters for ZINC-full (network_ZINC_full.yml): copy of
 # parameters_ZINC_test_v2.yml with the LR floor lowered to 1e-6 (min_lr and the
 # matching early-stopping lr_threshold).
-device: cpu
+device: cuda
 # precompute_rows: materializes the (head, i, j, param_idx) row cache for the
 # whole dataset once at construction instead of reassembling it every batch
 # (~7.45 ms/batch measured on the conv layer, ~14% of batch time). Needs
@@ -40,7 +40,7 @@ torch_threads: auto
 # optimizer.step() on CPU with this model's parameter shapes, bit-identical
 # update rule.
 optimizer:
-  - { type: 'AdamW', weight_decay: 0.0, fused: true }
+  - { type: 'AdamW', weight_decay: 0.00000, fused: true }
 
 loss:
   - MAE
@@ -49,7 +49,7 @@ loss:
 # NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
 # scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
 # against overfitting: it deletes rare-rule parameters instead of shrinking them.
-rule_occurrence_threshold: 2
+rule_occurrence_threshold: 1
 
 # l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
 # invariant-layer Param_W. Drives uninformative rule weights to exactly 0 (learned

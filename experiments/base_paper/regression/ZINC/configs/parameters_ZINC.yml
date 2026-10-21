@@ -1,7 +1,7 @@
 # Hyperparameters for ZINC test v2 (network_ZINC_test_v2.yml): identical to
 # parameters_ZINC_test.yml plus the positional_encoding init for the
 # invariant-based encoder layer (specs/15).
-device: cpu
+device: cuda
 share_gnn_forward: { batched: True }
 mode: experiments
 precision: float
@@ -11,7 +11,7 @@ precision: float
 # against the invariant-layer overfitting. Listing several dicts grid-searches
 # the decay.
 optimizer:
-  - { type: 'AdamW', weight_decay: 0.00001 }
+  - { type: 'AdamW', weight_decay: 0.00001, fused: True }
 
 loss:
   - MAE
