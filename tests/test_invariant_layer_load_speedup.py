@@ -172,3 +172,61 @@ def test_materialized_rows_match_reference(share_gnn_setup_factory, monkeypatch,
         assert torch.equal(layer._rc_i, i_local)
         assert torch.equal(layer._rc_j, j_local)
         assert torch.equal(layer._rc_params, params)
+
+
+def _materialized_columns(layer):
+    return [getattr(layer, f'_rc_{name}') for name in ('slices', 'heads', 'i', 'j', 'params')]
+
+
+@pytest.mark.integration
+def test_deferred_rows_build_lazily_and_identically(share_gnn_setup_factory, monkeypatch):
+    """Rows deferred to the target device (CUDA runs) must, when the net never
+    reaches a GPU, be built on first use — identical to the eager build."""
+    from simplegnn.models.model import GraphModel
+    from simplegnn.models.ShareGNN.layers.inv_based_message_passing import (
+        InvariantBasedMessagePassingLayer,
+    )
+
+    graph_data, para = share_gnn_setup_factory("models_ShareGNN_pe.yml")
+    para.run_config.config['share_gnn_forward'] = {'precompute_rows': True}
+    try:
+        eager = _mp_layers(GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu'))
+        monkeypatch.setattr(InvariantBasedMessagePassingLayer, '_defer_rows_to_device', lambda self: True)
+        deferred_net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu')
+    finally:
+        para.run_config.config.pop('share_gnn_forward')
+    deferred = _mp_layers(deferred_net)
+    for layer in deferred:
+        assert layer._rows_pending is not None and not layer._rows_materialized
+    deferred_net.to('cpu')  # not a GPU: must stay deferred
+    assert all(layer._rows_pending is not None for layer in deferred)
+
+    for eager_layer, layer in zip(eager, deferred):
+        layer._assemble_rows([0])
+        assert layer._rows_pending is None and layer._rows_materialized
+        for built, expected in zip(_materialized_columns(layer), _materialized_columns(eager_layer)):
+            assert torch.equal(built, expected)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+def test_rows_materialize_on_gpu_identically(share_gnn_setup_factory):
+    """On a CUDA run the rows are built on the GPU during net.to(device) and
+    must equal the CPU build."""
+    from simplegnn.models.model import GraphModel
+
+    graph_data, para = share_gnn_setup_factory("models_ShareGNN_pe.yml")
+    para.run_config.config['share_gnn_forward'] = {'precompute_rows': True}
+    try:
+        cpu_layers = _mp_layers(GraphModel(graph_data=graph_data, para=para, seed=42, device='cpu'))
+        gpu_net = GraphModel(graph_data=graph_data, para=para, seed=42, device='cuda')
+    finally:
+        para.run_config.config.pop('share_gnn_forward')
+    gpu_layers = _mp_layers(gpu_net)
+    assert all(layer._rows_pending is not None for layer in gpu_layers)
+    gpu_net.to('cuda')
+    for cpu_layer, gpu_layer in zip(cpu_layers, gpu_layers):
+        assert gpu_layer._rows_pending is None and gpu_layer._rows_materialized
+        assert gpu_layer._rc_heads.is_cuda
+        for built, expected in zip(_materialized_columns(gpu_layer), _materialized_columns(cpu_layer)):
+            assert torch.equal(built.cpu(), expected)

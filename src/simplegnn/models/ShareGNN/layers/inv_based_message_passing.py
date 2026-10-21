@@ -721,6 +721,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         # stay factored. 'share_gnn_forward: {precompute_rows: True/False}'
         # forces either behavior.
         self._rows_materialized = False
+        self._rows_pending = None  # row count deferred to the GPU (see _apply)
         precompute = forward_config.get('precompute_rows', 'auto')
         if precompute not in ('auto', True, False):
             raise ValueError(f"share_gnn_forward.precompute_rows must be 'auto', True or False, got '{precompute}'")
@@ -738,10 +739,39 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                     f"{rows_bytes / 2**30:.1f} GiB of assembled rows "
                     f"(limit {max_bytes / 2**30:.1f} GiB / 40% of available RAM). "
                     f"Raise precompute_rows_max_bytes or use precompute_rows: 'auto'/False.")
-            if fits:
+            if fits and self._defer_rows_to_device():
+                # the rows are only ever used on the GPU: build them there
+                # right after net.to(device) (see _apply) — far faster than on
+                # the CPU and never holding them in host RAM (spec 25)
+                self._rows_pending = total_rows
+            elif fits:
                 materialize_start = time.perf_counter()
                 self._materialize_rows(total_rows)
                 self._init_timing['materialize_rows'] = time.perf_counter() - materialize_start
+
+    def _defer_rows_to_device(self) -> bool:
+        """True if materialized rows should be built on the target device."""
+        return torch.device(self.device).type == 'cuda'
+
+    def _apply(self, fn, *args, **kwargs):
+        """Build deferred materialized rows once the buffers reach the GPU."""
+        super()._apply(fn, *args, **kwargs)
+        # getattr: _apply may run before _finalize_initialization set the flag
+        if getattr(self, '_rows_pending', None) is not None and getattr(self, '_pv_0').device.type == 'cuda':
+            self._materialize_pending_rows()
+        return self
+
+    def _materialize_pending_rows(self) -> None:
+        """Materialize rows deferred by _finalize_initialization on the
+        device the buffers currently live on."""
+        total_rows, self._rows_pending = self._rows_pending, None
+        device = getattr(self, '_pv_0').device
+        start = time.perf_counter()
+        self._materialize_rows(total_rows)
+        if device.type == 'cuda':
+            torch.cuda.synchronize(device)
+        print(f"Layer {self.layer_id}: materialized {total_rows:,} rows "
+              f"({total_rows * 16 / 2**30:.1f} GiB) on {device} in {time.perf_counter() - start:.2f}s")
 
     # graphs per _materialize_rows chunk: bounds the transient index tensors
     # (~0.5 GB per head-config on ZINC-full) independent of dataset size
@@ -763,11 +793,13 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         stable-argsorting all rows by graph (~60 s on ZINC-full, spec 25).
         """
         num_graphs = len(self._num_nodes_list)
-        rc_heads = torch.empty(total_rows, dtype=torch.int32)
-        rc_i = torch.empty(total_rows, dtype=torch.int32)
-        rc_j = torch.empty(total_rows, dtype=torch.int32)
-        rc_params = torch.empty(total_rows, dtype=torch.int32)
-        rows_per_graph = torch.zeros(num_graphs, dtype=torch.int64)
+        device = getattr(self, '_pv_0').device
+        rc_heads = torch.empty(total_rows, dtype=torch.int32, device=device)
+        rc_i = torch.empty(total_rows, dtype=torch.int32, device=device)
+        rc_j = torch.empty(total_rows, dtype=torch.int32, device=device)
+        rc_params = torch.empty(total_rows, dtype=torch.int32, device=device)
+        rows_per_graph = torch.zeros(num_graphs, dtype=torch.int64, device=device)
+        zero = torch.zeros(1, dtype=torch.int64, device=device)
         write = 0
         chunk = self._MATERIALIZE_CHUNK_GRAPHS
         for g0 in range(0, num_graphs, chunk):
@@ -778,7 +810,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 pslices = getattr(self, f'_pslices_{meta["desc_slot"]}')
                 r0 = int(pslices[g0])
                 mask = getattr(self, f'_pv_{head_id}')[r0:int(pslices[g1])] >= 0
-                used = torch.cat([torch.zeros(1, dtype=torch.int64), mask.cumsum(dim=0)])
+                used = torch.cat([zero, mask.cumsum(dim=0)])
                 local_slices = pslices[g0:g1 + 1] - r0
                 masks.append((r0, mask))
                 counts.append(used[local_slices[1:]] - used[local_slices[:-1]])
@@ -794,8 +826,8 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                 if sel.numel() > 0:
                     # sel is graph-major, so a row's graph and its rank among
                     # the graph's used rows follow from the counts alone
-                    graph_of_row = torch.repeat_interleave(torch.arange(g1 - g0), cnt)
-                    rank = torch.arange(sel.numel()) - (cnt.cumsum(dim=0) - cnt)[graph_of_row]
+                    graph_of_row = torch.repeat_interleave(torch.arange(g1 - g0, device=device), cnt)
+                    rank = torch.arange(sel.numel(), device=device) - (cnt.cumsum(dim=0) - cnt)[graph_of_row]
                     dest0 = block_start[graph_of_row] + rank
                     cnt_of_row = cnt[graph_of_row]
                     lp = getattr(self, f'_lp_{slot}')[sel]
@@ -810,7 +842,7 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
                         rc_params[dest] = params0 if n == 0 else (params0 + n * nw_of_row).to(torch.int32)
                 block_start = block_start + cnt * meta['num']
             write += int(rows_chunk.sum())
-        slices = torch.cat([torch.zeros(1, dtype=torch.int64), rows_per_graph.cumsum(dim=0)])
+        slices = torch.cat([zero, rows_per_graph.cumsum(dim=0)])
         # Non-persistent buffers: moved by net.to(device), kept out of state_dict
         self.register_buffer('_rc_heads', rc_heads, persistent=False)
         self.register_buffer('_rc_i', rc_i, persistent=False)
@@ -832,6 +864,9 @@ class InvariantBasedMessagePassingLayer(InvariantBasedLayer):
         VALUES are still gathered from Param_W by the callers on every forward
         — that gather is the differentiable link back to the parameters.
         """
+        if self._rows_pending is not None:
+            # deferred to the GPU but never moved there: build in place
+            self._materialize_pending_rows()
         device = getattr(self, '_pv_0').device
         positions_t = torch.as_tensor(positions, dtype=torch.int64, device=device)
         if self._rows_materialized:

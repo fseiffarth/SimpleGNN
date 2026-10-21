@@ -115,3 +115,29 @@ rebuild the layer. Loading the opt-in `layer_distributions` cache with
   `_pv_*`, `_nw_*`, `weight_num`, `weight_offset`, slot keys (MUTAG + small
   ZINC subset); legacy int64 cache files still load.
 - `pytest tests -q`; ZINC-full startup with step-0 timings before/after.
+
+### Steps 2–4 — measured, not implemented
+
+After step 1 the remaining layer-1 build is ~9 s; step 2 would save < 0.5 s
+(disk only), step 3 ~3–4 s at the cost of a second cache family. Step 4
+(opt-in `layer_distributions` cache) measured: +5.2 s and a 9.5 GB file on the
+first run, 4.1 s saved per later build (~7 s net per ZINC-full experiment of
+4 builds); mmap does not help since `net.to(device)` reads the full file.
+All three left out.
+
+### Step 5 — materialized rows (`precompute_rows: true`)
+
+First CUDA run after step 1 (RTX 6000 + Threadripper):
+`materialize_rows 62.81s` of a 77 s network construction, `move to cuda
+4.45s`. The old `_materialize_rows` concatenated int64 row parts per graph
+chunk and stable-argsorted all 2.19B rows by graph.
+
+- Direct placement: the layout is fully determined by the per-(head-config,
+  graph) row counts, so every row's destination is computed and written once.
+  Bit-identical; 57.5 s -> 32.4 s on CPU (ZINC-full), peak RSS 56.3 -> 53.2 GB.
+- Build on the GPU: on CUDA runs `_finalize_initialization` only records the
+  row count; the layer's `_apply` override builds the rows right after
+  `net.to(device)` on the device (lazy fallback in `_assemble_rows` if the net
+  never reaches a GPU). Avoids the 32.6 GiB host buffer and most of the
+  host-to-device copy. Same fits check as before; GPU memory in steady state
+  is unchanged (the rows lived on the GPU before, too).
