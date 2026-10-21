@@ -49,7 +49,7 @@ loss:
 # NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
 # scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
 # against overfitting: it deletes rare-rule parameters instead of shrinking them.
-rule_occurrence_threshold: 1
+rule_occurrence_threshold: 5
 
 # l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
 # invariant-layer Param_W. Drives uninformative rule weights to exactly 0 (learned
@@ -80,7 +80,7 @@ weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mea
 batch_size:
   - 128
 learning_rate:
-  - 0.0001
+  - 0.001
 epochs:
   - 500
 
@@ -100,7 +100,7 @@ csv_flush_interval: 1
 # for comparability against literature baselines. Previously tuned to
 # factor=0.8/patience=5 to spread halvings across a 500-epoch run instead of
 # front-loading them (see git history); CosineAnnealingLR was also tried here.
-scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.0000001 }
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 10, min_lr: 0.000001 }
 
 training_data_sampling: { type: 'default' }
 
