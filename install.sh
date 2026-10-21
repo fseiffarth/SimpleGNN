@@ -41,9 +41,12 @@ TORCH_INDEX="https://download.pytorch.org/whl/cpu"
 TORCH_LABEL="CPU-only"
 
 if command -v nvidia-smi &> /dev/null; then
-    echo "NVIDIA GPU detected. Selecting the CUDA 12.6 build of PyTorch..."
-    TORCH_INDEX="https://download.pytorch.org/whl/cu126"
-    TORCH_LABEL="CUDA 12.6"
+    # CUDA 12.8 wheels cover Turing through Blackwell (sm_75 - sm_120), so one venv works on
+    # mixed machines. Override with CUDA_TAG=cu126 (or another tag) if needed.
+    CUDA_TAG="${CUDA_TAG:-cu128}"
+    echo "NVIDIA GPU detected. Selecting the CUDA build of PyTorch ($CUDA_TAG)..."
+    TORCH_INDEX="https://download.pytorch.org/whl/$CUDA_TAG"
+    TORCH_LABEL="$CUDA_TAG"
 elif lspci 2>/dev/null | grep -iE "VGA|3D|Display" | grep -qi amd; then
     echo "An AMD GPU was detected:"
     lspci | grep -iE "VGA|3D|Display" | grep -i amd | sed 's/^/  /'

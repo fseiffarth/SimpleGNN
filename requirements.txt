@@ -1,5 +1,10 @@
 # Pytorch geometric
 torch-geometric~=2.7.0
+# Numerical / graph / ML libraries used directly
+numpy
+networkx
+scikit-learn
+scipy
 # Joblib for parallelization
 joblib~=1.5.3
 # PyYAML
