@@ -1,5 +1,6 @@
 # generate preprocessing by scanning the config file
 import json
+import time
 from pathlib import Path
 
 from simplegnn.datasets.graph_dataset import GraphDataset
@@ -258,7 +259,7 @@ def property_to_properties(experiment_configuration, property_strings: json, gra
 
 def preprocessing_from_config(experiment_configuration, graph_data: GraphDataset,
                               generation_times_labels_path: Path = None,
-                              generation_times_properties_path: Path = None) -> None:
+                              generation_times_properties_path: Path = None) -> dict:
     # get the layers from the config file
     run_configs = get_run_configs(experiment_configuration)
     # preprocessed layers
@@ -282,11 +283,18 @@ def preprocessing_from_config(experiment_configuration, graph_data: GraphDataset
                     proprocessed_label_dicts_first.add(json_layer)
     # generate all necessary labels and properties, first need to create the nx graphs to run the algorithms on
     # graph_data.create_nx_graphs(directed=False)
+    # wall-clock seconds per step (cached files count with their skip time)
+    times = {}
+    start_time = time.time()
     for layer in proprocessed_label_dicts_first:
         layer_to_labels(experiment_configuration=experiment_configuration, layer_strings=layer, graph_data=graph_data, generation_times_labels_path=generation_times_labels_path)
     for layer in preprocessed_label_dicts:
         layer_to_labels(experiment_configuration=experiment_configuration, layer_strings=layer, graph_data=graph_data, generation_times_labels_path=generation_times_labels_path)
+    times['labels'] = time.time() - start_time
+    start_time = time.time()
     for preprocessed_property in preprocessed_properties:
         property_to_properties(experiment_configuration=experiment_configuration, property_strings=preprocessed_property, graph_data=graph_data, generation_times_properties_path=generation_times_properties_path)
+    times['properties'] = time.time() - start_time
+    return times
 
 

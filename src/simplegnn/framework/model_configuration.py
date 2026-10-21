@@ -47,9 +47,10 @@ import datetime
 import json
 import math
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -383,7 +384,7 @@ class ModelConfiguration:
     """
     def __init__(self, run_id: int, k_val: int, graph_data: GraphDataset,
                  model_data: Tuple[np.ndarray, np.ndarray, np.ndarray],
-                 seed: int, para: Parameters):
+                 seed: int, para: Parameters, preprocessing_times: Optional[dict] = None):
         """
         Initialize ModelConfiguration with data splits and parameters.
 
@@ -401,6 +402,11 @@ class ModelConfiguration:
             Random seed for reproducibility.
         para : Parameters
             Configuration with hyperparameters and model architecture.
+        preprocessing_times : dict or None, optional
+            Wall-clock seconds of the steps before training (e.g. dataset and
+            label/property loading), keyed by step name. The model
+            initialization time is added in :meth:`train_configuration` and all
+            entries are reported in the ``*_Network.md`` file.
 
         Notes
         -----
@@ -417,6 +423,7 @@ class ModelConfiguration:
         self.training_data, self.validate_data, self.test_data = model_data
         self.seed = seed
         self.para = para
+        self.preprocessing_times = dict(preprocessing_times or {})
         self.results_path = para.run_config.config['paths']['results']
         self.criterion = None
         self.optimizer = None
@@ -566,7 +573,9 @@ class ModelConfiguration:
         # Report the execution mode (device + batched or per-graph forward)
         print(f"Execution mode: {self._execution_mode_description()} (device: {self.device})")
         # Initialize the graph neural network
+        start_time = time.time()
         self.initialize_model(pretrained_network=pretrained_network)
+        self.preprocessing_times['model_initialization'] = time.time() - start_time
         # start the timer
         timer = TimeClass()
         # Define the loss function
@@ -781,7 +790,9 @@ class ModelConfiguration:
             # net normally, then remap a source checkpoint into it
             transfer_config = self.para.run_config.config.get('transfer', None)
             if transfer_config:
+                start_time = time.time()
                 self.transfer_report = self._apply_transfer_from_config(transfer_config)
+                self.preprocessing_times['transfer_weight_loading'] = time.time() - start_time
 
         # set the network to device
         self.net.to(self.device)
@@ -1638,7 +1649,18 @@ class ModelConfiguration:
             'layers': [],
             'named_parameters': [],
             'total_trainable_parameters': 0,
+            'preprocessing_times': dict(self.preprocessing_times),
+            'preprocessing_generation_times': None,
         }
+        # label/property generation runs in FrameworkMain.preprocessing (possibly in
+        # another process), which leaves its timings next to the results
+        generation_times_path = self.results_path.joinpath(f'{self.para.db}/preprocessing_times.json')
+        if generation_times_path.exists():
+            try:
+                with open(generation_times_path) as f:
+                    info['preprocessing_generation_times'] = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                pass
 
         # Extract the merged experiment configuration into a main-config and a
         # parameter-config view for the report. ``run_config.config`` is the full
@@ -1836,6 +1858,44 @@ class ModelConfiguration:
             "</details>",
             "",
         ]
+
+        def seconds(value):
+            return f"{value:.2f}" if isinstance(value, (int, float)) else "–"
+
+        step_names = {
+            'dataset_loading': 'Dataset loading (shared by all runs)',
+            'labels_and_properties_loading': 'Label and property loading',
+            'model_initialization': 'Model initialization',
+            'transfer_weight_loading': '↳ of which transfer weight loading',
+            'data': 'Dataset loading / generation',
+            'splits': 'Split loading / generation',
+            'labels': 'Label generation',
+            'properties': 'Property generation',
+        }
+        run_times = info.get('preprocessing_times') or {}
+        generation = info.get('preprocessing_generation_times') or {}
+        if run_times or generation:
+            lines += [
+                "## Preprocessing time",
+                "",
+                "| Step | Time (s) |",
+                "|---|---:|",
+            ]
+            for key, value in run_times.items():
+                lines.append(f"| {step_names.get(key, key)} | {seconds(value)} |")
+            lines.append("")
+            generation_steps = generation.get('times') or {}
+            if generation_steps:
+                lines += [
+                    f"*`FrameworkMain.preprocessing()` (label/property generation, cached "
+                    f"files are skipped), last run {generation.get('timestamp', '–')}:*",
+                    "",
+                    "| Step | Time (s) |",
+                    "|---|---:|",
+                ]
+                for key, value in generation_steps.items():
+                    lines.append(f"| {step_names.get(key, key)} | {seconds(value)} |")
+                lines.append("")
 
         def fmt_cfg(value):
             if isinstance(value, (dict, list)):

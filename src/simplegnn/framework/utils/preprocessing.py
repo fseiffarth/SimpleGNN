@@ -1,5 +1,7 @@
+import datetime
 import json
 import os
+import time
 from pathlib import Path
 
 import torch
@@ -98,6 +100,9 @@ class Preprocessing:
 
             # create the folders and files for the results and preprocessing data
             self.create_folders()
+            # wall-clock seconds per step, reported in the *_Network.md files
+            times = {}
+            start_time = time.time()
             # generate the data only if it does not exist (i.e. the processed folder is empty)
             if not Path(self.experiment_configuration['paths']['data']).joinpath(f'{self.db_name}').joinpath('processed').joinpath(f'data.pt').is_file():
                 dataset = self.db_name
@@ -107,12 +112,26 @@ class Preprocessing:
             else:
                 # load the graph data
                 self.load_data()
+            times['data'] = time.time() - start_time
             # generate the split files
+            start_time = time.time()
             self.load_configuration_splits()
+            times['splits'] = time.time() - start_time
 
             # do model-dependent preprocessing
             if configuration.get('with_invariant_layers', False):
-                preprocessing_from_config(configuration, self.graph_data, self.generation_times_labels_path, self.generation_times_properties_path)
+                times.update(preprocessing_from_config(configuration, self.graph_data, self.generation_times_labels_path, self.generation_times_properties_path))
+            self.save_preprocessing_times(times)
+
+    def save_preprocessing_times(self, times: dict):
+        """
+        Write the step timings of this preprocessing run to
+        ``<results>/<dataset_name>/preprocessing_times.json`` (overwrite mode), from
+        where they are picked up by the ``*_Network.md`` reports.
+        """
+        payload = {'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'times': times}
+        with open(self.experiment_configuration['paths']['results'].joinpath(self.db_name).joinpath('preprocessing_times.json'), 'w') as f:
+            json.dump(payload, f, indent=4)
 
 
     def create_folders(self):

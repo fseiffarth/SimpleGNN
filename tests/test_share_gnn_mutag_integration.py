@@ -76,6 +76,14 @@ def test_share_gnn_trains_and_evaluates_on_mutag(tmp_path, mutag_main_config):
     models_dir = tmp_path / "results" / "MUTAG" / "Models"
     assert any(models_dir.glob("*.pt")), "expected at least one saved model checkpoint"
 
+    assert (tmp_path / "results" / "MUTAG" / "preprocessing_times.json").is_file()
+    network_reports = list((tmp_path / "results" / "MUTAG" / "Results").glob("*_Network.md"))
+    assert network_reports, "expected a *_Network.md report"
+    report = network_reports[0].read_text()
+    assert "## Preprocessing time" in report
+    assert "| Model initialization |" in report
+    assert "| Label generation |" in report
+
 
 @pytest.mark.integration
 def test_invariant_layer_weights_are_updated_by_training(mutag_main_config):

@@ -732,11 +732,14 @@ class FrameworkMain:
         if not final_path.joinpath(configuration_file_name).exists():
             print(f"Run the model for dataset {run_config.config['name']} with config_id {config_id}, run_id {run_id} and validation_id {validation_id}")
             para = Parameters()
+            start_time = time.time()
             load_preprocessed_data_and_parameters(config_id=config_id,
                                                   run_id=run_id,
                                                   validation_id=validation_id,
                                                   validation_folds=run_config.config.get('validation_folds', 10),
                                                   graph_data=graph_data, run_config=run_config, para=para)
+            preprocessing_times = {'dataset_loading': getattr(graph_data, 'load_time', None),
+                                   'labels_and_properties_loading': time.time() - start_time}
 
             # split the data into training, validation and test data
             seed = 42 + validation_id + para.n_val_runs * run_id
@@ -747,7 +750,8 @@ class FrameworkMain:
             validation_data = split_data['validation'][validation_id]
 
             # create the model configuration object
-            graph_model = ModelConfiguration(run_id, validation_id, graph_data, (np.array(train_data), np.array(validation_data), np.array(test_data)), seed, para)
+            graph_model = ModelConfiguration(run_id, validation_id, graph_data, (np.array(train_data), np.array(validation_data), np.array(test_data)), seed, para,
+                                             preprocessing_times=preprocessing_times)
 
             # run the model, if a pretrained network is given, use it
             if isinstance(self.pretrained_network, tuple):
@@ -1143,6 +1147,7 @@ def preprocess_graph_data(experiment_configuration: dict):
     --------
     datasets.graph_dataset.get_graph_data : Core dataset loading function
     """
+    start_time = time.time()
     graph_data = get_graph_data(db_name=experiment_configuration['name'], data_path=experiment_configuration['paths']['data'],
                                 task=experiment_configuration.get('task', 'graph_classification'),
                                 input_features=experiment_configuration.get('input_features', None),
@@ -1152,4 +1157,6 @@ def preprocess_graph_data(experiment_configuration: dict):
                                 experiment_config=experiment_configuration)
     # move the dataset to the device
     graph_data.to(experiment_configuration.get('device', 'cpu'))
+    # loading time (seconds), reported in the *_Network.md file of each configuration
+    graph_data.load_time = time.time() - start_time
     return graph_data
