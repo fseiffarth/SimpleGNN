@@ -30,29 +30,32 @@ def layer_to_labels(experiment_configuration, layer_strings: json, graph_data: G
     # if label_type is a list, then the layer is a combination of different label types
     if type(layer['label_type']) == list and len(layer['label_type']) > 1:
         # recursively call the function for each label type
-        labels = []
-        label_names = []
+        component_paths = []
         for label_type in layer['label_type']:
             new_layer_string = layer.copy()
             # remove the label_type key and replace it with the new label_type
             new_layer_string['label_type'] = label_type
-            l_path = layer_to_labels(experiment_configuration, json.dumps(new_layer_string), graph_data,
-                                     generation_times_labels_path)
-            # get all after last /
-            label_name = '_'.join(l_path.stem.split('_')[1:-1])
-            label_names.append(label_name)
-            labels.append(load_labels(l_path))
-        # combine the labels
-        combined_labels = combine_node_labels(labels)
-        l = f'{combined_labels.label_name}'
+            component_paths.append(layer_to_labels(experiment_configuration, json.dumps(new_layer_string), graph_data,
+                                                   generation_times_labels_path))
+        # the combined label name is the join of the component label names, i.e. the
+        # component file stems without the '<dataset>_labels_' prefix, so the target
+        # path is known without loading the (potentially large) component files
+        prefix = f"{graph_data.name}_labels_"
+        l = '_'.join(p.stem.removeprefix(prefix) for p in component_paths)
         max_labels = layer.get('max_labels', None)
         if max_labels is not None:
             l += f'_{max_labels}'
         file_path = label_path.joinpath(f"{graph_data.name}_labels_{l}.pt")
-        save_labels_to_file(file_path, combined_labels.dataset_name, l, combined_labels.node_labels,
-                            max_labels=layer.get('max_labels', None),
-                            label_hashes=combined_labels.label_hashes,
-                            hash_meta=combined_labels.hash_meta)
+        # reuse the combined file unless a component was (re)generated after it
+        if file_path.exists() and all(file_path.stat().st_mtime >= p.stat().st_mtime for p in component_paths):
+            print(f"File {file_path} already exists. Skipping.")
+        else:
+            print(f"Saving {l} labels for {graph_data.name} to {file_path}")
+            combined_labels = combine_node_labels([load_labels(p) for p in component_paths])
+            save_labels_to_file(file_path, combined_labels.dataset_name, l, combined_labels.node_labels,
+                                max_labels=max_labels,
+                                label_hashes=combined_labels.label_hashes,
+                                hash_meta=combined_labels.hash_meta)
     else:
         if isinstance(layer['label_type'], list):
             layer['label_type'] = layer['label_type'][0]
