@@ -1,0 +1,22 @@
+# molhiv screening round 3: seven architectures x five seeds, grid search only.
+# See README.md in this folder. Run with screen.py, not main_ogb.py.
+datasets:
+  - {
+      name: "ogbg-molhiv",
+      source: "OGB_GraphProp",
+      task: "graph_classification",
+      validation_folds: 1,
+      # five seeds: a 3-seed difference of 0.007 (round 1, r1) is ~1 standard error
+      num_runs: 5,
+      # four parallel GPU workers fit at batch 64 (ladder 2); batch 256 did not
+      num_workers: 4,
+      paths: {
+        data: "data/OGB/",
+        labels: "data/OGB/labels/",
+        properties: "data/OGB/properties/",
+        results: "results/ogb_molhiv_screen/round3/",
+        models: "experiments/ogb/molhiv_screen/models_round3.yml",
+        hyperparameters: "experiments/ogb/molhiv_screen/parameters_screen.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ogbg-molhiv_splits.json",
+      }
+  }
