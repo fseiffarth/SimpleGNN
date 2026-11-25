@@ -1,0 +1,65 @@
+# molhiv ladder 2, t5_pool_only. See README.md in this folder.
+# ../molhiv_ladder/models_trimmed.yml without the invariant convolution and
+# its post-convolution linear/layer_norm. The input linear widens 16 -> 64 so
+# the pooled node features have the same width as in t0. The pooling adds a
+# WL-with-edges depth-1 head (~31k labels on molhiv, radius-1 environments
+# with bond types, close to ECFP2) to the primary, depth-0 and ring heads.
+# Pooling labels are not filtered by rule_occurrence_threshold; the L1 on the
+# aggregation layer is the only sparsity pressure on that table.
+models:
+  - - { layer_type: invariant_based_positional_encoding,
+        concatenate_input: true,
+        heads: [
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 2, max_walk_length: 2 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 3, max_walk_length: 3 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 4, max_walk_length: 4 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 5, max_walk_length: 5 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 6, max_walk_length: 6 } },
+        ],
+    }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: layer_norm }
+    - { layer_type: invariant_based_aggregation,
+        bias: True,
+        activation: torch.nn.Identity(),
+        heads: [
+          {
+            num: 4,
+            bias: True,
+            labels: { label_type: primary },
+          },
+          {
+            num: 4,
+            bias: True,
+            labels: { label_type: wl_labeled_edges, depth: 0 },
+          },
+          {
+            num: 4,
+            bias: True,
+            labels: { label_type: wl_labeled_edges, depth: 1 },
+          },
+          {
+            num: 4,
+            bias: True,
+            labels: { label_type: [ induced_cycles, primary ], min_cycle_length: 5, max_cycle_length: 6 },
+          },
+        ],
+    }
+    - { layer_type: reshape }
+    - { layer_type: layer_norm }
+    - { layer_type: linear,
+        out_features: 64,
+        bias: True,
+        activation: torch.nn.LeakyReLU(),
+    }
+    - { layer_type: dropout, p: 0.5 }
+    - { layer_type: linear,
+        out_features: 2,
+        bias: True,
+        activation: torch.nn.Identity(),
+    }
+    - { layer_type: reshape }

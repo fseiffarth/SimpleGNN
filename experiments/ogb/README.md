@@ -42,6 +42,13 @@ check. It is left in place untouched; use the `main_<dataset>.yml` configs.
 NUM_THREADS=4 ./experiments/ogb/run_ogb.sh molhiv
 ```
 
+`./experiments/ogb/run_ogb.sh molhiv-ladder` runs the five-stage molhiv
+capacity ladder in sequence (10 seeds per stage, seed ensembles, summary in
+`results/ogb_molhiv_ladder/ladder_summary.csv`); see
+[`molhiv_ladder/README.md`](molhiv_ladder/README.md). Its follow-up,
+`molhiv-ladder2`, tests single-change arms against a common reference; see
+[`molhiv_ladder2/README.md`](molhiv_ladder2/README.md).
+
 The script generates any missing split file, then runs the standard pipeline
 (grid search → model selection → rerun best → test evaluation). To run without
 the wrapper:

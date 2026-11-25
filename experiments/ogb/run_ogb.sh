@@ -8,6 +8,8 @@
 #   ./experiments/ogb/run_ogb.sh --all          # runs all six, in size order
 #   NUM_THREADS=4 ./experiments/ogb/run_ogb.sh molhiv
 #   ./experiments/ogb/run_ogb.sh molhiv-t50     # a sweep arm (see README)
+#   ./experiments/ogb/run_ogb.sh molhiv-ladder  # all ladder stages in sequence
+#   FROM_STAGE=2 ./experiments/ogb/run_ogb.sh molhiv-ladder  # resume at stage 2
 set -e
 
 # Get script directory
@@ -74,5 +76,5 @@ done
 # Run the experiments
 for ds in "${DATASETS[@]}"; do
     echo "=== Running ogbg-${ds} ==="
-    python experiments/ogb/main_ogb.py --dataset "$ds" --num_threads "$NUM_THREADS"
+    python experiments/ogb/main_ogb.py --dataset "$ds" --num_threads "$NUM_THREADS" ${FROM_STAGE:+--from_stage "$FROM_STAGE"}
 done

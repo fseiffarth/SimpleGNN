@@ -1,0 +1,66 @@
+# molhiv ladder, stage 1 (threshold). See README.md in this folder.
+# Stage 0 plus one change: rule_occurrence_threshold 2 -> 25. Rules that fire
+# in fewer than 25 node pairs over the dataset get no weight of their own.
+device: cuda
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: double
+
+optimizer:
+  - AdamW
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Two output logits + CrossEntropyLoss, so the AUC is taken over the softmax
+# positive-class probability (binary_roc_auc in framework/model_configuration.py).
+loss:
+  - CrossEntropyLoss
+
+weighted_loss: False
+
+# how often a rule has to occur to get its own weight; read directly in the
+# layer (not in the grid loop) -> keep it a scalar
+rule_occurrence_threshold: 25
+
+# Proximal L1 after each optimizer update selects sparse rule weights in the
+# convolution, pooling and closed-walk encoder tables.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
+
+# weight initialization for the invariant-based layers
+weight_initialization: { convolution: {  type: 'lower_upper', value: 0.1 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: 0.1 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.0001
+
+# Keep AdamW as a string above so this weight-decay value is honored.
+weight_decay:
+  - 0.01
+
+epochs:
+  - 200
+
+early_stopping:
+  enabled:
+    True
+  patience:
+    30
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.9, patience: 10, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default'}
+
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# Both must be roc_auc to select on AUC (see experiments/ogb/README.md).
+evaluation_metric: roc_auc
+evaluation_type: roc_auc
+
+best_model: True
+save_best_predictions: True

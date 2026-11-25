@@ -1,0 +1,24 @@
+# molhiv ladder 2, t5_pool_only (pooling only, no convolution). See README.md in this folder.
+# Every stage has its own results root: configuration ids restart at 0 per run,
+# so a shared root would overwrite the previous stage.
+datasets:
+  - {
+      name: "ogbg-molhiv",
+      source: "OGB_GraphProp",
+      task: "graph_classification",
+      # the split file provides a single official fold, not k-fold CV
+      validation_folds: 1,
+      # ten seeds for the best configuration (OGB reporting protocol)
+      evaluation_run_number: 10,
+      # each process holds its own rule tables for 41k graphs
+      num_workers: 4,
+      paths: {
+        data: "data/OGB/",
+        labels: "data/OGB/labels/",
+        properties: "data/OGB/properties/",
+        results: "results/ogb_molhiv_ladder2/t5_pool_only/",
+        models: "experiments/ogb/molhiv_ladder2/models_pool_only.yml",
+        hyperparameters: "experiments/ogb/molhiv_ladder2/parameters_t0_reference.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ogbg-molhiv_splits.json",
+      }
+  }

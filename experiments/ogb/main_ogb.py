@@ -7,10 +7,14 @@
 from pathlib import Path
 
 import click
+import pandas as pd
 
 from simplegnn.framework.core import FrameworkMain
+from simplegnn.framework.utils.seed_ensemble import write_seed_ensemble
 
 CONFIG_DIR = Path('experiments/ogb/configs')
+LADDER_DIR = Path('experiments/ogb/molhiv_ladder')
+LADDER2_DIR = Path('experiments/ogb/molhiv_ladder2')
 
 # short name -> main config, mirroring simplegnn.utils.ogb_splits.SUPPORTED_DATASETS
 DATASETS = {
@@ -36,24 +40,109 @@ DATASETS = {
     'mollipo-optimal': CONFIG_DIR / 'main_mollipo_optimal.yml',
 }
 
+# sequential experiment ladders: (stage name, main config) in run order.
+# molhiv-ladder stages are cumulative (molhiv_ladder/README.md); molhiv-ladder2
+# stages are single-change arms off its t0 reference (molhiv_ladder2/README.md)
+LADDERS = {
+    'molhiv-ladder': [
+        ('s0_protocol', LADDER_DIR / 'main_s0_protocol.yml'),
+        ('s1_threshold', LADDER_DIR / 'main_s1_threshold.yml'),
+        ('s2_trimmed', LADDER_DIR / 'main_s2_trimmed.yml'),
+        ('s3_l1', LADDER_DIR / 'main_s3_l1.yml'),
+        ('s4_auc_loss', LADDER_DIR / 'main_s4_auc_loss.yml'),
+    ],
+    'molhiv-ladder2': [
+        ('t0_reference', LADDER2_DIR / 'main_t0_reference.yml'),
+        ('t1_weight_decay', LADDER2_DIR / 'main_t1_weight_decay.yml'),
+        ('t2_l1', LADDER2_DIR / 'main_t2_l1.yml'),
+        ('t3_node_dropout', LADDER2_DIR / 'main_t3_node_dropout.yml'),
+        ('t4_batch256', LADDER2_DIR / 'main_t4_batch256.yml'),
+        ('t5_pool_only', LADDER2_DIR / 'main_t5_pool_only.yml'),
+    ],
+}
+LADDER_SUMMARY = {'molhiv-ladder': Path('results/ogb_molhiv_ladder/ladder_summary.csv'),
+                  'molhiv-ladder2': Path('results/ogb_molhiv_ladder2/ladder_summary.csv')}
 
-def main_ogb(dataset='molhiv', num_threads=-1):
-    """Run the full grid-search -> select -> rerun-best -> test pipeline."""
-    config_path = DATASETS[dataset]
+
+def run_pipeline(config_path, num_threads=-1):
+    """
+    Run the full grid-search -> select -> rerun-best -> test pipeline.
+
+    The seed reruns of the best configuration run one at a time: in parallel,
+    each process materializes its own ShareGNN rows on the GPU, and four
+    molhiv workers at batch size 256 needed more than the 95 GiB of the card
+    (out of memory in ladder 2, stage t4_batch256).
+    """
     experiment = FrameworkMain(config_path)
     experiment.preprocessing(num_threads=1)
     experiment.run_configurations(num_threads=num_threads)
     experiment.evaluate_results()
-    experiment.run_best_configuration(num_threads=num_threads)
+    experiment.run_best_configuration(num_threads=1)
     experiment.evaluate_results(evaluate_best_model=True)
+    return experiment
+
+
+def stage_summary(stage, experiment):
+    """One ladder-summary row: seed mean/std AUCs and the seed-ensemble AUCs."""
+    row = {'Stage': stage}
+    for db_name, configurations in experiment.network_configurations.items():
+        results_dir = Path(configurations[0]['paths']['results'])
+        summary = pd.read_csv(results_dir / db_name / 'summary_best_mean.csv').iloc[0]
+        for split in ('Validation', 'Test'):
+            row[f'{split} AUC Mean'] = summary[f'{split} AUC Mean']
+            row[f'{split} AUC Std'] = summary[f'{split} AUC Std']
+        ensemble = write_seed_ensemble(results_dir, db_name)
+        row['Runs'] = ensemble['num_runs']
+        row['Ensemble Validation AUC'] = ensemble['validation_auc_ensemble_mean']
+        row['Ensemble Test AUC'] = ensemble['test_auc_ensemble_mean']
+        row['Rank Ensemble Test AUC'] = ensemble['test_auc_ensemble_rank']
+    return row
+
+
+def run_ladder(ladder, num_threads=-1, from_stage=0):
+    """
+    Run the stages of a ladder one after another, starting at ``from_stage``.
+
+    The summary CSV is rewritten after every stage, so a partial ladder still
+    has one. Rows of stages before ``from_stage`` are kept from the existing
+    summary; a rerun stage replaces its row.
+    """
+    stages = LADDERS[ladder]
+    summary_path = LADDER_SUMMARY[ladder]
+    rows = {}
+    if from_stage > 0 and summary_path.exists():
+        previous = pd.read_csv(summary_path)
+        rows = {row['Stage']: row for row in previous.to_dict('records')}
+    for index, (stage, config_path) in enumerate(stages):
+        if index < from_stage:
+            continue
+        print(f"=== {ladder}: stage {index} ({stage}), {config_path} ===")
+        experiment = run_pipeline(config_path, num_threads=num_threads)
+        rows[stage] = stage_summary(stage, experiment)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        ordered = [rows[name] for name, _ in stages if name in rows]
+        pd.DataFrame(ordered).to_csv(summary_path, index=False)
+        print(pd.DataFrame(ordered).to_string(index=False))
+
+
+def main_ogb(dataset='molhiv', num_threads=-1, from_stage=0):
+    """Run one dataset config, or every stage of a ladder in sequence."""
+    if dataset in LADDERS:
+        run_ladder(dataset, num_threads=num_threads, from_stage=from_stage)
+        return
+    if from_stage:
+        raise click.UsageError('--from_stage only applies to ladders: ' + ', '.join(sorted(LADDERS)))
+    run_pipeline(DATASETS[dataset], num_threads=num_threads)
 
 
 @click.command()
-@click.option('--dataset', default='molhiv', type=click.Choice(sorted(DATASETS)),
-              help='Which ogbg-mol* dataset to run (default: molhiv)')
+@click.option('--dataset', default='molhiv', type=click.Choice(sorted(DATASETS) + sorted(LADDERS)),
+              help='Which ogbg-mol* dataset or ladder to run (default: molhiv)')
 @click.option('--num_threads', default=-1, help='Number of threads to use')
-def main(dataset, num_threads):
-    main_ogb(dataset=dataset, num_threads=num_threads)
+@click.option('--from_stage', default=0, type=click.IntRange(min=0),
+              help='Ladders only: 0-based index of the first stage to run')
+def main(dataset, num_threads, from_stage):
+    main_ogb(dataset=dataset, num_threads=num_threads, from_stage=from_stage)
 
 
 if __name__ == '__main__':
