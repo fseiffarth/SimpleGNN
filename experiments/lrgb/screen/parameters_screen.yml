@@ -1,0 +1,66 @@
+# LRGB Peptides-struct screening recipe. See README.md in this folder.
+# Shared by every round-1 candidate. Mostly Tönshoff et al. 2023's tuned
+# peptides recipe (AdamW, lr 1e-3, no weight decay, cosine with warmup), cut
+# from 250 to 60 epochs for screening.
+device: cuda
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: float
+
+# Materialize the per-layer row cache up to 16 GiB (default 4 GiB). Without
+# this, the D >= 15 candidates (~5 GiB per layer at d <= 15, ~10 GiB at
+# d <= 30) would fall back to the slower factored path. Results are the same
+# either way, but epoch times would not be comparable. 'auto' still falls back
+# when the rows exceed 40% of free host RAM.
+share_gnn_forward: { batched: True, precompute_rows: auto, precompute_rows_max_bytes: 17179869184 }
+
+optimizer:
+  - AdamW
+
+convolution_grad: True
+aggregation_grad: True
+
+loss:
+  - MAE
+
+# how often a rule has to occur to get its own weight; read directly in the
+# layer (not in the grid loop) -> keep it a scalar
+rule_occurrence_threshold: 5
+
+weight_initialization: { convolution: {  type: 'lower_upper', value: 0.1 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: 0.1 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+
+# Keep AdamW as a string above so this weight-decay value is honored.
+weight_decay:
+  - 0.0
+
+epochs:
+  - 60
+
+# The cosine schedule has to run to the end; best_model still selects the
+# epoch with the best validation MAE.
+early_stopping:
+  enabled:
+    False
+  patience:
+    60
+
+scheduler: { type: 'CosineWarmup', num_warmup_epochs: 5 }
+
+training_data_sampling: { type: 'default'}
+
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# The dataset's targets are already standardized; normalizing on the training
+# split and inverting before the metrics keeps the MAE in LRGB units.
+output_features: { normalization: 'standard' }
+invert_outputs: { normalization: 'standard' }
+
+best_model: True

@@ -1,0 +1,26 @@
+# LRGB Peptides-struct screening round 1: eight architectures x three seeds,
+# grid search only. See README.md in this folder. Run with screen.py.
+datasets:
+  - {
+      name: "peptides-struct",
+      source: "LRGB",
+      task: "graph_regression",
+      # all 11 structural regression targets
+      regression_targets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      validation_folds: 1,
+      # published seed standard deviations are ~0.001-0.002 MAE
+      num_runs: 3,
+      # p4 (d <= 30) holds ~20 GB of rows; three runs at once stay within 95 GiB
+      num_workers: 3,
+      paths: {
+        data: "data/LRGB/",
+        labels: "data/LRGB/labels/",
+        properties: "data/LRGB/properties/",
+        results: "results/lrgb_screen/round1/",
+        models: "experiments/lrgb/screen/models_round1.yml",
+        hyperparameters: "experiments/lrgb/screen/parameters_screen.yml",
+        # official LRGB split; regenerate with
+        # `python -m simplegnn.utils.lrgb_splits --dataset peptides-struct`
+        splits: "src/simplegnn/datasets/splits/fixed/peptides-struct_splits.json",
+      }
+  }
