@@ -154,17 +154,27 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
                             db = df_local
                         else:
                             db = pd.concat([db, df_local], ignore_index=True)
+        # Optional coordinates for validation checkpoints inside an epoch.
+        checkpoint_columns = [
+            (column, label) for column, label in (
+                ('OptimizerStep', 'Optimizer Step'),
+                ('EpochProgress', 'Epoch Progress'))
+            if db is not None and column in db.columns
+        ]
+
         # group by ConfigurationId and RunNumber
         groups_db = None
         if evaluate_validation_only:
             with open(result_path.joinpath(db_name).joinpath('summary_sota.csv'), 'w') as f:
-                f.write(
-                    'ConfigurationId,RunId,Epoch,Epoch Accuracy Mean,Epoch Accuracy Std,Epoch Loss Mean,Epoch Loss Std,Validation Accuracy Mean,Validation Accuracy Std,Validation Loss Mean,Validation Loss Std\n')
+                header = ('ConfigurationId,RunId,Epoch,Epoch Accuracy Mean,Epoch Accuracy Std,Epoch Loss Mean,Epoch Loss Std,Validation Accuracy Mean,Validation Accuracy Std,Validation Loss Mean,Validation Loss Std')
+                header += ''.join(f',{column}' for column, _ in checkpoint_columns)
+                f.write(header + '\n')
             groups_db = db.groupby(['ConfigurationId', 'RunNumber'])
             for name, group in groups_db:
-                # merge all rows with the same Epoch and get the mean resp. std (do not remove Epoch column)
-                mean_group = group.groupby('Epoch').mean(numeric_only=True).reset_index()
-                std_group = group.groupby('Epoch').std(numeric_only=True).reset_index()
+                # Never average different optimizer checkpoints in one epoch.
+                coordinate = 'OptimizerStep' if 'OptimizerStep' in group else 'Epoch'
+                mean_group = group.groupby(coordinate).mean(numeric_only=True).reset_index()
+                std_group = group.groupby(coordinate).std(numeric_only=True).reset_index()
                 if evaluation_type == 'accuracy':
                     # get the maximum validation accuracy
                     max_val_acc = mean_group['ValidationAccuracy'].max()
@@ -188,9 +198,9 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
                 min_val_loss = max_row['ValidationLoss'].min()
                 max_row = max_row[max_row['ValidationLoss'] == min_val_loss]
                 # get the maximum epoch of the series max_row
-                max_epoch = max_row['Epoch'].max()
-                max_mean = mean_group[mean_group['Epoch'] == max_epoch].iloc[-1]
-                max_std = std_group[std_group['Epoch'] == max_epoch].iloc[-1]
+                max_checkpoint = max_row[coordinate].max()
+                max_mean = mean_group[mean_group[coordinate] == max_checkpoint].iloc[-1]
+                max_std = std_group[std_group[coordinate] == max_checkpoint].iloc[-1]
 
                 epoch_loss_column_name = None
                 for col in db.columns:
@@ -203,7 +213,8 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
 
                 # write the results to summary_sota.csv using the
                 with open(result_path.joinpath(db_name).joinpath('summary_sota.csv'), 'a') as f:
-                    f.write(f"{int(max_mean['ConfigurationId'])},{int(max_mean['RunNumber'])},{int(max_mean['Epoch'])},{max_mean['EpochAccuracy']},{max_std['EpochAccuracy']},{max_mean[epoch_loss_column_name]},{max_std[epoch_loss_column_name]},{max_mean['ValidationAccuracy']},{max_std['ValidationAccuracy']},{max_mean['ValidationLoss']},{max_std['ValidationLoss']}\n")
+                    extra_fields = ''.join(f',{max_mean[column]}' for column, _ in checkpoint_columns)
+                    f.write(f"{int(max_mean['ConfigurationId'])},{int(max_mean['RunNumber'])},{int(max_mean['Epoch'])},{max_mean['EpochAccuracy']},{max_std['EpochAccuracy']},{max_mean[epoch_loss_column_name]},{max_std[epoch_loss_column_name]},{max_mean['ValidationAccuracy']},{max_std['ValidationAccuracy']},{max_mean['ValidationLoss']},{max_std['ValidationLoss']}{extra_fields}\n")
 
         else:
             if db is not None:
@@ -261,6 +272,8 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
             if has_auc:
                 summary_header += (',Epoch AUC Mean,Epoch AUC Std,Validation AUC Mean,Validation AUC Std,'
                                    'Test AUC Mean,Test AUC Std')
+            for _, label in checkpoint_columns:
+                summary_header += f',{label} Mean,{label} Std'
             summary_header += '\n'
 
             # write headers to file
@@ -330,13 +343,15 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
                 run_id = int(avg['RunNumber'])
                 # write to file
                 seed = int(avg['Seed'])
+                checkpoint_fields = ''.join(
+                    f',{avg[column]},{std[column]}' for column, _ in checkpoint_columns)
                 summary_row = (f"{seed},{configuration_id},{run_id},{avg['Epoch']},{std['Epoch']},"
                                f"{avg['EpochAccuracy']},{std['EpochAccuracy']},"
                                f"{avg[epoch_loss_column_name]},{std[epoch_loss_column_name]},"
                                f"{avg['ValidationAccuracy']},{std['ValidationAccuracy']},"
                                f"{avg['ValidationLoss']},{std['ValidationLoss']},"
                                f"{avg['TestAccuracy']},{std['TestAccuracy']},"
-                               f"{avg['TestLoss']},{std['TestLoss']}{auc_fields}\n")
+                               f"{avg['TestLoss']},{std['TestLoss']}{auc_fields}{checkpoint_fields}\n")
                 if evaluate_best_model:
                     with open(result_path.joinpath(db_name).joinpath('summary_best.csv'), 'a') as f:
                         f.write(summary_row)
@@ -386,6 +401,10 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
                     mean_row += (f',{summary_best_model_mean["Epoch AUC Mean"]},{summary_best_model_mean["Epoch AUC Std"]},'
                                  f'{summary_best_model_mean["Validation AUC Mean"]},{summary_best_model_mean["Validation AUC Std"]},'
                                  f'{summary_best_model_mean["Test AUC Mean"]},{summary_best_model_mean["Test AUC Std"]}')
+                for _, label in checkpoint_columns:
+                    mean_header += f',{label} Mean,{label} Std'
+                    mean_row += (f',{summary_best_model_mean[f"{label} Mean"]},'
+                                 f'{summary_best_model_mean[f"{label} Std"]}')
                 # write to file
                 with open(result_path.joinpath(db_name).joinpath('summary_best_mean.csv'), 'w') as f:
                     f.write(mean_header + '\n')

@@ -43,6 +43,7 @@ See Also
 framework.core.FrameworkMain : Main experiment orchestrator
 models.model.GraphModel : PyTorch model class
 """
+import copy
 import datetime
 import json
 import math
@@ -499,6 +500,20 @@ class ModelConfiguration:
         self._last_test_values = None
         self._csv_buffer = []
         self._csv_flush_interval = self.para.run_config.config.get('csv_flush_interval', 10)
+        # Optional validation between optimizer updates. Epoch remains the
+        # zero-based training epoch; EpochProgress records completed fractions.
+        step_validation = self.para.run_config.config.get('step_validation') or {}
+        self._step_validation_interval = step_validation.get('interval', 0)
+        self._step_validation_epochs = step_validation.get('epochs', 3)
+        if (not isinstance(self._step_validation_interval, int)
+                or self._step_validation_interval < 0
+                or not isinstance(self._step_validation_epochs, int)
+                or self._step_validation_epochs < 1):
+            raise ValueError('step_validation requires interval >= 0 and epochs >= 1 as integers')
+        if self._step_validation_interval and para.run_config.task not in (
+                'graph_classification', 'graph_regression'):
+            raise ValueError('step_validation currently supports graph tasks only')
+        self._optimizer_step = 0
         # hash-keyed transfer (spec 18 B2/B3): cached sidecar payload (the
         # weight keys are weight-independent, so they are exported once per
         # configuration; False = checked and nothing to save) and the report
@@ -665,6 +680,7 @@ class ModelConfiguration:
                 break
 
             timer.measure("epoch")
+            self._epoch_start_time = time.perf_counter()
             self.net.epoch = epoch
             epoch_values = EvaluationValues()
             validation_values = EvaluationValues()
@@ -2183,6 +2199,9 @@ class ModelConfiguration:
                 header = f"Dataset;Time;RunNumber;ValidationNumber;Seed;Epoch;TrainingSize;ValidationSize;TestSize;EpochLoss  ({self.para.run_config.loss});EpochAccuracy;" \
                          f"EpochTime;LearningRate;ValidationAccuracy;ValidationLoss;TestAccuracy;TestLoss\n"
 
+        if self._step_validation_interval:
+            header = header.rstrip('\n') + ';OptimizerStep;EpochProgress\n'
+
         # Save file for results and add header if the file is new
         final_path = self.results_path.joinpath(f'{self.para.db}/Results/{file_name}')
         with open(final_path, "a") as file_obj:
@@ -2191,13 +2210,16 @@ class ModelConfiguration:
         return True
 
 
-    def postprocess_writer(self, epoch, epoch_time, train_values: EvaluationValues, validation_values: EvaluationValues, test_values: EvaluationValues, epoch_lr):
+    def postprocess_writer(self, epoch, epoch_time, train_values: EvaluationValues, validation_values: EvaluationValues, test_values: EvaluationValues, epoch_lr, epoch_progress=None):
         time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.para.print_results:
             # Console line reflects the configured loss (label) and the task's
             # reported metric: MAE for regression, accuracy/AUC for classification.
             loss_label = loss_display_name(self.para.run_config.loss)
             prefix = f'run: {self.run_id} val step: {self.k_val} epoch: {epoch + 1}/{self.para.n_epochs}'
+            if self._step_validation_interval:
+                progress = epoch + 1 if epoch_progress is None else epoch_progress
+                prefix += f' step: {self._optimizer_step} progress: {progress:.3f}'
             if self.para.run_config.task in ('graph_regression', 'node_regression'):
                 print(
                     f'{prefix} | {loss_label} loss: {train_values.loss:.4f} | '
@@ -2240,6 +2262,10 @@ class ModelConfiguration:
                             f"{train_values.loss};{train_values.accuracy};{epoch_time};{epoch_lr};" \
                             f"{validation_values.accuracy};{validation_values.loss};" \
                             f"{test_values.accuracy};{test_values.loss}\n"
+
+        if self._step_validation_interval:
+            progress = epoch + 1 if epoch_progress is None else epoch_progress
+            res_str = res_str.rstrip('\n') + f';{self._optimizer_step};{progress}\n'
 
         # Buffer CSV writes and flush periodically
         self._csv_buffer.append(res_str)
@@ -2342,6 +2368,7 @@ class ModelConfiguration:
             timer.measure("backward")
             loss.backward()
             self.optimizer.step()
+            self._optimizer_step += 1
             self.apply_l1_proximal()
             timer.measure("backward")
             timer.reset()
@@ -2364,6 +2391,52 @@ class ModelConfiguration:
                                                                                  batch_length=len(batch_ids),
                                                                                  num_batches=len(train_batches),
                                                                                  batches=train_batches)
+
+            self._maybe_validate_step(epoch, batch_counter, len(train_batches), epoch_values)
+
+    def _maybe_validate_step(self, epoch, batch_counter, num_batches, train_values):
+        """Validate early optimizer steps and log them as selectable checkpoints.
+
+        Epoch-end validation handles the last batch, avoiding duplicate rows.
+        Test metrics are computed only when validation selects a new best
+        checkpoint. Other intermediate rows have NaN test metrics. The running
+        training loss and training mode are preserved across validation.
+        """
+        interval = self._step_validation_interval
+        if (not interval or epoch >= self._step_validation_epochs
+                or self._optimizer_step % interval
+                or batch_counter + 1 == num_batches
+                or self.validate_data.size == 0):
+            return
+
+        running_values = copy.copy(train_values)
+        running_values.loss /= batch_counter + 1
+        validation_values = EvaluationValues()
+        test_values = EvaluationValues()
+        test_values.accuracy = test_values.loss = test_values.accuracy_roc_auc = float('nan')
+        test_values.mae = test_values.mae_std = float('nan')
+        previous_best = self.best_epoch.copy()
+        was_training = self.net.training
+        # Evaluating dropout must not consume the RNG used for later training.
+        # Current evaluation is deterministic, but fork_rng also protects
+        # training from future evaluation modules that sample random values.
+        devices = [self.device] if self.device.type == 'cuda' else []
+        try:
+            with torch.random.fork_rng(devices=devices):
+                running_values, validation_values, test_values = self.evaluate_results(
+                    epoch, running_values, validation_values, test_values, 'validation')
+                if self.best_epoch != previous_best and self.test_data.size:
+                    running_values, validation_values, test_values = self.evaluate_results(
+                        epoch, running_values, validation_values, test_values, 'test')
+        finally:
+            self.net.train(was_training)
+
+        self.postprocess_writer(
+            epoch, time.perf_counter() - self._epoch_start_time,
+            running_values, validation_values, test_values,
+            self.optimizer.param_groups[0]['lr'],
+            epoch_progress=epoch + (batch_counter + 1) / num_batches)
+        self._flush_csv_buffer()
 
     def evaluate_graph_task(self, graph_ids):
         labels = self.graph_data.y[graph_ids]
