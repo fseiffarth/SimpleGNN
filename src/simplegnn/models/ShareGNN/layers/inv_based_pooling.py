@@ -36,6 +36,12 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         super(InvariantBasedAggregationLayer, self).__init__(parameters, layer, graph_data)
 
         self.flatten = layer.layer_dict.get('flatten', True)
+        # 'sum' (default) or 'mean': the mean divides each graph's weighted sum
+        # by its node count (before the bias), so the embedding does not grow
+        # with molecule size -- the graph pooling of OGB's GIN baselines
+        self.reduce = layer.layer_dict.get('reduce', 'sum')
+        if self.reduce not in ('sum', 'mean'):
+            raise ValueError(f"invariant_based_aggregation reduce must be 'sum' or 'mean', got {self.reduce!r}")
         if self.flatten:
             self.out_features = self.in_features * self.num_heads
             # The output is a flat (H*F) vector per graph: all heads are folded
@@ -253,6 +259,8 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
         self.set_weights(pos)
         # (H, N) @ (N, F) -> (H, F); same as einsum('no,nf->of') with less dispatch overhead
         node_representation = torch.matmul(self.current_W.t(), node_representation)
+        if self.reduce == 'mean':
+            node_representation = node_representation / max(self._agg_slices[pos + 1] - self._agg_slices[pos], 1)
         if self.bias:
             node_representation = node_representation + self.Param_b
         if self.flatten:
@@ -315,6 +323,8 @@ class InvariantBasedAggregationLayer(InvariantBasedLayer):
                 torch.arange(batch_size, dtype=torch.int64, device=device), counts)
             out = torch.zeros((batch_size, self.num_heads, num_features), dtype=dtype, device=device)
             out.index_add_(0, graph_idx, contributions)
+        if self.reduce == 'mean':
+            out = out / counts.clamp(min=1).to(dtype).view(-1, 1, 1)
         if self.bias:
             out = out + self.Param_b
         if self.flatten:
