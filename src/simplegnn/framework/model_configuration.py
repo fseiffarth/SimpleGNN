@@ -316,7 +316,11 @@ class ModelConfiguration:
     net : GraphModel
         Instantiated PyTorch model.
     criterion : torch.nn.Module
-        Loss function (CrossEntropyLoss, MSELoss, etc.).
+        Unweighted loss function (CrossEntropyLoss, MSELoss, etc.); scores
+        validation and test.
+    train_criterion : torch.nn.Module
+        Loss used for the optimizer steps: criterion, or its class-weighted
+        variant when weighted_loss is enabled.
     optimizer : torch.optim.Optimizer
         Optimizer (Adam, SGD, AdamW, etc.).
     scheduler : torch.optim.lr_scheduler._LRScheduler or None
@@ -335,7 +339,8 @@ class ModelConfiguration:
     test_data : np.ndarray
         Graph indices for test set.
     class_weights : torch.Tensor or None
-        Class weights for weighted loss (if enabled).
+        Per-class weights (num_classes,) over the training split for weighted
+        loss (if enabled).
     results_path : Path
         Directory for saving results and models.
 
@@ -426,6 +431,9 @@ class ModelConfiguration:
         self.preprocessing_times = dict(preprocessing_times or {})
         self.results_path = para.run_config.config['paths']['results']
         self.criterion = None
+        # loss used for the optimizer steps; differs from self.criterion only
+        # when weighted_loss is set (see set_train_loss_function)
+        self.train_criterion = None
         self.optimizer = None
         self.scheduler = None
         self.net = None
@@ -514,19 +522,21 @@ class ModelConfiguration:
         -----
         **Training Loop Structure:**
 
+        Before the loop, class weights are computed once over the training
+        split (if weighted_loss=True, see set_train_loss_function).
+
         For each epoch:
         1. Check early stopping criterion
         2. Generate training batches (with curriculum sampling if enabled)
-        3. Compute class weights (if weighted_loss=True)
-        4. Execute training step:
+        3. Execute training step:
            - Graph tasks: train_graph_task()
            - Node tasks: train_node_task()
-        5. Apply model pruning (if configured)
-        6. Step learning rate scheduler
-        7. Evaluate on validation set (every validation_frequency epochs)
-        8. Evaluate on test set (every validation_frequency epochs)
-        9. Save epoch results to CSV buffer
-        10. Flush CSV buffer (every csv_flush_interval epochs)
+        4. Apply model pruning (if configured)
+        5. Step learning rate scheduler
+        6. Evaluate on validation set (every validation_frequency epochs)
+        7. Evaluate on test set (every validation_frequency epochs)
+        8. Save epoch results to CSV buffer
+        9. Flush CSV buffer (every csv_flush_interval epochs)
 
         **Early Stopping:**
 
@@ -580,6 +590,7 @@ class ModelConfiguration:
         timer = TimeClass()
         # Define the loss function
         self.set_loss_function()
+        self.set_train_loss_function()
         # Define the optimizer
         self.set_optimizer()
         # Set up the file where the results are stored
@@ -609,16 +620,6 @@ class ModelConfiguration:
             validation_values = EvaluationValues()
             test_values = EvaluationValues()
             train_batches = self.get_train_batches(seeds, epoch)
-
-            # if weighted_loss is set to true, get the class weights
-            if self.para.run_config.config.get('weighted_loss', False):
-                # get class counts per batch
-                self.class_weights = torch.zeros((len(train_batches), self.graph_data.num_classes), dtype=self.dtype)
-                for i in range(len(train_batches)):
-                    self.class_weights[i] = torch.unique(self.graph_data.y[train_batches[i]], return_counts=True)[1]
-                self.class_weights = 1.0 - torch.einsum('ij,i->ij', self.class_weights, 1.0/self.class_weights.sum(dim=1))
-
-
 
             self.num_epoch_samples = sum([batch.size for batch in train_batches])
             self.net.train(True)
@@ -918,31 +919,72 @@ class ModelConfiguration:
         Notes
         -----
         Loss function is selected from para.run_config.config['loss'].
-        Weighted loss is supported for classification tasks if
-        config['weighted_loss']=True (weights computed per batch).
+        self.criterion is always unweighted; it scores validation and test.
+        Weighted training loss (config['weighted_loss']=True) is built
+        separately by :meth:`set_train_loss_function`.
+        """
+        self.criterion = self.build_loss_function(*args, **kwargs)
+
+    def set_train_loss_function(self):
+        """
+        Configure the loss used for the optimizer steps (self.train_criterion).
+
+        Without ``weighted_loss`` this is just self.criterion. With
+        ``weighted_loss: True`` (classification only) the class weights are
+        ``1 - count/total`` over the *whole training split*, computed once.
+        Per-batch weights were unstable: a batch missing a class broadcast its
+        single count into a flat weighting (binary) or crashed (3+ classes),
+        and the last batch's weighted loss leaked into validation/test loss.
+        """
+        self.train_criterion = self.criterion
+        if not self.para.run_config.config.get('weighted_loss', False):
+            return
+        task = self.para.run_config.config.get('task', None)
+        if task not in ('graph_classification', 'node_classification'):
+            raise ValueError(f"weighted_loss is only supported for classification tasks, got task {task}")
+        self.class_weights = self.compute_class_weights()
+        self.train_criterion = self.build_loss_function(weight=self.class_weights)
+
+    def compute_class_weights(self) -> torch.Tensor:
+        """
+        Class weights ``1 - count/total`` over the training split.
+
+        ``torch.bincount`` with ``minlength=num_classes`` keeps every class
+        at its own index, so absent classes get weight 1 instead of shifting
+        or broadcasting the counts of the present ones.
+        """
+        train_labels = self.graph_data.y[torch.as_tensor(self.training_data, dtype=torch.long)]
+        counts = torch.bincount(train_labels.flatten().long().cpu(), minlength=self.graph_data.num_classes)
+        weights = 1.0 - counts.to(torch.float64) / counts.sum()
+        return weights.to(dtype=self.dtype, device=self.device)
+
+    def build_loss_function(self, *args, **kwargs):
+        """
+        Return the loss function selected by para.run_config.loss, constructed
+        with the given arguments (e.g. ``weight=`` for weighted losses).
         """
         if self.para.run_config.loss == 'CrossEntropyLoss':
-            self.criterion = nn.CrossEntropyLoss(*args, **kwargs)
+            return nn.CrossEntropyLoss(*args, **kwargs)
         elif self.para.run_config.loss in ['MeanSquaredError', 'MSELoss', 'mse', 'MSE']:
-            self.criterion = nn.MSELoss(*args, **kwargs)
+            return nn.MSELoss(*args, **kwargs)
         elif self.para.run_config.loss in ['RootedMeanSquaredError', 'RMSELoss', 'rmse', 'RMSE']:
             def RSMELoss(input, target):
                 return torch.sqrt(F.mse_loss(input, target) + 1e-8)
-            self.criterion = RSMELoss
+            return RSMELoss
         elif self.para.run_config.loss in ['L1Loss', 'l1', 'L1', 'mean_absolute_error', 'mae', 'MAE', 'MeanAbsoluteError']:
-            self.criterion = nn.L1Loss(*args, **kwargs)
+            return nn.L1Loss(*args, **kwargs)
         elif self.para.run_config.loss in ['SmoothL1Loss', 'smooth_l1', 'SmoothL1', 'Huber', 'HuberLoss', 'huber']:
             # Huber/smooth-L1: quadratic near 0, linear beyond beta -- less
             # sensitive to outliers than MAE while still training toward it.
             # ValidationMAE/TestMAE are computed independently of the training
             # loss, so evaluation stays on the task metric regardless.
-            self.criterion = nn.SmoothL1Loss(*args, **kwargs)
+            return nn.SmoothL1Loss(*args, **kwargs)
         elif self.para.run_config.loss in ['BCELoss', 'bce', 'BCE']:
-            self.criterion = nn.BCELoss(*args, **kwargs)
+            return nn.BCELoss(*args, **kwargs)
         elif self.para.run_config.loss in ['BCEWithLogitsLoss', 'bce_with_logits', 'BCEWithLogits']:
-            self.criterion = nn.BCEWithLogitsLoss(*args, **kwargs)
+            return nn.BCEWithLogitsLoss(*args, **kwargs)
         elif self.para.run_config.loss in ['NLLLoss', 'nll', 'NLL']:
-            self.criterion = nn.NLLLoss(*args, **kwargs)
+            return nn.NLLLoss(*args, **kwargs)
         else:
             raise ValueError(f"Loss function {self.para.run_config.loss} not implemented")
 
@@ -2218,16 +2260,13 @@ class ModelConfiguration:
             # TODO run mixed models
 
             # calculate the loss
-            if self.para.run_config.config.get('weighted_loss', False):
-                self.set_loss_function(weight =self.class_weights[batch_counter])
-
             target_labels = self.graph_data.y[batch_ids]
             # check if output is two dimensional and task is graph classification
             if self.para.run_config.config.get('task', None) == 'graph_classification'  and len(outputs.shape) > 1 and outputs.shape[1] != 1:
                 target_labels = torch.nn.functional.one_hot(self.graph_data.y[batch_ids], num_classes=self.graph_data.num_classes).to(self.dtype).to(self.device)
             elif self.para.run_config.config.get('task', None) == 'graph_regression' and outputs.shape[1] == 1 and target_labels.dim() == 1:
                 target_labels = target_labels.unsqueeze(1)
-            loss = self.criterion(outputs, target_labels)
+            loss = self.train_criterion(outputs, target_labels)
             timer.measure("forward")
 
             weights = []
@@ -2317,7 +2356,7 @@ class ModelConfiguration:
             # squeeze second dimension if it is one (single-target regression)
             if outputs.dim() > 1 and outputs.shape[1] == 1:
                 outputs = outputs.squeeze(1)
-            loss = self.criterion(outputs[batch], self.graph_data.y[batch])
+            loss = self.train_criterion(outputs[batch], self.graph_data.y[batch])
             timer.measure("forward")
 
             weights = []
