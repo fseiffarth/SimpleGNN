@@ -1,0 +1,23 @@
+# molhiv ladder 4, w2_two_conv_30_epochs (v3 with a 30-epoch budget). See README.md in this folder.
+# Same seeds (42-51) as ladder-3 v3, the reference for every stage.
+datasets:
+  - {
+      name: "ogbg-molhiv",
+      source: "OGB_GraphProp",
+      task: "graph_classification",
+      # the split file provides a single official fold, not k-fold CV
+      validation_folds: 1,
+      # ten seeds for the best configuration (OGB reporting protocol)
+      evaluation_run_number: 10,
+      # each process holds its own rule tables for 41k graphs
+      num_workers: 4,
+      paths: {
+        data: "data/OGB/",
+        labels: "data/OGB/labels/",
+        properties: "data/OGB/properties/",
+        results: "results/ogb_molhiv_ladder4/w2_two_conv_30_epochs/",
+        models: "experiments/ogb/molhiv_ladder3/models_local1_two_conv.yml",
+        hyperparameters: "experiments/ogb/molhiv_ladder4/parameters_w2_30_epochs.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ogbg-molhiv_splits.json",
+      }
+  }

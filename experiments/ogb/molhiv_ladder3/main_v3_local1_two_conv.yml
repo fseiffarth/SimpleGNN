@@ -1,0 +1,23 @@
+# molhiv ladder 3, v3_local1_two_conv (two distance-1 convolutions). See README.md in this folder.
+# Parameters are ladder-2 t0's, so ladder-2 t0 is the 10-seed reference.
+datasets:
+  - {
+      name: "ogbg-molhiv",
+      source: "OGB_GraphProp",
+      task: "graph_classification",
+      # the split file provides a single official fold, not k-fold CV
+      validation_folds: 1,
+      # ten seeds for the best configuration (OGB reporting protocol)
+      evaluation_run_number: 10,
+      # each process holds its own rule tables for 41k graphs
+      num_workers: 4,
+      paths: {
+        data: "data/OGB/",
+        labels: "data/OGB/labels/",
+        properties: "data/OGB/properties/",
+        results: "results/ogb_molhiv_ladder3/v3_local1_two_conv/",
+        models: "experiments/ogb/molhiv_ladder3/models_local1_two_conv.yml",
+        hyperparameters: "experiments/ogb/molhiv_ladder2/parameters_t0_reference.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ogbg-molhiv_splits.json",
+      }
+  }

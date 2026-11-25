@@ -47,7 +47,12 @@ capacity ladder in sequence (10 seeds per stage, seed ensembles, summary in
 `results/ogb_molhiv_ladder/ladder_summary.csv`); see
 [`molhiv_ladder/README.md`](molhiv_ladder/README.md). Its follow-up,
 `molhiv-ladder2`, tests single-change arms against a common reference; see
-[`molhiv_ladder2/README.md`](molhiv_ladder2/README.md).
+[`molhiv_ladder2/README.md`](molhiv_ladder2/README.md). Architecture screening
+lives in [`molhiv_screen/`](molhiv_screen/README.md); its local-convolution
+result is confirmed with 10 seeds by `molhiv-ladder3`
+([`molhiv_ladder3/README.md`](molhiv_ladder3/README.md)), and `molhiv-ladder4` tests
+residual convolutions and a longer budget on its best stage
+([`molhiv_ladder4/README.md`](molhiv_ladder4/README.md)).
 
 The script generates any missing split file, then runs the standard pipeline
 (grid search → model selection → rerun best → test evaluation). To run without

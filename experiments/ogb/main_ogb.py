@@ -15,6 +15,8 @@ from simplegnn.framework.utils.seed_ensemble import write_seed_ensemble
 CONFIG_DIR = Path('experiments/ogb/configs')
 LADDER_DIR = Path('experiments/ogb/molhiv_ladder')
 LADDER2_DIR = Path('experiments/ogb/molhiv_ladder2')
+LADDER3_DIR = Path('experiments/ogb/molhiv_ladder3')
+LADDER4_DIR = Path('experiments/ogb/molhiv_ladder4')
 
 # short name -> main config, mirroring simplegnn.utils.ogb_splits.SUPPORTED_DATASETS
 DATASETS = {
@@ -59,9 +61,24 @@ LADDERS = {
         ('t4_batch256', LADDER2_DIR / 'main_t4_batch256.yml'),
         ('t5_pool_only', LADDER2_DIR / 'main_t5_pool_only.yml'),
     ],
+    # local-convolution confirmation; ladder-2 t0 is the reference (molhiv_ladder3/README.md)
+    'molhiv-ladder3': [
+        ('v1_local2', LADDER3_DIR / 'main_v1_local2.yml'),
+        ('v2_local1', LADDER3_DIR / 'main_v2_local1.yml'),
+        ('v3_local1_two_conv', LADDER3_DIR / 'main_v3_local1_two_conv.yml'),
+        ('v4_local1_three_conv', LADDER3_DIR / 'main_v4_local1_three_conv.yml'),
+    ],
+    # residual convolutions and a longer budget; ladder-3 v3 is the reference (molhiv_ladder4/README.md)
+    'molhiv-ladder4': [
+        ('w1_two_conv_residual', LADDER4_DIR / 'main_w1_two_conv_residual.yml'),
+        ('w2_two_conv_30_epochs', LADDER4_DIR / 'main_w2_two_conv_30_epochs.yml'),
+        ('w3_three_conv_residual', LADDER4_DIR / 'main_w3_three_conv_residual.yml'),
+    ],
 }
 LADDER_SUMMARY = {'molhiv-ladder': Path('results/ogb_molhiv_ladder/ladder_summary.csv'),
-                  'molhiv-ladder2': Path('results/ogb_molhiv_ladder2/ladder_summary.csv')}
+                  'molhiv-ladder2': Path('results/ogb_molhiv_ladder2/ladder_summary.csv'),
+                  'molhiv-ladder3': Path('results/ogb_molhiv_ladder3/ladder_summary.csv'),
+                  'molhiv-ladder4': Path('results/ogb_molhiv_ladder4/ladder_summary.csv')}
 
 
 def run_pipeline(config_path, num_threads=-1):

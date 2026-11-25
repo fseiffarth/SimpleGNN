@@ -1,0 +1,72 @@
+# molhiv ladder 4, w2_two_conv_30_epochs. See README.md in this folder.
+# ladder-2 parameters_t0_reference.yml with 30 epochs instead of 20;
+# patience stays 8. The per-epoch batch seeds do not depend on the epoch
+# count, so the first 20 epochs replay v3's batch order. Only the seeds
+# that v3 stopped at the cap can change.
+device: cuda
+mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
+precision: double
+
+optimizer:
+  - AdamW
+
+# turn learning on/off for the invariant-based convolution / aggregation layers
+convolution_grad: True
+aggregation_grad: True
+
+# Two output logits; the AUC-margin term ranks the softmax positive-class
+# probability, the same score binary_roc_auc evaluates.
+loss:
+  - CEAUCMarginLoss
+
+weighted_loss: False
+
+# training loss = CE + weight * mean over batch pos/neg pairs of
+# (margin - (s_pos - s_neg))_+^2, s = softmax positive-class probability
+auc_margin_loss: { weight: 1.0, margin: 1.0 }
+
+# how often a rule has to occur to get its own weight; read directly in the
+# layer (not in the grid loop) -> keep it a scalar
+rule_occurrence_threshold: 25
+
+# Proximal L1 after each optimizer update selects sparse rule weights in the
+# convolution, pooling and closed-walk encoder tables.
+l1_regularization: { convolution: 0.05, aggregation: 0.05, encoding: 0.01 }
+
+# weight initialization for the invariant-based layers
+weight_initialization: { convolution: {  type: 'lower_upper', value: 0.1 },
+                         convolution_bias: { type: 'lower_upper', value: 0.0},
+                         aggregation: {  type: 'lower_upper', value: 0.1 },
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+batch_size:
+  - 64
+learning_rate:
+  - 0.0001
+
+# Keep AdamW as a string above so this weight-decay value is honored.
+weight_decay:
+  - 0.01
+
+epochs:
+  - 30
+
+early_stopping:
+  enabled:
+    True
+  patience:
+    8
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.9, patience: 10, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default'}
+
+input_features: {name: all, transformation: 'one_hot_labels_normalize_features'}
+
+# Both must be roc_auc to select on AUC (see experiments/ogb/README.md).
+evaluation_metric: roc_auc
+evaluation_type: roc_auc
+
+best_model: True
+save_best_predictions: True
