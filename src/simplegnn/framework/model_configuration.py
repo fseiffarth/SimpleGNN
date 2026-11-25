@@ -84,6 +84,7 @@ _LOSS_DISPLAY_NAMES = {
     'BCELoss': 'BCE', 'bce': 'BCE', 'BCE': 'BCE',
     'BCEWithLogitsLoss': 'BCE', 'bce_with_logits': 'BCE', 'BCEWithLogits': 'BCE',
     'NLLLoss': 'NLL', 'nll': 'NLL', 'NLL': 'NLL',
+    'CEAUCMarginLoss': 'CE+AUCM',
 }
 
 
@@ -174,15 +175,63 @@ def binary_roc_auc(outputs, labels) -> float:
     labels = labels.flatten()
     if labels.numel() == 0 or torch.unique(labels).numel() < 2:
         return 0.5
-    if outputs.dim() > 1 and outputs.shape[1] > 1:
-        scores = torch.softmax(outputs.float(), dim=1)[:, 1]
-    else:
-        scores = outputs.float().flatten()
+    scores = positive_class_scores(outputs.float())
     try:
         auc = float(sklearn.metrics.roc_auc_score(labels.cpu().numpy(), scores.cpu().numpy()))
     except ValueError:
         return 0.5
     return 0.5 if math.isnan(auc) else auc
+
+
+def positive_class_scores(outputs):
+    """
+    Ranking score of a binary classifier: ``softmax(outputs)[:, 1]`` for two
+    logits, the raw output otherwise (monotone in the sigmoid probability).
+    Differentiable, so it serves both :func:`binary_roc_auc` and
+    :class:`CEAUCMarginLoss`.
+    """
+    if outputs.dim() > 1 and outputs.shape[1] > 1:
+        return torch.softmax(outputs, dim=1)[:, 1]
+    return outputs.flatten()
+
+
+class CEAUCMarginLoss(nn.Module):
+    """
+    Cross-entropy plus a pairwise AUC-margin term for binary classification.
+
+    ``loss = CE + weight * mean_{i in pos, j in neg} (margin - (s_i - s_j))_+^2``
+    with ``s`` the softmax positive-class probability. With LibAUC's default
+    margin 1.0 and ``s`` in [0, 1] the hinge never clips, and the term is the
+    pairwise square AUC surrogate that LibAUC's AUCM loss reformulates as a
+    min-max problem. Taken over the pairs of the batch, it trains with a plain
+    optimizer. A batch without positives or negatives gives the CE term alone.
+
+    Parameters
+    ----------
+    weight : torch.Tensor, optional
+        Class weights, passed to the cross-entropy term only.
+    auc_weight : float
+        Factor of the AUC-margin term.
+    margin : float
+        Required score gap between a positive and a negative graph.
+    """
+
+    def __init__(self, weight=None, auc_weight=1.0, margin=1.0):
+        super().__init__()
+        self.cross_entropy = nn.CrossEntropyLoss(weight=weight)
+        self.auc_weight = auc_weight
+        self.margin = margin
+
+    def forward(self, outputs, target):
+        loss = self.cross_entropy(outputs, target)
+        labels = torch.argmax(target, dim=1) if target.dim() > 1 else target
+        scores = positive_class_scores(outputs)
+        positive = scores[labels == 1]
+        negative = scores[labels == 0]
+        if positive.numel() == 0 or negative.numel() == 0:
+            return loss
+        gap = self.margin - (positive[:, None] - negative[None, :])
+        return loss + self.auc_weight * torch.clamp(gap, min=0).pow(2).mean()
 
 
 def inverse_transform_targets(values, invert_cfg, stats):
@@ -432,7 +481,8 @@ class ModelConfiguration:
         self.results_path = para.run_config.config['paths']['results']
         self.criterion = None
         # loss used for the optimizer steps; differs from self.criterion only
-        # when weighted_loss is set (see set_train_loss_function)
+        # when weighted_loss is set or the loss is CEAUCMarginLoss (see
+        # set_train_loss_function)
         self.train_criterion = None
         self.optimizer = None
         self.scheduler = None
@@ -937,13 +987,15 @@ class ModelConfiguration:
         and the last batch's weighted loss leaked into validation/test loss.
         """
         self.train_criterion = self.criterion
+        if self.para.run_config.loss == 'CEAUCMarginLoss':
+            self.train_criterion = self.build_loss_function(train=True)
         if not self.para.run_config.config.get('weighted_loss', False):
             return
         task = self.para.run_config.config.get('task', None)
         if task not in ('graph_classification', 'node_classification'):
             raise ValueError(f"weighted_loss is only supported for classification tasks, got task {task}")
         self.class_weights = self.compute_class_weights()
-        self.train_criterion = self.build_loss_function(weight=self.class_weights)
+        self.train_criterion = self.build_loss_function(weight=self.class_weights, train=True)
 
     def compute_class_weights(self) -> torch.Tensor:
         """
@@ -958,13 +1010,25 @@ class ModelConfiguration:
         weights = 1.0 - counts.to(torch.float64) / counts.sum()
         return weights.to(dtype=self.dtype, device=self.device)
 
-    def build_loss_function(self, *args, **kwargs):
+    def build_loss_function(self, *args, train=False, **kwargs):
         """
         Return the loss function selected by para.run_config.loss, constructed
         with the given arguments (e.g. ``weight=`` for weighted losses).
+
+        ``train`` only matters for training-only objectives: ``CEAUCMarginLoss``
+        is returned for the optimizer steps (``train=True``), its plain
+        cross-entropy part for validation/test scoring, so ValidationLoss and
+        ReduceLROnPlateau stay comparable with CrossEntropyLoss runs. The
+        AUC-margin term is configured by ``auc_margin_loss: {weight, margin}``.
         """
         if self.para.run_config.loss == 'CrossEntropyLoss':
             return nn.CrossEntropyLoss(*args, **kwargs)
+        elif self.para.run_config.loss == 'CEAUCMarginLoss':
+            if not train:
+                return nn.CrossEntropyLoss(*args, **kwargs)
+            auc_cfg = self.para.run_config.config.get('auc_margin_loss') or {}
+            return CEAUCMarginLoss(*args, auc_weight=auc_cfg.get('weight', 1.0),
+                                   margin=auc_cfg.get('margin', 1.0), **kwargs)
         elif self.para.run_config.loss in ['MeanSquaredError', 'MSELoss', 'mse', 'MSE']:
             return nn.MSELoss(*args, **kwargs)
         elif self.para.run_config.loss in ['RootedMeanSquaredError', 'RMSELoss', 'rmse', 'RMSE']:
