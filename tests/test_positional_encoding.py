@@ -168,3 +168,52 @@ def test_gradients_flow_through_pe_and_pre_norm(pe_net):
     assert pe.Param_W.grad.abs().sum() > 0
     assert conv.pre_norm.weight.grad is not None
     assert conv.Param_W.grad is not None
+
+
+@pytest.mark.integration
+def test_ogb_closed_walk_encoder_trains_with_l1(share_gnn_setup_factory):
+    """Exercise the OGB architecture on small real graphs, including its
+    closed-walk label generation, preserved inputs and regularized updates.
+    """
+    import numpy as np
+    import yaml
+
+    from simplegnn.framework.model_configuration import ModelConfiguration
+
+    experiment_dir = ROOT / 'experiments' / 'ogb'
+    graph_data, para = share_gnn_setup_factory(
+        experiment_dir / 'models_ogb_classification.yml')
+    settings = yaml.safe_load(
+        (experiment_dir / 'parameters_ogb_classification.yml').read_text())
+    for key in ('l1_regularization', 'weight_initialization',
+                'rule_occurrence_threshold', 'evaluation_metric'):
+        para.run_config.config[key] = settings[key]
+    para.run_config.config['step_validation'] = {'interval': 2, 'epochs': 1}
+    para.run_config.config['best_model'] = True
+    para.learning_rate = settings['learning_rate'][0]
+    para.run_config.optimizer = settings['optimizer'][0]
+    para.run_config.weight_decay = settings['weight_decay'][0]
+    para.n_epochs = 1
+    config = ModelConfiguration(
+        0, 0, graph_data, (np.arange(24), np.arange(24, 32), np.arange(32, 40)),
+        42, para)
+    config.train_configuration()
+    net = config.net
+    pe = _pe_layer(net)
+    assert pe.pe_dim == 10
+    assert _conv_layer(net).in_features == 16
+    assert pe.Param_W.grad is not None
+    assert pe.Param_W.grad.abs().sum() > 0
+    assert torch.isfinite(pe.Param_W).all()
+
+    net.eval()
+    with torch.no_grad():
+        x = graph_data[0].x
+        encoded = pe(x, None, pos=0)
+        torch.testing.assert_close(encoded[:, :x.shape[1]], x)
+        positions = [0, 3, 3]
+        batched = net(_batched_input(graph_data, positions), pos=positions)
+        per_graph = torch.stack([net(graph_data[p], pos=p) for p in positions])
+    assert batched.shape == (3, 2)
+    assert torch.isfinite(batched).all()
+    torch.testing.assert_close(batched, per_graph, rtol=1e-8, atol=1e-8)

@@ -11,7 +11,17 @@
 # Final layer emits 2 logits so the framework's CrossEntropyLoss + softmax AUC
 # path (see binary_roc_auc in framework/model_configuration.py) applies.
 models:
-  - - { layer_type: linear,
+  - - { layer_type: invariant_based_positional_encoding,
+        concatenate_input: true,
+        heads: [
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 2, max_walk_length: 2 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 3, max_walk_length: 3 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 4, max_walk_length: 4 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 5, max_walk_length: 5 } },
+          { num: 2, labels: { label_type: [ closed_walks, primary ], min_walk_length: 6, max_walk_length: 6 } },
+        ],
+    }
+    - { layer_type: linear,
         out_features: 16,
         bias: True,
         activation: torch.nn.LeakyReLU(),
@@ -130,11 +140,6 @@ models:
           {
             num: 8,
             bias: True,
-            labels: { label_type: wl_labeled_edges, depth: 1 },
-          },
-          {
-            num: 8,
-            bias: True,
             labels: { label_type: [ induced_cycles, primary ], min_cycle_length: 5, max_cycle_length: 5 },
           },
           {
@@ -151,6 +156,7 @@ models:
         bias: True,
         activation: torch.nn.LeakyReLU(),
     }
+    - { layer_type: dropout, p: 0.5 }
     - { layer_type: linear,
         out_features: 2,
         bias: True,

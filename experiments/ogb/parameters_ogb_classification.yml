@@ -1,11 +1,13 @@
 # Hyperparameters for the single-task binary-classification `ogbg-mol*`
 # experiments (molhiv, molbace, molbbbp).
-device: cpu
+# Readout dropout is an explicit layer in models_ogb_classification.yml;
+# the top-level dropout parameter does not affect these invariant layers.
+device: cuda
 mode: experiments # 'debug' enables printing/plotting; use 'experiments' for runs
 precision: double
 
 optimizer:
-  - Adam
+  - AdamW
 
 # turn learning on/off for the invariant-based convolution / aggregation layers
 convolution_grad: True
@@ -16,27 +18,40 @@ aggregation_grad: True
 loss:
   - CrossEntropyLoss
 
-# ogbg-molhiv is ~3.5% positive and molbace/molbbbp are also skewed. Per-batch
-# class weights keep the minority class in the gradient without discarding the
-# ~96% majority the way `training_data_sampling: {type: undersampling}` would.
-weighted_loss: True
+# Keep an unweighted baseline; fixed training-split weights can be tested
+# separately with weighted_loss enabled.
+weighted_loss: False
 
 # how often a rule has to occur to get its own weight; read directly in the
 # layer (not in the grid loop) -> keep it a scalar
-rule_occurrence_threshold: 1
+rule_occurrence_threshold: 2
+
+# Proximal L1 after each optimizer update selects sparse rule weights in the
+# convolution, pooling and closed-walk encoder tables.
+l1_regularization: { convolution: 0.01, aggregation: 0.01, encoding: 0.01 }
 
 # weight initialization for the invariant-based layers
 weight_initialization: { convolution: {  type: 'lower_upper', value: 0.1 },
                          convolution_bias: { type: 'lower_upper', value: 0.0},
                          aggregation: {  type: 'lower_upper', value: 0.1 },
-                         aggregation_bias: { type: 'lower_upper', value: 0.0 }}
+                         aggregation_bias: { type: 'lower_upper', value: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
 
 batch_size:
   - 64
 learning_rate:
-  - 0.001
+  - 0.0001
+
+# Keep AdamW as a string above so this weight-decay value is honored.
+weight_decay:
+  - 0.01
+
 epochs:
   - 200
+
+# Capture validation optima before the first complete epoch. Epoch-level
+# validation continues as usual after these first three epochs.
+step_validation: { interval: 100, epochs: 3 }
 
 early_stopping:
   enabled:

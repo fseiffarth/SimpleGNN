@@ -51,8 +51,33 @@ python -m simplegnn.utils.ogb_splits --all       # once, generates all split fil
 python experiments/ogb/main_ogb.py --dataset molhiv --num_threads 8
 ```
 
-Results land in `results/ogb/<dataset>/`; `summary_best_mean.csv` holds the
-final test numbers.
+Results land in `results/ogb/<dataset>/`, except the current molhiv closed-walk
+and L1 experiment, which uses `results/ogb_molhiv_walks_l1_t2/ogbg-molhiv/`.
+The preceding pooling ablation remains in `results/ogb_molhiv_pooling_t2/`.
+`summary_best_mean.csv` holds the final test numbers.
+
+The classification baseline uses AdamW, learning rate 1e-4, weight decay 0.01,
+explicit readout dropout 0.5, and rule threshold 2. The depth-1 edge-labeled WL
+pooling head is removed; the corresponding convolution head remains.
+`rule_occurrence_threshold` filters convolution rules, not pooling labels.
+
+A learned encoder precedes the input linear layer: five closed-walk heads
+(lengths 2–6), each paired with the primary atom label and contributing two
+features. These ten features are concatenated with the original atom features;
+the existing linear layer still projects to 16 dimensions. Encoder weights
+start from a normal distribution with standard deviation 0.1. Proximal L1 at
+0.01 applies to convolution, pooling and encoder rule weights. These settings
+are experimental candidates, not established improvements in OGB scores.
+
+`step_validation: {interval: 100, epochs: 3}` adds validation checkpoints
+every 100 optimizer updates during the first three epochs. Epoch-end checks
+continue throughout training. The epoch CSV includes `OptimizerStep` and
+`EpochProgress` (completed epochs, e.g. 0.195) for each checkpoint, and summaries
+include their means and standard deviations at the selected checkpoint.
+Intermediate test metrics are evaluated only when validation selects a new
+best checkpoint; other intermediate rows have NaN test metrics. The scheduler
+still steps once per epoch, and training loss is the mean over the batches
+completed at that checkpoint.
 
 ## Metric handling
 
@@ -63,20 +88,17 @@ selection). Both are needed — the first writes the `EpochAUC`/`ValidationAUC`/
 of on accuracy. Accuracy is not a useful selector here: `ogbg-molhiv` is ~3.5%
 positive, so an all-negative predictor scores 96.5%.
 
-`ogbg-molhiv`'s class imbalance is handled with `weighted_loss: True` (per-batch
-class weights) rather than undersampling, which would discard most of the
-training set.
+The current classification baseline uses `weighted_loss: False`. Enabling it
+uses fixed class weights calculated from the training split; validation/test
+loss remains unweighted.
 
 ## The `ogbg-molhiv` overfitting sweep
 
-The baseline `main_molhiv.yml` run saturates train AUC and peaks validation AUC
-inside the first epoch. Part of that is inherent: 32,901 scaffold-split training
-molecules at ~3.5% positive is ~1,150 positive graphs, one epoch at
-`batch_size: 64` is already 515 optimizer steps, and published GIN baselines
-peak just as early (test ROC-AUC ~0.75–0.78). The rest is the config — no weight
-decay, no dropout, and `rule_occurrence_threshold: 1`, which gives a weight to
-every label-pair/property combination that occurs even once across 41k
-molecules.
+The original unregularized `main_molhiv.yml` run peaked at the end of the first
+epoch, the earliest recorded checkpoint. There are 32,901 scaffold-split
+training molecules, including 1,232 positives, and one epoch at batch size 64
+contains 514 optimizer updates. Its settings were no weight decay, no dropout,
+and rule threshold 1. Comparisons below refer to that original baseline.
 
 Two arms isolate capacity from optimization:
 

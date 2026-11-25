@@ -13,7 +13,7 @@ datasets:
         data: "data/OGB/",
         labels: "data/OGB/labels/",
         properties: "data/OGB/properties/",
-        results: "results/ogb/",
+        results: "results/ogb_molhiv_walks_l1_t2/",
         models: "experiments/ogb/models_ogb_classification.yml",
         hyperparameters: "experiments/ogb/parameters_ogb_classification.yml",
         splits: "src/simplegnn/datasets/splits/fixed/ogbg-molhiv_splits.json",
