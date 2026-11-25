@@ -1,0 +1,22 @@
+# ZINC-full with closed-walk pooling (network_ZINC_full_cw_pool.yml); otherwise the
+# same setup and parameters as main_config_ZINC_full.yml.
+# ZINC-full graph-regression experiment: the test v2 setup (invariant-based
+# positional encoding as node encoder + pre-norm residual convolution block,
+# specs/15) applied to the full ZINC dataset. network/parameters are copies of
+# the *_test_v2 configs with the LR floor lowered to 1e-6.
+datasets:
+  - {
+      name: "ZINC-full",
+      source: "ZINC",
+      task: "graph_regression",
+      validation_folds: 1,
+      paths: {
+        data: "data/ZINC/",
+        labels: "data/ZINC/labels/",
+        properties: "data/ZINC/properties/",
+        results: "results/base_paper/regression/ZINC-full-cw-pool/",
+        models: "experiments/base_paper/regression/ZINC/configs/network_ZINC_full_cw_pool.yml",
+        hyperparameters: "experiments/base_paper/regression/ZINC/configs/parameters_ZINC_full.yml",
+        splits: "src/simplegnn/datasets/splits/fixed/ZINC-full_splits.json",
+      }
+  }
