@@ -1,0 +1,78 @@
+# QM9 screening, shared hyperparameters. See README.md in this folder.
+# Literature protocol for per-target QM9 on a random 80/10/10 split
+# (k-GNN / Nested GNN / I2-GNN): Adam, lr 1e-3, ReduceLROnPlateau to 1e-5,
+# batch 64-128, 200-400 epochs, z-scored target, MAE reported in target units.
+# The screen keeps lr, batch size and normalization from that protocol and
+# shortens the schedule (factor 0.5, patience 4, at most 80 epochs) so a
+# candidate finishes in roughly a third of a full run. The full runs
+# (README.md, round 3) switch to factor 0.7 / patience 5 / 300 epochs.
+device: cuda
+# batched invariant-layer forward; precompute_rows stays at its 'auto'
+# default, which only materializes the row cache when it fits in RAM
+share_gnn_forward: { batched: True }
+# caps PyTorch's intra-op threads per worker (see parameters_ZINC_full.yml)
+torch_threads: auto
+mode: experiments
+# standardized targets are well-conditioned in float32
+precision: float
+
+# AdamW decay is lr-scaled: 1e-5 (the old optimal config) shrinks weights by
+# only ~1% over a run, so it is off in effect. 1e-3 is the ZINC-full value.
+optimizer:
+  - { type: 'AdamW', weight_decay: 0.001 }
+
+# MAE is the QM9 metric; the repo trains on it for ZINC as well
+loss:
+  - MAE
+
+# how often a rule must occur to get its own weight. NOT grid-searchable
+# (read directly in the layer) -> scalar. On ZINC-full, 2 memorized the train
+# set and 20 reached the same validation MAE with a 3.5x smaller convolution;
+# QM9 has a similar training-set size (~105k graphs). Round 2 sweeps it.
+rule_occurrence_threshold: 20
+
+# proximal L1 off: the threshold and weight decay are the regularizers here,
+# as in the current ZINC-full parameters
+l1_regularization: { convolution: 0.0, aggregation: 0.0, encoding: 0.0 }
+
+weight_initialization: { convolution: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         convolution_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         aggregation: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.5 },
+                         aggregation_bias: { type: 'mean_aggregation', gain: 1.0, mean_ratio: 0.0 },
+                         positional_encoding: { type: 'normal', mean: 0.0, std: 0.1 } }
+
+# 128: ~820 steps per epoch on the ~105k training graphs (PyG's QM9 example
+# and the FWL-design paper use 128; k-GNN / NGNN / I2-GNN use 64)
+batch_size:
+  - 128
+learning_rate:
+  - 0.001
+# same epoch budget for every candidate: the batch-shuffle seed depends on
+# the epoch count, so equal budgets keep the candidates paired by seed
+epochs:
+  - 80
+
+early_stopping:
+  enabled: True
+  patience: 80
+  # stop once ReduceLROnPlateau has reached its floor
+  lr_threshold: 0.00001
+
+csv_flush_interval: 1
+
+scheduler: { type: 'ReduceLROnPlateau', factor: 0.5, patience: 4, min_lr: 0.00001 }
+
+training_data_sampling: { type: 'default' }
+
+# The encoder has concatenate_input: false, so the input node features are
+# discarded and each node starts from its learned per-label embeddings. A
+# constant also guarantees that the 3D positions QMGraphDataPreprocessing
+# stores in node_attributes never reach the model (2D / topology-only).
+input_features: { name: constant, in_dimensions: 1, value: 1.0 }
+
+# z-score the target for training, undo it before the metrics, so the
+# reported MAE is in PyG's units (README.md: units and Hartree conversion)
+output_features: { normalization: 'standard' }
+invert_outputs: { normalization: 'standard' }
+
+best_model: True

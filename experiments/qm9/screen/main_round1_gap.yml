@@ -1,0 +1,26 @@
+# QM9 screening round 1, target 4 (gap, HOMO-LUMO gap eV): three candidate
+# architectures x two seeds, grid search only. See README.md in this folder.
+# Run with screen.py, not main_QM9.py.
+datasets:
+  - {
+      name: "QM9",
+      source: "QM9",
+      task: "graph_regression",
+      regression_targets: [4],
+      validation_folds: 1,
+      # two seeds per candidate in the grid search itself
+      num_runs: 2,
+      # parallel workers; raise only while watching memory (each worker holds
+      # its own copy of the dataset and the invariant-layer caches)
+      num_workers: 2,
+      paths: {
+        data: "data/QM9/",
+        labels: "data/QM9/labels/",
+        properties: "data/QM9/properties/",
+        results: "results/qm9_screen/round1/gap/",
+        models: "experiments/qm9/screen/models_round1.yml",
+        hyperparameters: "experiments/qm9/screen/parameters_screen.yml",
+        # single-fold 80/10/10 split, seed 42
+        splits: "src/simplegnn/datasets/splits/fixed/QM9_splits.json",
+      }
+  }
