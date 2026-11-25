@@ -40,7 +40,7 @@ torch_threads: auto
 # optimizer.step() on CPU with this model's parameter shapes, bit-identical
 # update rule.
 optimizer:
-  - { type: 'AdamW', weight_decay: 0.00000, fused: true }
+  - { type: 'AdamW', weight_decay: 0.001, fused: true }
 
 loss:
   - MAE
@@ -49,7 +49,7 @@ loss:
 # NOT grid-searchable (read directly in the layer, not the grid loop) -> keep it a
 # scalar and edit per run. Raising it (2 -> 5/10/20/50) is the strongest lever
 # against overfitting: it deletes rare-rule parameters instead of shrinking them.
-rule_occurrence_threshold: 5
+rule_occurrence_threshold: 2
 
 # l1_regularization: proximal L1 (soft-thresholding after each optimizer step) on
 # invariant-layer Param_W. Drives uninformative rule weights to exactly 0 (learned
@@ -91,7 +91,7 @@ early_stopping:
   # ReduceLROnPlateau has annealed the LR down to its floor rather than
   # running out the full epoch budget. Only takes effect once `enabled` is
   # True (same flag as patience); matches scheduler.min_lr below.
-  lr_threshold: 0.0000001
+  lr_threshold: 0.000001
 
 csv_flush_interval: 1
 
