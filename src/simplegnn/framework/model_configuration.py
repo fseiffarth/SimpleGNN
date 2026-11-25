@@ -485,6 +485,10 @@ class ModelConfiguration:
         # when weighted_loss is set or the loss is CEAUCMarginLoss (see
         # set_train_loss_function)
         self.train_criterion = None
+        # validation scores of the latest best checkpoint, written together
+        # with its test scores once the test split is evaluated
+        # (save_best_predictions, see _write_best_predictions)
+        self._pending_best_predictions = None
         self.optimizer = None
         self.scheduler = None
         self.net = None
@@ -930,6 +934,25 @@ class ModelConfiguration:
         with open(report_path, 'w') as f:
             json.dump(report.to_dict(), f, indent=2)
         return report
+
+    def _write_best_predictions(self, test_outputs, test_labels) -> None:
+        """
+        Write ``<model>.predictions.npz`` for the latest best checkpoint
+        (``save_best_predictions: True``, binary graph classification).
+
+        Validation scores are stashed when validation selects the checkpoint.
+        Test scores are added at the next test evaluation, which immediately
+        follows that selection on both the epoch-end and the step-validation
+        path. Scores are positive-class probabilities in graph-id order, the
+        input of :mod:`simplegnn.framework.utils.seed_ensemble`.
+        """
+        pending = self._pending_best_predictions
+        self._pending_best_predictions = None
+        np.savez(pending.pop('path'),
+                 test_ids=np.asarray(self.test_data),
+                 test_scores=positive_class_scores(test_outputs.detach().float()).cpu().numpy(),
+                 test_labels=test_labels.detach().cpu().numpy(),
+                 **pending)
 
     def _save_transfer_sidecar(self, final_path: Path) -> None:
         """
@@ -1655,6 +1678,14 @@ class ModelConfiguration:
                             final_path = self.results_path.joinpath(f'{self.para.db}/Models/model_{self.para.config_id}_run_{self.run_id}_val_step_{self.k_val}.pt')
                             torch.save(self.net.state_dict(), final_path)
                             self._save_transfer_sidecar(final_path)
+                        if self.para.run_config.config.get('save_best_predictions', False):
+                            self._pending_best_predictions = {
+                                'path': self.results_path.joinpath(f'{self.para.db}/Models/model_{self.para.config_id}_run_{self.run_id}_val_step_{self.k_val}.predictions.npz'),
+                                'epoch': epoch,
+                                'validation_ids': np.asarray(self.validate_data),
+                                'validation_scores': positive_class_scores(outputs.detach().float()).cpu().numpy(),
+                                'validation_labels': labels.detach().cpu().numpy(),
+                            }
 
             if self.para.save_prediction_values:
                 # print outputs and labels to a csv file
@@ -1703,6 +1734,8 @@ class ModelConfiguration:
                     if self.para.run_config.config.get('evaluation_metric', 'accuracy') == 'roc_auc':
                         # roc_auc, ranked by the positive-class probability
                         test_values.accuracy_roc_auc = binary_roc_auc(outputs, labels)
+                    if self._pending_best_predictions is not None:
+                        self._write_best_predictions(outputs, labels)
 
                 if self.para.print_results:
                     np_labels = labels.detach().numpy()
