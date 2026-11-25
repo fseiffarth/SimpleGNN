@@ -84,3 +84,26 @@ def test_check_hyperparameter_configuration_missing_required_raises(minimal_hype
 
     with pytest.raises(ValueError, match='key "optimizer"'):
         check_hyperparameter_configuration_file(cfg)
+
+
+@pytest.mark.parametrize("layer_type", ["invariant_based_aggregation", "invariant_based_positional_encoding"])
+def test_check_model_configuration_without_convolution_keeps_label_paths(tmp_path, layer_type):
+    # an encoder -> pooling model has no convolution but still reads node labels
+    dataset_cfg = {
+        "paths": {
+            "data": tmp_path,
+            "results": tmp_path,
+            "splits": tmp_path,
+            "models": tmp_path,
+            "hyperparameters": tmp_path,
+            "labels": tmp_path,
+            "properties": tmp_path,
+        }
+    }
+    model_cfg = {"models": [[{"layer_type": layer_type}, {"layer_type": "linear", "out_features": 2}]]}
+
+    check_model_configuration_file(dataset_cfg, model_cfg)
+
+    assert dataset_cfg["paths"]["labels"] == tmp_path
+    assert dataset_cfg["paths"]["properties"] == tmp_path
+    assert dataset_cfg["with_invariant_layers"] is True

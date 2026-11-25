@@ -143,11 +143,15 @@ def check_model_configuration_file(dataset_configuration, model_configuration):
     """
     if 'models' not in model_configuration:
         raise ValueError(f'Please specify the models in the model configuration file.')
-    # Some models need additional preprocessing steps, e.g., invariant-based GNNs need properties and labels (check if the paths are given)
+    # Some models need additional preprocessing steps, e.g., invariant-based GNNs need properties and labels (check if the paths are given).
+    # Pooling and positional encoding read node labels too, so a model without
+    # a convolution (e.g. encoder -> pooling) still needs them.
+    invariant_layer_types = ('invariant_based_convolution', 'invariant_based_aggregation',
+                             'invariant_based_positional_encoding')
     need_props_and_labels = False
     for network in model_configuration.get('models', []):
         for layer in network:
-            if layer.get('layer_type') == 'invariant_based_convolution':
+            if layer.get('layer_type') in invariant_layer_types:
                 need_props_and_labels = True
                 break
     if need_props_and_labels:
