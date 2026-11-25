@@ -582,9 +582,15 @@ def training_and_preprocessing_time(share_gnn_type=''):
                                 df_all = df
                             else:
                                 df_all = pd.concat([df_all, df], ignore_index=True)
-                    # get the mean of all epoch times
-                    mean_epoch_time = df_all['EpochTime'].mean()
-                    std_epoch_time = df_all['EpochTime'].std()
+                    # get the mean of all epoch times, skipping epoch 0: on the
+                    # GPU it carries a one-time ~10s warmup (lazy kernel loading,
+                    # library init, allocator growth, optimizer state) that
+                    # would inflate mean and std for short epochs
+                    epoch_times = df_all.loc[df_all['Epoch'] > 0, 'EpochTime']
+                    if epoch_times.empty:
+                        epoch_times = df_all['EpochTime']
+                    mean_epoch_time = epoch_times.mean()
+                    std_epoch_time = epoch_times.std()
                     results[dataset]['mean_epoch_time'] = mean_epoch_time
                     results[dataset]['std_epoch_time'] = std_epoch_time
 
