@@ -239,7 +239,7 @@ def model_selection_evaluation(db_name, evaluate_best_model=False, evaluate_vali
 
                 # get row with the minimum validation loss
                 min_val_loss = max_row['ValidationLoss'].min()
-                max_row = group[group['ValidationLoss'] == min_val_loss]
+                max_row = max_row[max_row['ValidationLoss'] == min_val_loss]
                 max_row = max_row.iloc[-1]
                 # get the index of the row
                 index = max_row.name
